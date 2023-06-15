@@ -1,0 +1,1 @@
+{1: ['good', 'bad', 'great', 'terrible', 'horrible', 'fantastic', 'excellent', 'amazing', 'superb', 'wonderful', 'awful', 'exceptional', 'fabulous', 'spectacular', 'marvelous', 'outstanding', 'horrendous', 'dire', 'dull', 'boring', 'lousy', 'disappointing'], 2: ['very bad', 'very good'], 3: ['abysmal']}
