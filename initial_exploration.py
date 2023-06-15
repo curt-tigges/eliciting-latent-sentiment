@@ -253,11 +253,8 @@ fig = px.imshow(
     color_continuous_scale="RdBu",
     zmin=-1,
     zmax=1,
+    labels=dict(x="Position", y="Layer", color="Normalized Logit Diff"),
 )
-fig.update_layout(dict(
-    xaxis_title="Position",
-    yaxis_title="Layer",
-))
 fig.show()
 #%% [markdown]
 #### Head patching
@@ -308,11 +305,8 @@ fig = px.imshow(
     color_continuous_scale="RdBu",
     zmin=-1,
     zmax=1,
+    labels=dict(x="Head", y="Layer", color="Normalized Logit Diff"),
 )
-fig.update_layout(dict(
-    xaxis_title="Head",
-    yaxis_title="Layer",
-))
 fig.show()
 
 #%% [markdown]
