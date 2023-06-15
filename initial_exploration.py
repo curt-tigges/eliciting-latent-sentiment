@@ -11,7 +11,7 @@ import random
 from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import List, Union, Optional
+from typing import List, Tuple, Union, Optional
 from jaxtyping import Float, Int
 from typeguard import typechecked
 from torch import Tensor
@@ -19,7 +19,8 @@ from functools import partial
 import copy
 import os
 import itertools
-import transformer_lens
+from IPython.display import display, HTML
+import circuitsvis as cv
 from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache
 import transformer_lens.utils as utils
 from transformer_lens.hook_points import (
@@ -289,6 +290,34 @@ fig = px.imshow(
 )
 fig.show()
 #%% [markdown]
+#### Intermediate residual streams
+#%%
+# check that the final residual stream unembeds to the logits
+final_residual_stream: Float[
+    Tensor, "batch seq d_model"
+] = clean_cache["resid_post", -1]
+print(f"Final residual stream shape: {final_residual_stream.shape}")
+final_token_residual_stream: Float[
+    Tensor, "batch d_model"
+] = final_residual_stream[:, -1, :]
+
+# Apply LayerNorm scaling (to just the final sequence position)
+# pos_slice is the subset of the positions we take - here the final token of 
+# each prompt
+scaled_final_token_residual_stream = clean_cache.apply_ln_to_stack(
+    final_token_residual_stream, layer=-1, pos_slice=-1
+)
+average_logit_diff = einops.einsum(
+    scaled_final_token_residual_stream, logit_diff_directions, 
+    "batch d_model, batch d_model ->"
+) / len(clean_prompts)
+torch.testing.assert_close(average_logit_diff, clean_logit_diff)
+#%%
+# FIXME: visualise detokenisation of the adjective residual stream
+#%%
+#%% [markdown]
+## Logit difference direction
+#%% [markdown]
 ## Activation patching
 #%% [markdown]
 #### Positional patching
@@ -398,6 +427,30 @@ fig = px.imshow(
     labels=dict(x="Head", y="Layer", color="Normalized Logit Diff"),
 )
 fig.show()
-
 #%% [markdown]
-#### Path patching
+## Attention
+#%%
+def visualize_attention_patterns(
+    heads: List[Tuple[int, int]],
+    cache: ActivationCache = clean_cache,
+    tokens: Float[torch.Tensor, "batch pos"] = clean_tokens,
+) -> None:
+    """
+    Visualize the attention pattern of a particular head.
+    """
+    # Get the attention pattern
+    attn_patterns_for_heads: Float[Tensor, "head q k"] = torch.stack([
+        cache["pattern", layer][:, head].mean(0)
+         for layer, head in heads
+    ])
+    # Display the attention pattern
+    display(HTML(f"<h2>Attention Pattern for Heads: {heads}</h2>"))
+    display(cv.attention.attention_heads(
+        attention = attn_patterns_for_heads,
+        tokens = model.to_str_tokens(tokens[0]),
+        attention_head_names = [f"{layer}.{head}" for layer, head in heads],
+    ))
+#%%
+visualize_attention_patterns([(7, 5), (8, 9)])
+#%% [markdown]
+## Path patching
