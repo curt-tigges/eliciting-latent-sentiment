@@ -44,71 +44,73 @@ model = HookedTransformer.from_pretrained(
 #%%
 # ============================================================================ #
 # Data loading
-
-single_token_adjectives = [
+positive_adjectives = [
     'perfect',
     'fantastic',
     'delightful',
-    'dreadful',
-    'bad',
-    'lousy',
     'cheerful',
-    'dull',
     'marvelous',
-    'depressing',
     'good',
     'remarkable',
     'satisfactory',
-    'miserable',
-    'tragic',
     'wonderful',
     'nice',
     'fabulous',
     'outstanding',
-    'nasty',
-    'inferior',
-    'horrific',
-    'terrible',
     'satisfying',
-    'ugly',
-    'disgusting',
     'awesome',
-    'disastrous',
-    'horrendous',
-    'annoying',
     'exceptional',
-    'boring',
     'adequate',
-    'offensive',
     'incredible',
     'extraordinary',
     'amazing',
-    'frustrating',
-    'wretched',
-    'inadequate',
     'decent',
     'lovely',
     'brilliant',
     'charming',
-    'dire',
     'terrific',
-    'unpleasant',
     'superb',
     'spectacular',
     'great',
     'splendid',
-    'horrible',
     'beautiful',
-    'mediocre',
     'joyful',
     'positive',
-    'disappointing',
-    'awful',
     'excellent',
     'pleasant'
 ]
-
-single_token_adjectives = [' ' + adj for adj in set(single_token_adjectives)]
+negative_adjectives = [
+    'dreadful',
+    'bad',
+    'lousy',
+    'dull',
+    'depressing',
+    'miserable',
+    'tragic',
+    'nasty',
+    'inferior',
+    'horrific',
+    'terrible',
+    'ugly',
+    'disgusting',
+    'disastrous',
+    'horrendous',
+    'annoying',
+    'boring',
+    'offensive',
+    'frustrating',
+    'wretched',
+    'inadequate',
+    'dire',
+    'unpleasant',
+    'horrible',
+    'mediocre',
+    'disappointing',
+    'awful'
+]
+single_token_adjectives = [
+    ' ' + adj for adj in positive_adjectives + negative_adjectives
+]
 for adj in single_token_adjectives:
     model.to_single_token(adj)
 # %%
@@ -180,23 +182,29 @@ fig.update_layout(
 fig.show()
 #%%
 first_cluster = [
-    adj 
+    adj[1:]
     for i, adj in enumerate(single_token_adjectives) 
     if cluster_labels[i] == 0
 ]
 second_cluster = [
-    adj 
+    adj[1:]
     for i, adj in enumerate(single_token_adjectives) 
     if cluster_labels[i] == 1
 ]
 # %%
-first_cluster
-# %%
-second_cluster
+pos_first = (
+    (set(first_cluster) == set(positive_adjectives)) and
+    (set(second_cluster) == set(negative_adjectives))
+)
+neg_first = (
+    (set(first_cluster) == set(negative_adjectives)) and
+    (set(second_cluster) == set(positive_adjectives))
+)
+assert pos_first or neg_first
+pos_first
 # %%
 # ============================================================================ #
 # To-dos
 
 # FIXME: does this direction in embedding space generalise to other tokens?
-# FIXME: automate the checking of kmeans labels
 # %%
