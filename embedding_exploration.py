@@ -122,8 +122,12 @@ assert tokens.shape[1] == embeddings.shape[1] == 1
 embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
 embeddings_normalised: Float[Tensor, "batch d_model"] = F.normalize(embeddings, dim=-1)
 # %%
+# ============================================================================ #
+# Cosine similarity
 # compute cosine similarity between all pairs of embeddings
-cosine_similarities = torch.einsum("bm,cm->bc", embeddings_normalised, embeddings_normalised)
+cosine_similarities = torch.einsum(
+    "bm,cm->bc", embeddings_normalised, embeddings_normalised
+)
 # %%
 # plot cosine similarity matrix
 fig = px.imshow(
@@ -136,35 +140,12 @@ fig = px.imshow(
 fig.show()
 # %%
 # ============================================================================ #
-# # Initialize and fit KMeans
-
-kmeans = KMeans(n_clusters=2, n_init=10)  # 'k' is the number of clusters you want to create
-kmeans.fit(embeddings.numpy())
-cluster_labels = kmeans.labels_
-cluster_centers = kmeans.cluster_centers_
-
-first_cluster = [
-    adj 
-    for i, adj in enumerate(single_token_adjectives) 
-    if cluster_labels[i] == 0
-]
-second_cluster = [
-    adj 
-    for i, adj in enumerate(single_token_adjectives) 
-    if cluster_labels[i] == 1
-]
-
-# %%
-first_cluster
-# %%
-second_cluster
-# %%
-# ============================================================================ #
-# PCA
+# PCA and kmeans
 pca = PCA(n_components=2)
 principal_components = pca.fit_transform(embeddings.numpy())
+kmeans = KMeans(n_clusters=2, n_init=10)
 kmeans.fit(principal_components)
-labels = kmeans.labels_
+cluster_labels = kmeans.labels_
 centroids = kmeans.cluster_centers_
 # %%
 # plot the PCA
@@ -175,7 +156,7 @@ fig.add_trace(
         y=principal_components[:, 1],
         mode="markers",
         marker=dict(
-            color=labels,
+            color=cluster_labels,
             colorscale="RdBu",
             opacity=0.8,
         ),
@@ -187,7 +168,7 @@ fig.add_trace(
         x=centroids[:, 0],
         y=centroids[:, 1],
         mode="markers",
-        marker=dict(color='red', symbol='x', size=10),
+        marker=dict(color='green', symbol='x', size=10),
         name="Centroids",
     )
 )
@@ -197,11 +178,25 @@ fig.update_layout(
     yaxis_title="PC2",
 )
 fig.show()
+#%%
+first_cluster = [
+    adj 
+    for i, adj in enumerate(single_token_adjectives) 
+    if cluster_labels[i] == 0
+]
+second_cluster = [
+    adj 
+    for i, adj in enumerate(single_token_adjectives) 
+    if cluster_labels[i] == 1
+]
+# %%
+first_cluster
+# %%
+second_cluster
 # %%
 # ============================================================================ #
 # To-dos
 
 # FIXME: does this direction in embedding space generalise to other tokens?
 # FIXME: automate the checking of kmeans labels
-# FIXME: avoid performing kmeans twice
 # %%
