@@ -148,38 +148,7 @@ principal_components = pca.fit_transform(embeddings.numpy())
 kmeans = KMeans(n_clusters=2, n_init=10)
 kmeans.fit(principal_components)
 cluster_labels = kmeans.labels_
-centroids = kmeans.cluster_centers_
-# %%
-# plot the PCA
-fig = go.Figure()
-fig.add_trace(
-    go.Scatter(
-        x=principal_components[:, 0],
-        y=principal_components[:, 1],
-        mode="markers",
-        marker=dict(
-            color=cluster_labels,
-            colorscale="RdBu",
-            opacity=0.8,
-        ),
-        name="PCA",
-    )
-)
-fig.add_trace(
-    go.Scatter(
-        x=centroids[:, 0],
-        y=centroids[:, 1],
-        mode="markers",
-        marker=dict(color='green', symbol='x', size=10),
-        name="Centroids",
-    )
-)
-fig.update_layout(
-    title="PCA of single-token adjectives",
-    xaxis_title="PC1",
-    yaxis_title="PC2",
-)
-fig.show()
+centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
 #%%
 first_cluster = [
     adj[1:]
@@ -201,7 +170,83 @@ neg_first = (
     (set(second_cluster) == set(positive_adjectives))
 )
 assert pos_first or neg_first
-pos_first
+if pos_first:
+    positive_cluster = first_cluster
+    negative_cluster = second_cluster
+    positive_centroid = centroids[0, :]
+    negative_centroid = centroids[1, :]
+#%%
+# compute euclidean distance between centroids and each point
+positive_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
+    principal_components - positive_centroid, axis=-1
+)
+negative_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
+    principal_components - negative_centroid, axis=-1
+)
+# print the adjectives closest to each centroid
+positive_closest = np.array(single_token_adjectives)[
+    np.argsort(positive_distances)[:5]
+]
+negative_closest = np.array(single_token_adjectives)[
+    np.argsort(negative_distances)[:5]
+]
+print(f"Positive centroid nearest adjectives: {positive_closest}")
+print(f"Negative centroid nearest adjectives: {negative_closest}")
+# %%
+# plot the PCA
+fig = go.Figure()
+fig.add_trace(
+    go.Scatter(
+        x=principal_components[:, 0],
+        y=principal_components[:, 1],
+        mode="markers",
+        marker=dict(
+            color=cluster_labels,
+            colorscale="RdBu",
+            opacity=0.8,
+        ),
+        name="PCA",
+    )
+)
+fig.add_trace(
+    go.Scatter(
+        x=principal_components[np.argsort(positive_distances)[:5], 0],
+        y=principal_components[np.argsort(positive_distances)[:5], 1],
+        mode="markers",
+        marker=dict(
+            color="pink",
+            opacity=0.8,
+        ),
+        name="Positive centroid nearest adjectives",
+    )
+)
+fig.add_trace(
+    go.Scatter(
+        x=principal_components[np.argsort(negative_distances)[:5], 0],
+        y=principal_components[np.argsort(negative_distances)[:5], 1],
+        mode="markers",
+        marker=dict(
+            color="violet",
+            opacity=0.8,
+        ),
+        name="Negative centroid nearest adjectives",
+    )
+)
+fig.add_trace(
+    go.Scatter(
+        x=centroids[:, 0],
+        y=centroids[:, 1],
+        mode="markers",
+        marker=dict(color='green', symbol='x', size=10),
+        name="Centroids",
+    )
+)
+fig.update_layout(
+    title="PCA of single-token adjectives",
+    xaxis_title="PC1",
+    yaxis_title="PC2",
+)
+fig.show()
 # %%
 # ============================================================================ #
 # To-dos
