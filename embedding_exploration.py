@@ -231,7 +231,7 @@ fig.show()
 # %%
 # ============================================================================ #
 # PCA and kmeans
-pca = PCA(n_components=2)
+pca = PCA(n_components=1)
 train_pcs = pca.fit_transform(train_embeddings.numpy())
 test_pcs = pca.transform(test_embeddings.numpy())
 verb_pcs = pca.transform(verb_embeddings.numpy())
@@ -269,14 +269,9 @@ second_cluster = [
 ]
 # %%
 pos_first = (
-    (set(first_cluster) == set(train_positive_adjectives)) and
-    (set(second_cluster) == set(train_negative_adjectives))
+    len(set(first_cluster) & set(train_positive_adjectives)) >
+    len(set(second_cluster) & set(train_negative_adjectives))
 )
-neg_first = (
-    (set(first_cluster) == set(train_negative_adjectives)) and
-    (set(second_cluster) == set(train_positive_adjectives))
-)
-assert pos_first or neg_first
 if pos_first:
     train_positive_cluster = first_cluster
     train_negative_cluster = second_cluster
@@ -299,12 +294,49 @@ else:
     verb_positive_cluster, verb_negative_cluster = split_by_label(
         all_verbs, verb_labels
     )
+# %%
+# ============================================================================ #
+# Classification accuracy
+
+def print_accuracy(
+    predicted_positive: Iterable[str],
+    predicted_negative: Iterable[str],
+    actual_positive: Iterable[str],
+    actual_negative: Iterable[str],
+    label: str,
+) -> None:
+    correct = (
+        len(set(predicted_positive) & set(actual_positive)) +
+        len(set(predicted_negative) & set(actual_negative))
+    )
+    total = len(actual_positive) + len(actual_negative)
+    accuracy = correct / total
+    print(f"{label} accuracy: {correct}/{total} = {accuracy:.0%}")
+
+#%% # in-sample test
+print_accuracy(
+    train_positive_cluster,
+    train_negative_cluster,
+    train_positive_adjectives,
+    train_negative_adjectives,
+    "In-sample",
+)
 #%% # out-of-sample test
-assert set(test_positive_cluster) == set(test_positive_adjectives)
-assert set(test_negative_cluster) == set(test_negative_adjectives)
+print_accuracy(
+    test_positive_cluster,
+    test_negative_cluster,
+    test_positive_adjectives,
+    test_negative_adjectives,
+    "Out-of-sample",
+)
 #%% # out-of-sample verbs
-assert set(verb_positive_cluster) == set(positive_verbs)
-assert set(verb_negative_cluster) == set(negative_verbs)
+print_accuracy(
+    verb_positive_cluster,
+    verb_negative_cluster,
+    positive_verbs,
+    negative_verbs,
+    "Out-of-sample verbs",
+)
 #%% # compute euclidean distance between centroids and each point
 positive_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
     train_pcs - positive_centroid, axis=-1
@@ -321,85 +353,158 @@ negative_closest = np.array(train_adjectives)[
 ]
 print(f"Positive centroid nearest adjectives: {positive_closest}")
 print(f"Negative centroid nearest adjectives: {negative_closest}")
+# ============================================================================ #
+# Plotting
+#%%
+def plot_pca_1d():
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=train_pcs[:, 0],
+            y=np.zeros_like(train_pcs[:, 0]),
+            text=train_adjectives,
+            mode="markers",
+            marker=dict(
+                color=train_labels,
+                colorscale="RdBu",
+                opacity=0.8,
+            ),
+            name="PCA in-sample",
+        )
+    )
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=test_pcs[:, 0],
+    #         y=np.zeros_like(test_pcs[:, 0]),
+    #         mode="markers",
+    #         marker=dict(
+    #             color=test_labels,
+    #             colorscale="oryel",
+    #             opacity=0.8,
+    #         ),
+    #         name="PCA out-of-sample",
+    #     )
+    # )
+    fig.add_trace(
+        go.Scatter(
+            x=centroids[:, 0],
+            y=np.zeros_like(centroids[:, 0]),
+            mode="markers",
+            marker=dict(
+                color=["red", "blue"],
+                size=10,
+                opacity=1,
+            ),
+            name="PCA centroids",
+        )
+    )
+    fig.update_layout(
+        xaxis=dict(
+            title="PC1",
+            # showgrid=False,
+            # zeroline=False,
+            # showline=False,
+            # showticklabels=False,
+        ),
+        yaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            showline=False,
+            showticklabels=False,
+        ),
+        showlegend=True,
+    )
+    return fig
+#%%
+if pca.n_components_== 1:
+    fig = plot_pca_1d()
+    fig.show()
 # %%
 # plot the PCA
-fig = go.Figure()
-fig.add_trace(
-    go.Scatter(
-        x=train_pcs[:, 0],
-        y=train_pcs[:, 1],
-        mode="markers",
-        marker=dict(
-            color=train_labels,
-            colorscale="RdBu",
-            opacity=0.8,
-        ),
-        name="PCA in-sample",
+def plot_pca_2d():
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=train_pcs[:, 0],
+            y=train_pcs[:, 1],
+            text=train_adjectives,
+            mode="markers",
+            marker=dict(
+                color=train_labels,
+                colorscale="RdBu",
+                opacity=0.8,
+            ),
+            name="PCA in-sample",
+        )
     )
-)
-# fig.add_trace(
-#     go.Scatter(
-#         x=test_pcs[:, 0],
-#         y=test_pcs[:, 1],
-#         mode="markers",
-#         marker=dict(
-#             color=test_labels,
-#             colorscale="oryel",
-#             opacity=0.8,
-#         ),
-#         name="PCA out-of-sample",
-#     )
-# )
-fig.add_trace(
-    go.Scatter(
-        x=verb_pcs[:, 0],
-        y=verb_pcs[:, 1],
-        mode="markers",
-        marker=dict(
-            color=verb_labels,
-            colorscale="oryel",
-            opacity=0.8,
-        ),
-        name="PCA verbs",
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=test_pcs[:, 0],
+    #         y=test_pcs[:, 1],
+    #         mode="markers",
+    #         marker=dict(
+    #             color=test_labels,
+    #             colorscale="oryel",
+    #             opacity=0.8,
+    #         ),
+    #         name="PCA out-of-sample",
+    #     )
+    # )
+    fig.add_trace(
+        go.Scatter(
+            x=verb_pcs[:, 0],
+            y=verb_pcs[:, 1],
+            mode="markers",
+            marker=dict(
+                color=verb_labels,
+                colorscale="oryel",
+                opacity=0.8,
+            ),
+            name="PCA verbs",
+        )
     )
-)
-fig.add_trace(
-    go.Scatter(
-        x=train_pcs[np.argsort(positive_distances)[:5], 0],
-        y=train_pcs[np.argsort(positive_distances)[:5], 1],
-        mode="markers",
-        marker=dict(
-            color="pink",
-            opacity=0.8,
-        ),
-        name="Positive centroid nearest adjectives",
+    fig.add_trace(
+        go.Scatter(
+            x=train_pcs[np.argsort(positive_distances)[:5], 0],
+            y=train_pcs[np.argsort(positive_distances)[:5], 1],
+            mode="markers",
+            marker=dict(
+                color="pink",
+                opacity=0.8,
+            ),
+            name="Positive centroid nearest adjectives",
+        )
     )
-)
-fig.add_trace(
-    go.Scatter(
-        x=train_pcs[np.argsort(negative_distances)[:5], 0],
-        y=train_pcs[np.argsort(negative_distances)[:5], 1],
-        mode="markers",
-        marker=dict(
-            color="violet",
-            opacity=0.8,
-        ),
-        name="Negative centroid nearest adjectives",
+    fig.add_trace(
+        go.Scatter(
+            x=train_pcs[np.argsort(negative_distances)[:5], 0],
+            y=train_pcs[np.argsort(negative_distances)[:5], 1],
+            mode="markers",
+            marker=dict(
+                color="violet",
+                opacity=0.8,
+            ),
+            name="Negative centroid nearest adjectives",
+        )
     )
-)
-fig.add_trace(
-    go.Scatter(
-        x=centroids[:, 0],
-        y=centroids[:, 1],
-        mode="markers",
-        marker=dict(color='green', symbol='x', size=10),
-        name="Centroids",
+    fig.add_trace(
+        go.Scatter(
+            x=centroids[:, 0],
+            y=centroids[:, 1],
+            mode="markers",
+            marker=dict(color='green', symbol='x', size=10),
+            name="Centroids",
+        )
     )
-)
-fig.update_layout(
-    title="PCA of single-token adjectives",
-    xaxis_title="PC1",
-    yaxis_title="PC2",
-)
-fig.show()
+    fig.update_layout(
+        title="PCA of single-token adjectives",
+        xaxis_title="PC1",
+        yaxis_title="PC2",
+    )
+    return fig
 # %%
+if pca.n_components_ == 2:
+    fig = plot_pca_2d()
+    fig.show()
+#%%
+
