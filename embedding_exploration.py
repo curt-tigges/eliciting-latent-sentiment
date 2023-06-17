@@ -10,6 +10,7 @@ import numpy as np
 import einops
 import tqdm.auto as tqdm
 import random
+import pandas as pd
 from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
@@ -285,10 +286,24 @@ else:
         all_verbs, verb_labels
     )
     km_line: Float[np.ndarray, "d_model"] = centroids[1] - centroids[0]
+km_line_normalised: Float[
+    Tensor, "d_model"
+] = torch.tensor(km_line / np.linalg.norm(km_line), dtype=torch.float32)
+#%%
+# project adjectives onto k-means line
+train_km_projected = einops.einsum(
+    train_embeddings, km_line_normalised, "b d, d->b"
+).numpy()
+# sort adjectives by projection with k-means line
+train_km_projected_sorted = sorted(
+    zip(train_km_projected, train_adjectives), key=lambda x: x[0]
+)
+train_km_projected_sorted[:10]
+
 # %%
 # ============================================================================ #
 # PCA
-pca = PCA(n_components=1)
+pca = PCA(n_components=2)
 train_pcs = pca.fit_transform(train_embeddings.numpy())
 test_pcs = pca.transform(test_embeddings.numpy())
 verb_pcs = pca.transform(verb_embeddings.numpy())
@@ -407,10 +422,14 @@ positive_closest = np.array(train_adjectives)[
     np.argsort(positive_distances)[:5]
 ]
 negative_closest = np.array(train_adjectives)[
-    np.argsort(negative_distances)[:5]
+    np.argsort(negative_distances)[:10]
+]
+negative_closest_distances = [
+    f"{d:.2f}" for d in np.sort(negative_distances)[:10]
 ]
 print(f"Positive centroid nearest adjectives: {positive_closest}")
 print(f"Negative centroid nearest adjectives: {negative_closest}")
+print(f"Negative centroid distances: {negative_closest_distances}")
 # ============================================================================ #
 # Plotting
 #%%
@@ -565,3 +584,36 @@ if pca.n_components_ == 2:
     fig = plot_pca_2d()
     fig.show()
 #%%
+# ============================================================================ #
+# Correlation between measures of negativity
+fig = go.Figure()
+fig.add_trace(
+    go.Scatter(
+        x=negative_distances,
+        y=train_km_projected,
+        mode="markers",
+        marker=dict(
+            color=train_pca_labels,
+            colorscale="RdBu",
+            opacity=0.8,
+        ),
+        name="Kmeans vs PCA scores",
+        text=train_adjectives,
+    )
+)
+fig.update_layout(
+    title="Correlation between Kmeans and PCA scores",
+    yaxis_title="Kmeans scores",
+    xaxis_title="PCA scores",
+)
+fig.show()
+# %%
+# write the results to a csv
+df = pd.DataFrame({
+        "adjective": train_adjectives,
+        "kmeans": train_km_projected,
+        "pca": train_pcs[:, 0],
+        "binary_label": train_pca_labels,
+})
+df.to_csv("negativity_scores.csv", index=False)
+# %%
