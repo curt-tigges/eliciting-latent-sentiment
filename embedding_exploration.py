@@ -228,19 +228,16 @@ fig = px.imshow(
     title="Cosine similarity between single-token adjectives",
 )
 fig.show()
-# %%
+#%%
 # ============================================================================ #
-# PCA and kmeans
-pca = PCA(n_components=1)
-train_pcs = pca.fit_transform(train_embeddings.numpy())
-test_pcs = pca.transform(test_embeddings.numpy())
-verb_pcs = pca.transform(verb_embeddings.numpy())
+# K-means
 kmeans = KMeans(n_clusters=2, n_init=10)
-kmeans.fit(train_pcs)
+kmeans.fit(train_embeddings)
 train_labels: Int[np.ndarray, "batch"] = kmeans.labels_
-test_labels = kmeans.predict(test_pcs)
-verb_labels = kmeans.predict(verb_pcs)
-centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
+test_labels = kmeans.predict(test_embeddings)
+verb_labels = kmeans.predict(verb_embeddings)
+centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
+
 #%%
 def split_by_label(
     adjectives: List[str], labels: Int[np.ndarray, "batch"]
@@ -257,17 +254,9 @@ def split_by_label(
     ]
     return first_cluster, second_cluster
 #%%
-first_cluster = [
-    adj[1:]
-    for i, adj in enumerate(train_adjectives) 
-    if train_labels[i] == 0
-]
-second_cluster = [
-    adj[1:]
-    for i, adj in enumerate(train_adjectives) 
-    if train_labels[i] == 1
-]
-# %%
+first_cluster, second_cluster = split_by_label(
+    train_adjectives, train_labels
+)
 pos_first = (
     len(set(first_cluster) & set(train_positive_adjectives)) >
     len(set(second_cluster) & set(train_negative_adjectives))
@@ -283,6 +272,7 @@ if pos_first:
     verb_positive_cluster, verb_negative_cluster = split_by_label(
         all_verbs, verb_labels
     )
+    km_line: Float[np.ndarray, "d_model"] = centroids[0] - centroids[1]
 else:
     train_positive_cluster = second_cluster
     train_negative_cluster = first_cluster
@@ -293,6 +283,50 @@ else:
     )
     verb_positive_cluster, verb_negative_cluster = split_by_label(
         all_verbs, verb_labels
+    )
+    km_line: Float[np.ndarray, "d_model"] = centroids[1] - centroids[0]
+# %%
+# ============================================================================ #
+# PCA
+pca = PCA(n_components=1)
+train_pcs = pca.fit_transform(train_embeddings.numpy())
+test_pcs = pca.transform(test_embeddings.numpy())
+verb_pcs = pca.transform(verb_embeddings.numpy())
+kmeans.fit(train_pcs)
+train_pca_labels: Int[np.ndarray, "batch"] = kmeans.labels_
+test_pca_labels = kmeans.predict(test_pcs)
+verb_pca_labels = kmeans.predict(verb_pcs)
+pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
+#%%
+pca_first_cluster, pca_second_cluster = split_by_label(
+    train_adjectives, train_pca_labels
+)
+# %%
+pca_pos_first = (
+    len(set(pca_first_cluster) & set(train_positive_adjectives)) >
+    len(set(pca_second_cluster) & set(train_negative_adjectives))
+)
+if pca_pos_first:
+    train_pca_positive_cluster = pca_first_cluster
+    train_pca_negative_cluster = pca_second_cluster
+    pca_positive_centroid = pca_centroids[0, :]
+    pca_negative_centroid = pca_centroids[1, :]
+    test_pca_positive_cluster, test_pca_negative_cluster = split_by_label(
+        test_adjectives, test_pca_labels
+    )
+    verb_pca_positive_cluster, verb_pca_negative_cluster = split_by_label(
+        all_verbs, verb_pca_labels
+    )
+else:
+    train_pca_positive_cluster = pca_second_cluster
+    train_pca_negative_cluster = pca_first_cluster
+    pca_positive_centroid = pca_centroids[1, :]
+    pca_negative_centroid = pca_centroids[0, :]
+    test_pca_negative_cluster, test_pca_positive_cluster = split_by_label(
+        test_adjectives, test_pca_labels
+    )
+    verb_pca_positive_cluster, verb_pca_negative_cluster = split_by_label(
+        all_verbs, verb_pca_labels
     )
 # %%
 # ============================================================================ #
@@ -313,36 +347,60 @@ def print_accuracy(
     accuracy = correct / total
     print(f"{label} accuracy: {correct}/{total} = {accuracy:.0%}")
 
-#%% # in-sample test
+# ============================================================================ #
+# KMeans accuracy
+
 print_accuracy(
     train_positive_cluster,
     train_negative_cluster,
     train_positive_adjectives,
     train_negative_adjectives,
-    "In-sample",
+    "In-sample KMeans",
 )
-#%% # out-of-sample test
 print_accuracy(
     test_positive_cluster,
     test_negative_cluster,
     test_positive_adjectives,
     test_negative_adjectives,
-    "Out-of-sample",
+    "Out-of-sample KMeans",
 )
-#%% # out-of-sample verbs
 print_accuracy(
     verb_positive_cluster,
     verb_negative_cluster,
     positive_verbs,
     negative_verbs,
-    "Out-of-sample verbs",
+    "Out-of-sample KMeans verbs",
+)
+# ============================================================================ #
+# PCA accuracy
+
+print_accuracy(
+    train_pca_positive_cluster,
+    train_pca_negative_cluster,
+    train_positive_adjectives,
+    train_negative_adjectives,
+    "In-sample PCA",
+)
+print_accuracy(
+    test_pca_positive_cluster,
+    test_pca_negative_cluster,
+    test_positive_adjectives,
+    test_negative_adjectives,
+    "Out-of-sample PCA",
+)
+print_accuracy(
+    verb_pca_positive_cluster,
+    verb_pca_negative_cluster,
+    positive_verbs,
+    negative_verbs,
+    "Out-of-sample PCA verbs",
 )
 #%% # compute euclidean distance between centroids and each point
 positive_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
-    train_pcs - positive_centroid, axis=-1
+    train_pcs - pca_positive_centroid, axis=-1
 )
 negative_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
-    train_pcs - negative_centroid, axis=-1
+    train_pcs - pca_negative_centroid, axis=-1
 )
 # print the adjectives closest to each centroid
 positive_closest = np.array(train_adjectives)[
@@ -365,7 +423,7 @@ def plot_pca_1d():
             text=train_adjectives,
             mode="markers",
             marker=dict(
-                color=train_labels,
+                color=train_pca_labels,
                 colorscale="RdBu",
                 opacity=0.8,
             ),
@@ -387,8 +445,8 @@ def plot_pca_1d():
     # )
     fig.add_trace(
         go.Scatter(
-            x=centroids[:, 0],
-            y=np.zeros_like(centroids[:, 0]),
+            x=pca_centroids[:, 0],
+            y=np.zeros_like(pca_centroids[:, 0]),
             mode="markers",
             marker=dict(
                 color=["red", "blue"],
@@ -430,7 +488,7 @@ def plot_pca_2d():
             text=train_adjectives,
             mode="markers",
             marker=dict(
-                color=train_labels,
+                color=train_pca_labels,
                 colorscale="RdBu",
                 opacity=0.8,
             ),
@@ -456,7 +514,7 @@ def plot_pca_2d():
             y=verb_pcs[:, 1],
             mode="markers",
             marker=dict(
-                color=verb_labels,
+                color=verb_pca_labels,
                 colorscale="oryel",
                 opacity=0.8,
             ),
@@ -489,8 +547,8 @@ def plot_pca_2d():
     )
     fig.add_trace(
         go.Scatter(
-            x=centroids[:, 0],
-            y=centroids[:, 1],
+            x=pca_centroids[:, 0],
+            y=pca_centroids[:, 1],
             mode="markers",
             marker=dict(color='green', symbol='x', size=10),
             name="Centroids",
@@ -507,4 +565,3 @@ if pca.n_components_ == 2:
     fig = plot_pca_2d()
     fig.show()
 #%%
-
