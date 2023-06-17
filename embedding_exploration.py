@@ -13,9 +13,8 @@ import random
 from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import List, Tuple, Union, Optional
+from typing import Iterable, List, Tuple, Union, Optional
 from jaxtyping import Float, Int
-from typeguard import typechecked
 from torch import Tensor
 from functools import partial
 import copy
@@ -36,15 +35,55 @@ import wandb
 #%%
 model = HookedTransformer.from_pretrained(
     "gpt2-small",
-    # center_unembed=True,
-    # center_writing_weights=True,
-    # fold_ln=True,
+    center_unembed=True,
+    center_writing_weights=True,
+    fold_ln=True,
     # refactor_factored_attn_matrices=True,
 )
 #%%
 # ============================================================================ #
 # Data loading
-positive_adjectives = [
+
+def check_single_tokens(
+    str_tokens: List[str],
+    transformer: HookedTransformer = model,
+) -> None:
+    good_tokens = []
+    error = False
+    for token in str_tokens:
+        if token.startswith(' '):
+            check_token = token
+        else:
+            check_token = ' ' + token
+        try:
+            transformer.to_single_token(check_token)
+            good_tokens.append(token)
+        except AssertionError:
+            error = True
+            continue
+    if error:
+        raise AssertionError(
+            'Non-single tokens found, reduced list: ' + str(good_tokens)
+        )
+    
+def check_overlap(trainset: Iterable[str], testset: Iterable[str]) -> None:
+    trainset = set(trainset)
+    testset = set(testset)
+    overlap = trainset.intersection(testset)
+    if len(overlap) > 0:
+        raise AssertionError(
+            'Overlap between train and test sets.\n'
+            f'Reduced test set: {testset - overlap}'
+        )
+    
+def prepend_space(tokens: Iterable[str]) -> List[str]:
+    return [' ' + token for token in tokens]
+
+#%%
+# ============================================================================ #
+# Training set
+
+train_positive_adjectives = [
     'perfect',
     'fantastic',
     'delightful',
@@ -79,7 +118,7 @@ positive_adjectives = [
     'excellent',
     'pleasant'
 ]
-negative_adjectives = [
+train_negative_adjectives = [
     'dreadful',
     'bad',
     'lousy',
@@ -108,34 +147,83 @@ negative_adjectives = [
     'disappointing',
     'awful'
 ]
-single_token_adjectives = [
-    ' ' + adj for adj in positive_adjectives + negative_adjectives
+train_adjectives = prepend_space(
+    train_positive_adjectives + train_negative_adjectives
+)
+check_single_tokens(train_adjectives)
+#%%
+# ============================================================================ #
+# Testing set
+test_positive_adjectives = [
+    'breathtaking', 'stunning', 'impressive', 'admirable', 'phenomenal', 
+    'radiant', 'sublime', 'glorious', 'magical', 'sensational', 'pleasing'
 ]
-for adj in single_token_adjectives:
-    model.to_single_token(adj)
+
+test_negative_adjectives = [
+    'foul', 'vile', 'appalling', 'rotten', 'grim', 'dismal'
+]
+test_adjectives = prepend_space(
+    test_positive_adjectives + test_negative_adjectives
+)
+check_overlap(train_positive_adjectives, test_positive_adjectives)
+check_overlap(train_negative_adjectives, test_negative_adjectives)
+check_single_tokens(test_positive_adjectives)
+check_single_tokens(test_negative_adjectives)
+#%% # verb set
+positive_verbs = [
+    'enjoyed', 'loved', 'liked', 'appreciated', 'admired', 'cherished'
+]
+negative_verbs = [
+    'hated', 'despised', 'disliked', 'despised'
+]
+all_verbs = prepend_space(positive_verbs + negative_verbs)
+check_single_tokens(positive_verbs)
+check_single_tokens(negative_verbs)
+
 # %%
 # ============================================================================ #
 # Embed
-tokens: Int[Tensor, "batch pos"] = model.to_tokens(
-    single_token_adjectives, prepend_bos=False
+def embed_str_tokens(
+    str_tokens: List[str],
+    transformer: HookedTransformer = model,
+) -> Float[Tensor, "batch d_model"]:
+    tokens: Int[Tensor, "batch pos"] = transformer.to_tokens(
+        str_tokens, prepend_bos=False
+    )
+    embeddings: Float[Tensor, "batch pos d_model"] = transformer.embed(
+        tokens
+    )
+    embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
+    assert len(embeddings.shape) == 2, (
+        f"Expected embeddings to be 2D, got {embeddings.shape}"
+    )
+    return embeddings.cpu().detach()
+#%% # train, test embeddings
+train_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
+    train_adjectives
 )
-embeddings: Float[Tensor, "batch pos d_model"] = model.embed(tokens).detach().cpu()
-assert tokens.shape[1] == embeddings.shape[1] == 1
-embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
-embeddings_normalised: Float[Tensor, "batch d_model"] = F.normalize(embeddings, dim=-1)
+test_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
+    test_adjectives
+)
+verb_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
+    all_verbs
+)
+train_embeddings_normalised: Float[Tensor, "batch d_model"] = F.normalize(
+    train_embeddings, dim=-1
+)
 # %%
 # ============================================================================ #
 # Cosine similarity
 # compute cosine similarity between all pairs of embeddings
-cosine_similarities = torch.einsum(
-    "bm,cm->bc", embeddings_normalised, embeddings_normalised
+cosine_similarities = einops.einsum(
+    train_embeddings_normalised, train_embeddings_normalised, "b m, c m->b c"
 )
 # %%
 # plot cosine similarity matrix
 fig = px.imshow(
     cosine_similarities.numpy(),
-    x=single_token_adjectives,
-    y=single_token_adjectives,
+    x=train_adjectives,
+    y=train_adjectives,
     color_continuous_scale="RdBu",
     title="Cosine similarity between single-token adjectives",
 )
@@ -144,50 +232,91 @@ fig.show()
 # ============================================================================ #
 # PCA and kmeans
 pca = PCA(n_components=2)
-principal_components = pca.fit_transform(embeddings.numpy())
+train_pcs = pca.fit_transform(train_embeddings.numpy())
+test_pcs = pca.transform(test_embeddings.numpy())
+verb_pcs = pca.transform(verb_embeddings.numpy())
 kmeans = KMeans(n_clusters=2, n_init=10)
-kmeans.fit(principal_components)
-cluster_labels = kmeans.labels_
+kmeans.fit(train_pcs)
+train_labels: Int[np.ndarray, "batch"] = kmeans.labels_
+test_labels = kmeans.predict(test_pcs)
+verb_labels = kmeans.predict(verb_pcs)
 centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
+#%%
+def split_by_label(
+    adjectives: List[str], labels: Int[np.ndarray, "batch"]
+) -> Tuple[List[str], List[str]]:
+    first_cluster = [
+        adj[1:]
+        for i, adj in enumerate(adjectives) 
+        if labels[i] == 0
+    ]
+    second_cluster = [
+        adj[1:]
+        for i, adj in enumerate(adjectives) 
+        if labels[i] == 1
+    ]
+    return first_cluster, second_cluster
 #%%
 first_cluster = [
     adj[1:]
-    for i, adj in enumerate(single_token_adjectives) 
-    if cluster_labels[i] == 0
+    for i, adj in enumerate(train_adjectives) 
+    if train_labels[i] == 0
 ]
 second_cluster = [
     adj[1:]
-    for i, adj in enumerate(single_token_adjectives) 
-    if cluster_labels[i] == 1
+    for i, adj in enumerate(train_adjectives) 
+    if train_labels[i] == 1
 ]
 # %%
 pos_first = (
-    (set(first_cluster) == set(positive_adjectives)) and
-    (set(second_cluster) == set(negative_adjectives))
+    (set(first_cluster) == set(train_positive_adjectives)) and
+    (set(second_cluster) == set(train_negative_adjectives))
 )
 neg_first = (
-    (set(first_cluster) == set(negative_adjectives)) and
-    (set(second_cluster) == set(positive_adjectives))
+    (set(first_cluster) == set(train_negative_adjectives)) and
+    (set(second_cluster) == set(train_positive_adjectives))
 )
 assert pos_first or neg_first
 if pos_first:
-    positive_cluster = first_cluster
-    negative_cluster = second_cluster
+    train_positive_cluster = first_cluster
+    train_negative_cluster = second_cluster
     positive_centroid = centroids[0, :]
     negative_centroid = centroids[1, :]
-#%%
-# compute euclidean distance between centroids and each point
+    test_positive_cluster, test_negative_cluster = split_by_label(
+        test_adjectives, test_labels
+    )
+    verb_positive_cluster, verb_negative_cluster = split_by_label(
+        all_verbs, verb_labels
+    )
+else:
+    train_positive_cluster = second_cluster
+    train_negative_cluster = first_cluster
+    positive_centroid = centroids[1, :]
+    negative_centroid = centroids[0, :]
+    test_negative_cluster, test_positive_cluster = split_by_label(
+        test_adjectives, test_labels
+    )
+    verb_positive_cluster, verb_negative_cluster = split_by_label(
+        all_verbs, verb_labels
+    )
+#%% # out-of-sample test
+assert set(test_positive_cluster) == set(test_positive_adjectives)
+assert set(test_negative_cluster) == set(test_negative_adjectives)
+#%% # out-of-sample verbs
+assert set(verb_positive_cluster) == set(positive_verbs)
+assert set(verb_negative_cluster) == set(negative_verbs)
+#%% # compute euclidean distance between centroids and each point
 positive_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
-    principal_components - positive_centroid, axis=-1
+    train_pcs - positive_centroid, axis=-1
 )
 negative_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
-    principal_components - negative_centroid, axis=-1
+    train_pcs - negative_centroid, axis=-1
 )
 # print the adjectives closest to each centroid
-positive_closest = np.array(single_token_adjectives)[
+positive_closest = np.array(train_adjectives)[
     np.argsort(positive_distances)[:5]
 ]
-negative_closest = np.array(single_token_adjectives)[
+negative_closest = np.array(train_adjectives)[
     np.argsort(negative_distances)[:5]
 ]
 print(f"Positive centroid nearest adjectives: {positive_closest}")
@@ -197,21 +326,47 @@ print(f"Negative centroid nearest adjectives: {negative_closest}")
 fig = go.Figure()
 fig.add_trace(
     go.Scatter(
-        x=principal_components[:, 0],
-        y=principal_components[:, 1],
+        x=train_pcs[:, 0],
+        y=train_pcs[:, 1],
         mode="markers",
         marker=dict(
-            color=cluster_labels,
+            color=train_labels,
             colorscale="RdBu",
             opacity=0.8,
         ),
-        name="PCA",
+        name="PCA in-sample",
+    )
+)
+# fig.add_trace(
+#     go.Scatter(
+#         x=test_pcs[:, 0],
+#         y=test_pcs[:, 1],
+#         mode="markers",
+#         marker=dict(
+#             color=test_labels,
+#             colorscale="oryel",
+#             opacity=0.8,
+#         ),
+#         name="PCA out-of-sample",
+#     )
+# )
+fig.add_trace(
+    go.Scatter(
+        x=verb_pcs[:, 0],
+        y=verb_pcs[:, 1],
+        mode="markers",
+        marker=dict(
+            color=verb_labels,
+            colorscale="oryel",
+            opacity=0.8,
+        ),
+        name="PCA verbs",
     )
 )
 fig.add_trace(
     go.Scatter(
-        x=principal_components[np.argsort(positive_distances)[:5], 0],
-        y=principal_components[np.argsort(positive_distances)[:5], 1],
+        x=train_pcs[np.argsort(positive_distances)[:5], 0],
+        y=train_pcs[np.argsort(positive_distances)[:5], 1],
         mode="markers",
         marker=dict(
             color="pink",
@@ -222,8 +377,8 @@ fig.add_trace(
 )
 fig.add_trace(
     go.Scatter(
-        x=principal_components[np.argsort(negative_distances)[:5], 0],
-        y=principal_components[np.argsort(negative_distances)[:5], 1],
+        x=train_pcs[np.argsort(negative_distances)[:5], 0],
+        y=train_pcs[np.argsort(negative_distances)[:5], 1],
         mode="markers",
         marker=dict(
             color="violet",
@@ -247,9 +402,4 @@ fig.update_layout(
     yaxis_title="PC2",
 )
 fig.show()
-# %%
-# ============================================================================ #
-# To-dos
-
-# FIXME: does this direction in embedding space generalise to other tokens?
 # %%
