@@ -28,8 +28,8 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-#%% [markdown]
-#### Model loading
+# ============================================================================ #
+# Model loading
 #%%
 model = HookedTransformer.from_pretrained(
     "gpt2-small",
@@ -40,16 +40,19 @@ model = HookedTransformer.from_pretrained(
 )
 #%%
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#%% [markdown]
-#### Data generation
+# ============================================================================ #
+# Data generation
+
 # %%
-utils.test_prompt('I thought the movie was great. I', ' loved', model)
+utils.test_prompt('I thought the movie was great. I', ' loved', model, top_k=20)
 # %%
-utils.test_prompt('I thought the movie was great. I', ' hated', model)
+utils.test_prompt('I thought the movie was great. I', ' hated', model, top_k=20)
 # %%
-utils.test_prompt('I thought the movie was terrible. I', ' hated', model)
+utils.test_prompt('I thought the movie was terrible. I', ' hated', model, top_k=20)
 # %%
-utils.test_prompt('I thought the movie was terrible. I', ' loved', model)
+utils.test_prompt('I thought the movie was absolutely terrible. I', ' loved', model, top_k=20)
+#%%
+utils.test_prompt('I absolutely detested the movie. I thought it was', ' terrible', model, top_k=20)
 #%%
 def write_adjective_lengths_to_file():
     possible_adjectives = [
@@ -189,8 +192,8 @@ print('clean tokens', clean_tokens[prompt_idx])
 print('clean logit', clean_logits[prompt_idx, -1, answer_tokens[prompt_idx][0]])
 print('clean logit diff', clean_logit_differences[prompt_idx])
 utils.test_prompt(clean_prompts[prompt_idx], answers[prompt_idx][0], model)
-# %% [markdown]
-#### Logit lens
+# ============================================================================ #
+# Logit lens
 answer_residual_directions: Float[
     Tensor, "batch 2 d_model"
 ] = model.tokens_to_residual_directions(answer_tokens)
@@ -289,8 +292,8 @@ fig = px.imshow(
     color_continuous_scale="RdBu",
 )
 fig.show()
-#%% [markdown]
-#### Intermediate residual streams
+# ============================================================================ #
+# Intermediate residual streams
 #%%
 # check that the final residual stream unembeds to the logits
 final_residual_stream: Float[
@@ -314,13 +317,15 @@ average_logit_diff = einops.einsum(
 torch.testing.assert_close(average_logit_diff, clean_logit_diff)
 #%%
 # FIXME: visualise detokenisation of the adjective residual stream
+# ============================================================================ #
+# Logit difference direction
+
 #%%
-#%% [markdown]
-## Logit difference direction
-#%% [markdown]
-## Activation patching
-#%% [markdown]
-#### Positional patching
+# ============================================================================ #
+# Activation patching
+#%%
+# ============================================================================ #
+# Positional patching
 #%%
 def resid_pre_pos_patching_hook(
     resid_pre: Float[torch.Tensor, "batch pos d_model"],
@@ -375,8 +380,9 @@ fig = px.imshow(
     labels=dict(x="Position", y="Layer", color="Normalized Logit Diff"),
 )
 fig.show()
-#%% [markdown]
-#### Head patching
+#%%
+# ============================================================================ #
+# Head patching
 
 #%%
 def head_patching_hook(
@@ -427,8 +433,9 @@ fig = px.imshow(
     labels=dict(x="Head", y="Layer", color="Normalized Logit Diff"),
 )
 fig.show()
-#%% [markdown]
-## Attention
+#%%
+# ============================================================================ #
+# Attention
 #%%
 def visualize_attention_patterns(
     heads: List[Tuple[int, int]],
@@ -452,5 +459,6 @@ def visualize_attention_patterns(
     ))
 #%%
 visualize_attention_patterns([(7, 5), (8, 9)])
-#%% [markdown]
-## Path patching
+#%%
+# ============================================================================ #
+# Path patching
