@@ -1,8 +1,9 @@
 
 # %%
+
 import torch as t
 from torch import Tensor
-from typing import Optional, Union, Dict, Callable, Optional, List
+from typing import Optional, Union, Dict, Callable, Optional, List, Tuple
 from typing_extensions import Literal
 from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.hook_points import HookPoint
@@ -10,11 +11,22 @@ import transformer_lens.utils as utils
 import itertools
 from functools import partial
 from tqdm.auto import tqdm
-from jaxtyping import Float, Int 
-
+from jaxtyping import Float, Int
+from collections import defaultdict
+import einops
+import re
 
 # %%
 
+_SeqPos = Optional[Int[Tensor, "batch pos"]]
+SeqPos = Optional[Union[int, List[int], Int[Tensor, "batch *pos"]]]
+IterSeqPos = Union[SeqPos, Literal["each"]]
+
+def relevant_names_filter(name: str):
+    '''Defining this so I don't have to use such a big cache. It contains all the names I'll need for any path patching.'''
+    return any([name.endswith(s) for s in [
+        "z", "resid_pre", "resid_mid", "resid_post", "pre", "post", "_input", "q", "k", "v", "attn_out", "mlp_out"
+    ]])
 
 def hook_fn_generic_patching(activation: Float[Tensor, "..."], hook: HookPoint, cache: ActivationCache) -> Float[Tensor, "..."]:
     '''Patches entire tensor of activations, from corresponding values in cache.'''
@@ -26,43 +38,91 @@ def hook_fn_generic_caching(activation: Float[Tensor, "..."], hook: HookPoint, n
     hook.ctx[name] = activation
     return activation
 
-def hook_fn_generic_patching_from_context(activation: Float[Tensor, "..."], hook: HookPoint, name: str = "activation") -> Float[Tensor, "..."]:
+def hook_fn_generic_patching_from_context(activation: Float[Tensor, "..."], hook: HookPoint, name: str = "activation", add: bool = False) -> Float[Tensor, "..."]:
     '''Patches activations from hook context, if they are there.'''
     if name in hook.ctx:
-        activation[:] = hook.ctx[name][:]
+        if add:
+            activation += hook.ctx[name]
+        else:
+            activation[:] = hook.ctx[name][:]
         hook.clear_context()
     return activation
 
-
-class Component:
+def get_hook_name_filter(model: HookedTransformer):
+    # TODO - this seems dumb, should it be fixed in TL? Add a pull request for it?
     '''
-    Returns a component in a nice way, i.e. without requiring messy dicts.
+    Helper function which returns a hook names filter function.
+
+    I defined this because just using the hook names filter `lambda name: True` will throw an error whenever the model doesn't use attn results
+    or split qkv input (it might try to add a hook where none exists). So this function just checks if the model uses attn results or split qkv input,
+    and if it doesn't, then it only adds hooks for the other nodes.
+    '''
+    def name_filter(name):
+        if name.endswith("_result") and (not model.cfg.use_attn_result):
+            return False
+        elif any([name.endswith(f"{c}_input") for c in "qkv"]) and (not model.cfg.use_split_qkv_input):
+            return False
+        elif name.endswith("hook)tokens") and (not model.cfg.use_hook_tokens):
+            return False
+        return True
+
+    return name_filter
+
+
+class Node:
+    '''
+    Returns a node in a nice way, i.e. without requiring messy dicts.
 
     This class contains the following:
-        Convenient ways to define components (see examples below)
-        Error checking (making sure you don't define components incorrectly)
+        Convenient ways to define nodes (see examples below)
+        Error checking (making sure you don't define nodes incorrectly)
         Methods to return hook functions for stuff like patching
 
-    We specify a component using:
-        *args (the thing we'd index cache with)
-        **kwargs (can be seq_pos, head or neuron: used to override the default of patching all values at once)
+    Arguments:
+        node_name
+            Can be the full node name string, or just the node name (e.g. "q" or "resid_pre")
+        layer
+            If node_name is just abbrev, you can specify the layer here, and the full node name
+            will be returned for you using `utils.get_act_name` (same syntax as the cache uses).
+        seq_pos
+            If this is None, we patch at all sequence positions.
+            If this is not None, it's treated as a list of sequence positions over elements in our batch. It can either
+            be an int or scalar tensor (then we patch at that seq pos for all elems in our batch), or a list/tensor with
+            first dimension equal to batch size (then we patch at those seq pos for each elem in our batch). In this latter
+            case, it can be either 1D (one seq pos per sequence) or 2D (a list of seq pos for each sequence).
 
-    Examples:
-        Component("q", 0, head=1)
-        Component("resid_pre", 1, seq_pos=[3, 4])
-        Component("pre", -1, neuron=1337)
+    Examples of how we can specify a node:
+        Node("blocks.1.attn.hook_attn_scores")   # specify with entire hook name
+        Node("q", 0)                             # syntax like how we index cache
+        Node("q", 0, head=1)                     # syntax like how we index cache (plus specifying head)
+        Node("pre", 5, neuron=1337)             # like utils.get_act_name("resid_pre", 5), at sequence positions [3, 4]
     '''
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.component_name = args[0]
-        self.activation_name = utils.get_act_name(*args)
-        assert all([k in ["seq_pos", "head", "neuron"] for k in kwargs.keys()]), "Error: kwargs must be one of 'seq_pos', 'head', or 'neuron'."
-        self.seq_pos = kwargs.get("seq_pos", None)
-        self.head = kwargs.get("head", None)
-        self.neuron = kwargs.get("neuron", None)
+    def __init__(
+        self, 
+        node_name, 
+        layer: Optional[int] = None,
+        head: Optional[int] = None,
+        neuron: Optional[int] = None,
+        seq_pos: SeqPos = None,
+    ):
+        if layer is not None: assert layer >= 0, "Doesn't accept negative layers."
+
+        if "hook_" in node_name:
+            self.component_name = node_name.split("hook_")[-1]
+            self.layer = re.search("\.(\d)\.", node_name)
+            if self.layer is not None: self.layer = int(self.layer.group(1))
+        else:
+            self.component_name = node_name
+            self.layer = layer
+
+        if head is not None: assert isinstance(head, int), f"head should be an int, not {type(head)}"
+        if neuron is not None: assert isinstance(neuron, int), f"neuron should be an int, not {type(neuron)}"
+        self.head = head
+        self.neuron = neuron
+        self.seq_pos = seq_pos
 
         # Check if head dimension is appropriate
-        if not any(name in self.activation_name for name in ["q", "k", "v", "z", "pattern", "attn_scores"]):
+        if not any(name in self.activation_name for name in ["q", "k", "v", "z", "pattern"]):
             assert self.head is None, f"Can't specify `head` for activation {self.activation_name}."
 
         # Check if neuron dimension is appropriate
@@ -70,51 +130,130 @@ class Component:
             assert self.neuron is None, f"Can't specify `neuron` for activation {self.activation_name}."
 
 
-    def check_and_fix_sender_component(self):
-        '''
-        Raises an error if this isn't a valid sender component.
+    @property
+    def activation_name(self):
+        return utils.get_act_name(self.component_name, layer=self.layer)
+    
 
-        Not sure exactly what a valid sender component would be, but this seemed like a good starting point.
+    def get_posn(self):
         '''
-        valid_sender_components = ["v", "z", "attn_out", "post", "mlp_out", "resid_pre", "resid_post", "resid_mid"]
-        assert self.component_name in valid_sender_components, f"Error: component {self.component_name} is not a valid sender component. Valid sender components are: {valid_sender_components}"
+        Gives a number representing the position of this node in the model.
+
+        Used to check whether a node comes before another one, because the operation:
+            orig_receiver_input <- orig_receiver_input + (new_sender_output - orig_sender_output)
+        shouldn't be done if receiver comes after sender in the model.
+
+        The function is pretty janky. It gets an int for layer, plus a float in the range (0, 1) for position within
+        a layer, that way the sum of these two will always tell you whether one node comes before the other.
+        '''
+        if self.layer is None:
+            layer = -1 if self.component_name in ["embed", "pos_embed", "tokens"] else 10e5
+        else:
+            layer = self.layer
+        
+        if "resid_pre" in self.activation_name:
+            within_layer = 0.0
+        elif ".ln1." in self.activation_name:
+            within_layer = 0.1
+        elif ".attn." in self.activation_name or any([f"{s}_input" in self.activation_name for s in "qkv"]):
+            within_layer = 0.2
+        elif "attn_out" in self.activation_name:
+            within_layer = 0.3
+        elif "resid_mid" in self.activation_name:
+            within_layer = 0.4
+        elif ".ln2." in self.activation_name:
+            within_layer = 0.5
+        elif ".mlp." in self.activation_name or "mlp_in" in self.activation_name:
+            within_layer = 0.6
+        elif "mlp_out" in self.activation_name:
+            within_layer = 0.7
+        elif "resid_post" in self.activation_name:
+            # resid_post in a layer is the same as resid_pre in the next layer
+            within_layer = 1.0
+        else:
+            raise Exception("Error in function - haven't yet added a case for this name.")
+            
+        return layer + within_layer
+                
+    def __ge__(self, other: "Node"):
+        return self.get_posn() >= other.get_posn()
+    
+    def __gt__(self, other: "Node"):
+        return self.get_posn() > other.get_posn()
+
+
+    def check_sender(self, model: HookedTransformer) -> List["Node"]:
+        '''
+        Raises an error if this isn't a valid sender node.
+
+        The valid list is quite restrictive, because this helps make sure edge cases are avoided where possible.
+        '''
+        # We only do individual sequence position patches for activation patching, not path patching
+        assert self.seq_pos is None, "Error: can't specify `seq_pos` for path patching. You should use the `seq_pos` argument in the `path_patch` function."
+
+        # Make sure it's actually real
+        assert self.activation_name in model.hook_dict.keys(), f"Error: node '{self.activation_name}' is not in the hook dictionary."
+
+        # Do main validity check
+        valid_sender_nodes = ["z", "attn_out", "post", "mlp_out", "resid_pre", "resid_post", "resid_mid"]
+        assert self.component_name in valid_sender_nodes, f"Error: node '{self.component_name}' is not a valid sender node. Valid sender nodes are: {valid_sender_nodes}"
+
+        return [self]
 
     
-    def check_and_fix_receiver_component(self):
+    def check_and_split_receiver(self, model: HookedTransformer) -> List["Node"]:
         '''
-        Checks if this is a valid receiver component.
+        Checks if this is a valid receiver node.
 
         We need to make sure it's not "attn_out" or "mlp_out" (because if it's a receiver then caching needs to happen before patching in step 2).
         But rather than raising an error in this case, we can just change the patching to be at "z" or "post" instead.
+
+        Also splits the receiver node into multiple nodes if required, e.g. "pattern" becomes "q" and "k".
         '''
-        if self.component_name == "attn_out":
-            self.component_name = "z" # This is causally the same as "change the attention head's output", but it won't screw with the caching step
-        elif self.component_name == "mlp_out":
-            self.component_name = "post" # This is causally the same as "change the MLP's output", but it won't screw with the caching step
+        # We only do individual sequence position patches for activation patching, not path patching
+        assert self.seq_pos is None, "Error: can't specify `seq_pos` for path patching. You should use the `seq_pos` argument in the `path_patch` function."
+
+        # Make sure it's actually real
+        assert self.activation_name in model.hook_dict.keys(), f"Error: node '{self.activation_name}' is not in the hook dictionary."
+
+        # Make specific substitution requests (i.e. "you tried X, instead you should do Y")
+        assert self.component_name != "mlp_in", "Error: 'mlp_in' is not a valid sender node. Please use 'pre' for the output of attention heads (to select specific neurons, use the 'neuron' argument in the Node constructor)."
+
+        # Do main validity check
+        valid_receiver_nodes = ["q", "k", "v", "pattern", "q_input", "k_input", "v_input", "resid_pre", "resid_mid", "resid_post", "pre"]
+        assert self.component_name in valid_receiver_nodes, f"Error: node '{self.component_name}' is not a valid receiver node. Valid receiver nodes are: {valid_receiver_nodes}"
+
+        # If node name is "pattern", we want to split this into "q" and "k"
+        # TODO - is this just bad? Maybe we never want to patch into pattern in this way?
+        if self.component_name == "pattern":
+            return [Node("q", layer=self.layer, head=self.head), Node("k", layer=self.layer, head=self.head)]
+        else:
+            return [self]
 
 
-    def get_patching_hook_fn(self, cache: ActivationCache) -> Callable:
+    def get_patching_hook_fn(self, cache: ActivationCache, batch_indices: Union[slice, Int[Tensor, "batch pos"]], seq_pos_indices: Union[slice, Int[Tensor, "batch pos"]]) -> Callable:
         '''
-        Returns a hook function for doing patching according to this component.
+        Returns a hook function for doing patching according to this node.
 
-        This is for step 2 of path patching (i.e. where we're patching the output of sender components), so we
-        assume that the component name is one of (z, attn_out, post, or mlp_out).
+        This is for step 2 of 3-step path patching (i.e. where we're patching the output of sender nodes), so we
+        assume that the node name is one of (z, post, or one of the resids).
         '''
         def hook_fn(activations: Float[Tensor, "..."], hook: HookPoint) -> Float[Tensor, "..."]:
             # Define an index for slicing (by default slice(None), which is equivalent to [:])
-            idx = [slice(None) for _ in range(activations.ndim)]
+            idx = [batch_indices, seq_pos_indices] + [slice(None) for _ in range(activations.ndim - 2)]
 
             # Check if we need to patch by head, and if so then check where the head dim is
             if self.head is not None:
-                assert self.component_name in ["z", "v"], "Only places it's valid to patch by head are 'z' and 'v'."
-                idx[-2] = self.head
+                # Attn patterns are messy because its shape is (batch, head, seqQ, seqK) not (batch, seq, ...). In this case we assume seq_pos_indices refer to the query position.
+                if "pattern" in hook.name or "score" in hook.name:
+                    assert isinstance(seq_pos_indices, slice), "Can't patch attention patterns/scores at specific sequence positions (ambiguous whether this is query or key positions)."
+                    idx = [slice(None) for _ in range(activations.ndim)]
+                    idx[1] = self.head
+                else:
+                    idx[2] = self.head
+
             # Check if we need to patch by neuron, and if so then check where the neuron dim is
-            if self.neuron is not None:
-                assert self.component_name == "post", "Only place it's valid to patch by neuron is 'post'."
-                idx[-1] = self.neuron
-            # Lastly, we might also need to patch by sequence position (which is first dimension for all of these components)
-            if self.seq_pos is not None:
-                idx[1] = self.seq_pos
+            if self.neuron is not None: idx[-1] = self.neuron
 
             # Now, patch the values in our activations tensor, and return the new activation values
             activations[idx] = cache[hook.name][idx]
@@ -124,7 +263,9 @@ class Component:
 
     
     def __repr__(self):
-        return f"Component({self.args}, seq_pos={self.seq_pos}, head={self.head}, neuron={self.neuron})"
+        head = "" if self.head is None else f", head={self.head}"
+        neuron = "" if self.neuron is None else f", neuron={self.neuron}"
+        return f"Node({self.activation_name}{head}{neuron})"
 
 
 
@@ -133,13 +274,13 @@ def product_with_args_kwargs(*args, **kwargs):
     Helper function which generates an iterable from args and kwargs.
 
     For example, running the following:
-        product_with_args_kwargs([1, 2], ['a', 'b'], key1=[True, False])
-    gives us:
-        ((1, 'a'), {'key1', True})
+        product_with_args_kwargs([1, 2], ['a', 'b'], key1=[True, False], key2=["q", "k"])
+    gives us a list of the following tuples:
+        ((1, 'a'), {'key1', True, 'key2': 'q'})
         ((1, 'a'), {'key1', False})
         ((1, 'b'), ('key1', True))
         ...
-        ((2, 'b'), {'key1', False})
+        ((2, 'b'), {'key1', False, 'key2': 'k'})
     '''
     # Generate the product of args
     args_product = list(itertools.product(*args))
@@ -161,30 +302,32 @@ def product_with_args_kwargs(*args, **kwargs):
 
 
 
-class MultiComponent:
-    '''
-    Class for defining a list of components.
+# TODO - the way seq_pos is handled in this class is super janky. What's done in the __init__ vs the get_node_dict should be more cleanly separated. Do we even need anything in the init?
 
-    In other words, we specify a few arguments, and this thing gives us a list of Component objects.
+class IterNode:
+    '''
+    Class for defining a list of nodes.
+
+    In other words, we specify a few arguments, and this thing gives us a list of Node objects.
 
     Args:
-        components
-            name of component (or list of componnet names) which we iterate over
+        nodes
+            name of node (or list of componnet names) which we iterate over
         seq_pos
             Is `None` by default, but can also be `"each"`, or it can be specified as an int or list of ints.
 
     Examples:
-        MultiComponent(component_names=["q", "k", "v"], seq_pos="each")
-            - this is how we might iterate over receiver components
+        IterNode(node_names=["q", "k", "v"], seq_pos="each")
+            - this is how we might iterate over receiver nodes
             - it'll give us a dict with keys ("q", "k", "v") and values = tensors of shape (seq_pos, layers, heads)
             - each element would be the result of patching from some fixed sender to a different receiver
 
-        MultiComponent(component_names=["attn_out", "mlp_out", "resid_pre"])
-            - this is how we might iterate over sender components
+        IterNode(node_names=["attn_out", "mlp_out", "resid_pre"])
+            - this is how we might iterate over sender nodes
             - it'll give us a dict with keys ("attn_out", "mlp_out", "resid_pre") and values = 1D tensors of shape (layers,)
 
-        MultiComponent(component_names="attn_out", seq_pos="each")
-            - this is how we might iterate over sender components
+        IterNode(node_names="attn_out", seq_pos="each")
+            - this is how we might iterate over sender nodes
             - it'll give us a tensor of shape (layers, seq_pos)
 
     Note:
@@ -193,140 +336,287 @@ class MultiComponent:
     '''
     def __init__(
         self, 
-        component_names: Union[str, List[str]], 
-        seq_pos: Optional[Union[Literal["each"], int, List[int]]] = None
+        node_names: Union[str, List[str]], 
+        seq_pos: IterSeqPos = None,
     ):
-        # Get component_names into a string, for consistency
-        self.component_names = [component_names] if isinstance(component_names, str) else component_names
+        self.seq_pos = seq_pos
 
-        # Figure out what the shape of the output will be (i.e. for our path patching iteration)
-        self.shapes = {}
-        for component in self.component_names:
+        # Get node_names into a list, for consistency
+        self.component_names = [node_names] if isinstance(node_names, str) else node_names
+
+        # Figure out what the dimensions of the output will be (i.e. for our path patching iteration)
+        self.shape_names = {}
+        for node in node_names:
             # Everything has a "layer" dim
-            self.shapes[component] = ["layer"]
+            self.shape_names[node] = ["layer"]
             # Add "seq_pos", if required
-            if seq_pos == "each": self.shapes[component].append("seq_pos")
-            # Add "head", if required
-            if component in ["z", "q", "k", "v", "attn_scores", "pattern"]:
-                self.shapes[component].append("head")
+            if seq_pos == "each": self.shape_names[node].append("seq_pos")
+            # Add "head" and "neuron", if required
+            if node in ["q", "k", "v", "z", "pattern"]: self.shape_names[node].append("head")
+            if node in ["pre", "post"]: self.shape_names[node].append("neuron")
+
+        # Result:
+        #   self.shape_names = {"z": ["layer", "seq_pos", "head"], "post": ["layer", "neuron"], ...}
+        # where each value is the list of things we'll be iterating over.
 
 
-    def get_component_dict(self, model: HookedTransformer, logits: Float[Tensor, "batch seq_pos"]) -> Dict[str, List[Component]]:
+    def get_node_dict(
+        self, 
+        model: HookedTransformer,
+        tensor: Optional[Float[Tensor, "batch seq_pos d_vocab"]] = None
+    ) -> Dict[str, List[Tuple[Tensor, Node]]]:
         '''
-        This is how we get the actual list of components (i.e. `Component` objects) which we'll be iterating through.
+        This is how we get the actual list of nodes (i.e. `Node` objects) which we'll be iterating through, as well as the seq len (because
+        this isn't stored in every node object).
 
-        We need `model` and `logits` to do it, because we need to know the shapes of the components (e.g. how many layers
-        or sequence positions, etc).
+        It will look like:
+            {"z": [
+                (seq_pos, Node(...)), 
+                (seq_pos, Node(...)),
+                ...
+            ], 
+            "post": [
+                (seq_pos, Node(...))
+                ...
+            ]}
+        where each value is a list of `Node` objects, and we'll path patch separately for each one of them.
+
+        We need `model` and `tensor` to do it, because we need to know the shapes of the nodes (e.g. how many layers or sequence positions,
+        etc). `tensor` is assumed to have first two dimensions (batch, seq_len).
         '''
         # Get a dict we can use to convert from shape names into actual shape values
-        shape_values_dict = {"seq_pos": logits.shape[1], "layer": model.cfg.n_layers, "head": model.cfg.n_heads, "neuron": model.cfg.d_mlp}
+        # We filter dict down, because we might not need all of these (e.g. we'll never need neurons and heads at the same time!)
+        batch_size, seq_len = tensor.shape[:2]
+        shape_values_all = {"seq_pos": seq_len, "layer": model.cfg.n_layers, "head": model.cfg.n_heads, "neuron": model.cfg.d_mlp}
 
-        # Get a dictionary to store the components (i.e. this will be a list of `Component` objects for each component name)
-        # Also, get dict to store the actual shape values for each component name
-        self.components_dict = {}
+        # Get a dictionary to store the nodes (i.e. this will be a list of `Node` objects for each node name)
+        # Also, get dict to store the actual shape values for each node name
+        self.nodes_dict = {}
         self.shape_values = {}
 
-        # Fill in self.shape_values with the actual values, and self.components_dict using itertools.product
-        # Note, this is a bit messy (e.g. component name and layer are *args, but head/neuron/seq_pos are **kwargs)
-        for component_name, shape_names in self.shapes.items():
-            # Get shape values
-            shape_values = [shape_values_dict[shape_name] for shape_name in shape_names]
-            # Get iterable, using a helper function defined earlier (using layers as *args and everything else as **kwargs)
-            shape_args = []
-            shape_kwargs = {}
-            for shape_name, shape_value in zip(shape_names, shape_values):
-                if shape_name == "layer": shape_args.append(range(shape_value))
-                elif shape_name in ["head", "neuron", "seq_pos"]: shape_kwargs[shape_name] = range(shape_value)
+        # If iterating, get a list of sequence positions we'll be iterating over
+        if self.seq_pos == "each":
+            seq_pos_indices = list(einops.repeat(t.arange(seq_len), "s -> s b 1", b=batch_size))
+        # If not iterating, then each node in the iteration has a fixed sequence length
+        else:
+            seq_pos_indices = [self.seq_pos]
 
-            self.shape_values[component_name] = shape_values
-            self.components_dict[component_name] = product_with_args_kwargs(*shape_args, **shape_kwargs)
-            self.components_dict[component_name] = [Component(component_name, *args, **kwargs) for args, kwargs in self.components_dict[component_name]]
 
-        return self.components_dict
+        # Fill in self.shape_values with the actual values, and self.nodes_dict using itertools.product
+        # Note, this is a bit messy (e.g. node name and layer are *args, but head/neuron/seq_pos are **kwargs)
+        for node_name, shape_names in self.shape_names.items():
+            
+            shape_values_dict = {name: value for name, value in shape_values_all.items() if name in shape_names}
+            shape_ranges = {name: range(value) for name, value in shape_values_dict.items() if name != "seq_pos"}
 
+            self.shape_values[node_name] = shape_values_dict
+
+            # Turn the ranges into a list of Node objects, using a fancy version of itertools.product
+            # args are (seq_pos,), kwargs are all the non-seq_pos values (i.e. layer, head, neuron)
+            shape_values_list = product_with_args_kwargs(seq_pos_indices, **shape_ranges)
+            self.nodes_dict[node_name] = [(args[0], Node(node_name, **kwargs)) for args, kwargs in shape_values_list]
+
+        return self.nodes_dict
+
+
+def get_batch_and_seq_pos_indices(seq_pos, batch_size, seq_len):
+    '''
+    seq_pos can be given in four different forms:
+        None             -> patch at all positions
+        int              -> patch at this position for all sequences in batch
+        list / 1D tensor -> this has shape (batch,) and the [i]-th elem is the position to patch for the i-th sequence in the batch
+        2D tensor        -> this has shape (batch, pos) and the [i, :]-th elem are all the positions to patch for the i-th sequence
+    
+    This function returns batch_indices, seq_pos_indices as either slice(None)'s in the first case, or as 2D tensors in the other cases.
+
+    In other words, if a tensor of activations had shape (batch_size, seq_len, ...), then you could index into it using:
+
+        activations[batch_indices, seq_pos_indices]
+    '''
+    if seq_pos is None:
+        seq_sub_pos_len = seq_len
+        seq_pos_indices = slice(None)
+        batch_indices = slice(None)
+    else:
+        if isinstance(seq_pos, int):
+            seq_pos = [seq_pos for _ in range(batch_size)]
+        if isinstance(seq_pos, list):
+            seq_pos = t.tensor(seq_pos)
+        if seq_pos.ndim == 1:
+            seq_pos = seq_pos.unsqueeze(-1)
+        assert (seq_pos.ndim == 2) and (seq_pos.shape[0] == batch_size) and (seq_pos.shape[1] <= seq_len) and (seq_pos.max() < seq_len), "Invalid 'seq_pos' argument."
+        seq_sub_pos_len = seq_pos.shape[1]
+        seq_pos_indices = seq_pos
+        batch_indices = einops.repeat(t.arange(batch_size), "batch -> batch seq_sub_pos", seq_sub_pos=seq_sub_pos_len)
+    
+    return batch_indices, seq_pos_indices
 
 
 
 def _path_patch_single(
     model: HookedTransformer,
     orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
-    sender_components: Union[Component, List[Component]],
-    receiver_components: Union[Component, List[Component]],
-    patching_metric: Callable[[Float[Tensor, "batch pos d_vocab"]], Float[Tensor, ""]],
+    sender: Union[Node, List[Node]],
+    receiver: Union[Node, List[Node]],
+    patching_metric: Callable,
     orig_cache: ActivationCache,
     new_cache: ActivationCache,
-    sender_seq_pos: Optional[Union[int, List[int]]] = None,
-    receiver_seq_pos: Optional[Union[int, List[int]]] = None,
+    seq_pos: _SeqPos = None,
+    apply_metric_to_cache: bool = False,
     direct_includes_mlps: bool = True,
 ) -> Float[Tensor, ""]:
     '''
-    Function which gets repeatedly called when doing path patching via the main `path_patch` function.
+    This function gets called by the main `path_patch` function, when direct_includes_mlps = False. It shouldn't be called directly by user.
 
-    This shouldn't be called directly by the user.
+    There are 2 options for how to treat MLPs - either MLPs are direct paths or they aren't.
+
+    direct_includes_mlps = False
+        This version is simpler. It doesn't treat MLPs as direct, so a "direct path" is just the skip connection from sender output -> receiver input.
+        The algorithm works as follows:
+            (1) Gather all activations on orig and new distributions.
+            (2) Forward pass on orig input, with the following intervention:
+                orig_receiver_input <- orig_receiver_input + sum_over_senders {new_sender_output - orig_sender_output}
+
+    direct_includes_mlps = True
+        This version is more complex. Step (2) can't happen in one forward pass, because the new value we patch the receivers to is a function of the MLP's nonlinear jiggery
+        pokery. We split step (2) into 2 steps, one where we patch senders & compute what we'll be patching into the receivers, and one where we actually perform the receiver patching.
+        The algorithm works as follows:
+            (1) Gather all activations on orig and new distributions.
+            (2) Run model on orig with sender nodes patched from new and all other nodes frozen. Cache the receiver nodes.
+            (3) Run model on orig with receiver nodes patched from previously cached values.
+
+    Although it seems from this like direct_includes_mlps=False is simpler, it's actually more complicated to implement in a way that doesn't use two forward passes, because there's
+    a lot of bookkeeping to do to make sure we're adding the right diffs in the right places.
+
+    A few small implementational notes:
+        * seq_pos is either None (indicating all sequence positions) or a 2D array of shape (batch, seq_sub_pos). In this latter case, the [i, :]-th element contains the sequence positions
+          we'll be patching at for the i-th element of the batch. The main path_patch function handles the conversion of seq_pos from ints to 2D tensors.
+        * If one of the receiver nodes is 'pre', then we actually perform the 3-step algorithm rather than the 2-step algorithm. This is because there's no "mlp split input by neuron" in
+          the same way as there's a "by head (and input type) split" for attention heads.
     '''
     # Call this at the start, just in case! This also clears context by default
     model.reset_hooks()
 
-    # Turn the components into a list of components (for consistency)
-    if isinstance(receiver_components, Component):
-        receiver_components = [receiver_components]
-    if isinstance(sender_components, Component):
-        sender_components = [sender_components]
+    # Turn the nodes into a list of nodes (for consistency)
+    _sender_nodes = [sender] if isinstance(sender, Node) else sender
+    _receiver_nodes = [receiver] if isinstance(receiver, Node) else receiver
+    assert isinstance(_sender_nodes, list) and isinstance(_receiver_nodes, list)
 
-    # Check the components are valid
-    # Also, if seq_pos isn't supplied for a single component, we override it with the `sender_seq_pos` or `receiver_seq_pos` argument
-    for component in sender_components:
-        if component.seq_pos is None: component.seq_pos = sender_seq_pos
-        component.check_and_fix_sender_component()
-    for component in receiver_components:
-        if component.seq_pos is None: component.seq_pos = receiver_seq_pos
-        component.check_and_fix_receiver_component()
+    # Get slices for sequence position
+    batch_size, seq_len = orig_cache["z", 0].shape[:2]
+    batch_indices, seq_pos_indices = get_batch_and_seq_pos_indices(seq_pos, batch_size, seq_len)
+
+    # Check the nodes are valid, and split them, e.g. Node(pattern) becomes [Node(q), Node(k)]
+    sender_nodes: List[Node] = []
+    receiver_nodes: List[Node] = []
+    for node in _sender_nodes:
+        sender_nodes.extend(node.check_sender(model))
+    for node in _receiver_nodes:
+        receiver_nodes.extend(node.check_and_split_receiver(model))
     
 
+    if direct_includes_mlps or any([n.component_name == "pre" for n in receiver_nodes]):
+        # Run model on orig with sender nodes patched from new and all other nodes frozen. Cache the receiver nodes.
 
-    # ========== Step 2 ==========
-    # Run model on orig with sender components patched from new and all other components frozen. Cache the receiver components.
+        # We need to define three sets of hook functions: for freezing heads, for patching senders (which override freezing), and for caching receivers (before freezing)
+        hooks_for_freezing = []
+        hooks_for_caching_receivers = []
+        hooks_for_patching_senders = []
 
-    # We need to define three sets of hook functions: for freezing heads, for patching senders (which override freezing), and for caching receivers (before freezing)
-    hooks_for_freezing = []
-    hooks_for_caching_receivers = []
-    hooks_for_patching_senders = []
+        # Get all the hooks we need for freezing heads (and possibly MLPs)
+        # (note that these are added at "z" and "post", because if they were added at "attn_out" or "mlp_out" then we might not be able to override them with the patching hooks)
+        hooks_for_freezing.append((lambda name: name.endswith("z"), partial(hook_fn_generic_patching, cache=orig_cache)))
+        if not direct_includes_mlps:
+            hooks_for_freezing.append((lambda name: name.endswith("post"), partial(hook_fn_generic_patching, cache=orig_cache)))
 
-    # Get all the hooks we need for freezing heads (and possibly MLPs)
-    # (note that these are added at "z" and "post", because if they were added at "attn_out" or "mlp_out" then we might not be able to override them with the patching hooks)
-    hooks_for_freezing.append((lambda name: name.endswith("z"), partial(hook_fn_generic_patching, cache=orig_cache)))
-    if not direct_includes_mlps:
-        hooks_for_freezing.append((lambda name: name.endswith("post"), partial(hook_fn_generic_patching, cache=orig_cache)))
+        # Get all the hooks we need for patching heads (and possibly MLPs)
+        for node in sender_nodes:
+            hooks_for_patching_senders.append((node.activation_name, node.get_patching_hook_fn(new_cache, batch_indices, seq_pos_indices)))
 
-    # Get all the hooks we need for patching heads (and possibly MLPs)
-    for component in sender_components:
-        hooks_for_patching_senders.append((component.activation_name, component.get_patching_hook_fn(new_cache)))
+        # Get all the hooks we need for caching receiver nodes
+        for node in receiver_nodes:
+            hooks_for_caching_receivers.append((node.activation_name, partial(hook_fn_generic_caching, name="receiver_activations")))
 
-    # Get all the hooks we need for caching receiver components
-    for component in receiver_components:
-        hooks_for_caching_receivers.append((component.activation_name, partial(hook_fn_generic_caching, name="receiver_activations")))
-
-    # Now add all the hooks in order. Note that patching should override freezing, and caching should happen before both.
-    model.run_with_hooks(
-        orig_input,
-        return_type=None,
-        fwd_hooks=hooks_for_caching_receivers + hooks_for_freezing + hooks_for_patching_senders,
-        clear_contexts=False # This is the default anyway, but just want to be sure!
-    )
-    # Result - we've now cached the receiver components (i.e. stored them in the appropriate hook contexts)
-
+        # Now add all the hooks in order. Note that patching should override freezing, and caching should happen before both.
+        model.run_with_hooks(
+            orig_input,
+            return_type=None,
+            fwd_hooks=hooks_for_caching_receivers + hooks_for_freezing + hooks_for_patching_senders,
+            clear_contexts=False # This is the default anyway, but just want to be sure!
+        )
+        # Result - we've now cached the receiver nodes (i.e. stored them in the appropriate hook contexts)
 
 
-    # ========== Step 3 ==========
-    # Run model on orig with receiver components patched from previously cached values.
+    else:
+        # Calculate the (new_sender_output - orig_sender_output) for every sender, as something of shape d_model
+        sender_diffs = {}
+        for sender_node in sender_nodes:
 
+            diff = new_cache[sender_node.activation_name] - orig_cache[sender_node.activation_name]
+            diff = diff[batch_indices, seq_pos_indices]
+
+            # If it's post neuron activations, we map through W_out (maybe just taking one neuron)
+            if sender_node.component_name == "post":
+                neuron_slice = slice(None) if sender_node.neuron is None else [sender_node.neuron]
+                diff = einops.einsum(
+                    diff[..., neuron_slice], model.W_out[sender_node.layer, neuron_slice],
+                    "batch pos d_mlp, d_mlp d_model -> batch pos d_model"
+                )
+            # If it's the "z" part of attn heads, we map through W_O (maybe just taking one head)
+            elif sender_node.component_name == "z":
+                head_slice = slice(None) if sender_node.head is None else [sender_node.head]
+                diff = einops.einsum(
+                    diff[..., head_slice, :], model.W_O[sender_node.layer, head_slice],
+                    "batch pos n_heads d_head, n_heads d_head d_model -> batch pos d_model"
+                )
+            # If not in these two cases, it's one of resid_pre/mid/post, and so should already be something with shape (batch, subseq_len, d_model)
+            sender_diffs[sender_node] = diff
+
+
+        # Calculate the sum_over_senders {new_sender_output - orig_sender_output} for every receiver, by taking all the senders before the receiver
+        # We add this diff into the hook context, 
+        for sender_node, diff in sender_diffs.items():
+
+            for receiver_node in receiver_nodes:
+                
+                # If there's no causal path from sender -> receiver, we skip
+                if not (sender_node < receiver_node):
+                    continue
+
+                # q/k/v should be converted into q_input/k_input/v_input
+                if receiver_node.component_name in "qkv":
+                    assert model.cfg.use_split_qkv_input, "Direct patching (direct_includes_mlps=False) requires use_split_qkv_input=True. Please change your model config."
+                    receiver_node = Node(f"{receiver_node.component_name}_input", layer=receiver_node.layer, head=receiver_node.head)
+                    # If this is the first time we've used a receiver node within this activation, we populate the context dict
+                    if len(model.hook_dict[receiver_node.activation_name].ctx) == 0:
+                        model.hook_dict[receiver_node.activation_name].ctx["receiver_activations"] = t.zeros_like(orig_cache[receiver_node.activation_name])
+                    head_slice = slice(None) if (receiver_node.head is None) else [receiver_node.head]
+                    model.hook_dict[receiver_node.activation_name].ctx["receiver_activations"][batch_indices, seq_pos_indices, head_slice] += diff.unsqueeze(-2)
+                
+                # The remaining case (given that we aren't handling "pre" here) is when receiver is resid_pre/mid/post
+                else:
+                    assert "resid_" in receiver_node.component_name, receiver_node.component_name
+                    # If this is the first time we've used a receiver node within this activation, we populate the context dict
+                    if len(model.hook_dict[receiver_node.activation_name].ctx) == 0:
+                        model.hook_dict[receiver_node.activation_name].ctx["receiver_activations"] = t.zeros_like(orig_cache[receiver_node.activation_name])
+                    model.hook_dict[receiver_node.activation_name].ctx["receiver_activations"][batch_indices, seq_pos_indices] += diff
+                
+                    
+
+
+    # Run model on orig with receiver nodes patched from previously cached values.
     # We do this by just having a single hook function: patch from the hook context, if we added it to the context (while caching receivers in the previous step)
-    logits = model.run_with_hooks(
-        orig_input,
-        return_type="logits",
-        fwd_hooks=[(lambda name: True, partial(hook_fn_generic_patching_from_context, name="receiver_activations"))],
+    model.add_hook(
+        get_hook_name_filter(model), 
+        partial(hook_fn_generic_patching_from_context, name="receiver_activations", add=not(direct_includes_mlps)), level=1
     )
-    return patching_metric(logits)
+    if apply_metric_to_cache:
+        _, cache = model.run_with_cache(orig_input, return_type=None)
+        return patching_metric(cache)
+    else:
+        logits = model(orig_input)
+        return patching_metric(logits)
+    
 
 
 
@@ -334,34 +624,24 @@ def _path_patch_single(
 
 def path_patch(
     model: HookedTransformer,
-    orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
-    new_input: Union[str, List[str], Int[Tensor, "batch pos"]],
-    sender_components: Union[MultiComponent, Component, List[Component]],
-    receiver_components: Union[MultiComponent, Component, List[Component]],
-    patching_metric: Callable[[Float[Tensor, "batch pos d_vocab"]], Float[Tensor, ""]],
+    orig_input: Union[str, List[str], Int[Tensor, "batch seq_len"]],
+    new_input: Union[str, List[str], Int[Tensor, "batch seq_len"]],
+    sender_nodes: Union[IterNode, Node, List[Node]],
+    receiver_nodes: Union[IterNode, Node, List[Node]],
+    patching_metric: Callable,
     orig_cache: Optional[ActivationCache] = None,
     new_cache: Optional[ActivationCache] = None,
-    sender_seq_pos: Optional[Union[int, List[int]]] = None,
-    receiver_seq_pos: Optional[Union[int, List[int]]] = None,
+    seq_pos: SeqPos = None,
+    apply_metric_to_cache: bool = False,
     direct_includes_mlps: bool = True,
     verbose: bool = False,
 ) -> Float[Tensor, "..."]:
     '''
-    Performs a single instance / multiple instances of path patching, from sender component(s) to receiver component(s).
+    Performs a single instance / multiple instances of path patching, from sender node(s) to receiver node(s).
 
     Note, I'm using orig and new in place of clean and corrupted to avoid ambiguity. In the case of noising algs (which patching usually is),
     orig=clean and new=corrupted.
 
-    ===============================================================
-    How we perform a single instance of path patching:
-    ===============================================================
-
-    Path patching algorithm:
-        (1) Gather all activations on orig and new distributions.
-        (2) Run model on orig with sender components patched from new and all other components frozen. Cache the receiver components.
-        (3) Run model on orig with receiver components patched from previously cached values.
-
-    Step (1) is done here. Steps (2) and (3) are done in the backend function `_path_path_single_instance`.
         
     Args:
         model:
@@ -374,19 +654,22 @@ def path_patch(
             The new input to the model (string, list of strings, or tensor of tokens)
             i.e. we're measuring the effect of changing the given path from orig->new
 
-        sender_components:
-            The components in the path that come first (i.e. we patch the path from sender to receiver).
-            This is given as a `Component` instance, or list of `Component` instances. See the `Component` class for more details.
+        sender_nodes:
+            The nodes in the path that come first (i.e. we patch the path from sender to receiver).
+            This is given as a `Node` instance, or list of `Node` instances. See the `Node` class for more details.
             Note, if it's a list, they are all treated as senders (i.e. a single value is returned), rather than one-by-one.
         
-        receiver_components:
-            The components in the path that come last (i.e. we patch the path from sender to receiver).
-            This is given as a `Component` instance, or list of `Component` instances. See the `Component` class for more details.
+        receiver_nodes:
+            The nodes in the path that come last (i.e. we patch the path from sender to receiver).
+            This is given as a `Node` instance, or list of `Node` instances. See the `Node` class for more details.
             Note, if it's a list, they are all treated as receivers (i.e. a single value is returned), rather than one-by-one.
         
         patching_metric:
             Should take in a tensor of logits, and output a scalar tensor.
             This is how we calculate the value we'll return.
+
+        apply_metric_to_cache:
+            If True, then we apply the metric to the cache we get on the final patched forward pass, rather than the logits.
 
         verbose: 
             Whether to print out extra info (in particular, about the shape of the final output).
@@ -398,76 +681,173 @@ def path_patch(
     How we perform multiple instances of path patching:
     ===============================================================
 
-    We can also do multiple instances of path patching in sequence, i.e. we fix our sender component(s) and iterate over receiver components,
+    We can also do multiple instances of path patching in sequence, i.e. we fix our sender node(s) and iterate over receiver nodes,
     or vice-versa.
 
-    The way we do this is by using a `MultiComponent` instance, rather than a `Component` instance. For instance, if we want to fix receivers
-    and iterate over senders, we would use a `MultiComponent` instance for receivers, and a `Component` instance for senders.
+    The way we do this is by using a `IterNode` instance, rather than a `Node` instance. For instance, if we want to fix receivers
+    and iterate over senders, we would use a `IterNode` instance for receivers, and a `Node` instance for senders.
 
-    See the `MultiComponent` class for more info on how we can specify multiple components.
+    See the `IterNode` class for more info on how we can specify multiple nodes.
 
     Returns:
-        Dictionary of tensors, keys are the component names of whatever we're iterating over.
+        Dictionary of tensors, keys are the node names of whatever we're iterating over.
         For instance, if we're fixing a single sender head, and iterating over (mlp_out, attn_out) for receivers, then we'd return a dict 
-        with keys "mlp_out" and "attn_out", and values are the tensors of patching metrics for each of these two receiver components.
+        with keys "mlp_out" and "attn_out", and values are the tensors of patching metrics for each of these two receiver nodes.
     '''
 
     # Make sure we aren't iterating over both senders and receivers
-    assert not all([isinstance(receiver_components, MultiComponent), isinstance(sender_components, MultiComponent)]), "Can't iterate over both senders and receivers!"
+    assert not all([isinstance(receiver_nodes, IterNode), isinstance(sender_nodes, IterNode)]), "Can't iterate over both senders and receivers!"
 
     # ========== Step 1 ==========
     # Gather activations on orig and new distributions (we only need attn heads and possibly MLPs)
     # This is so that we can patch/freeze during step 2
     if new_cache is None:
-        # We get logits cause it's useful for the shape (input might not be token ids)
-        logits, new_cache = model.run_with_cache(new_input, return_type="logits")
+        _, new_cache = model.run_with_cache(new_input, return_type="logits", names_filter=relevant_names_filter)
     if orig_cache is None:
-        _, orig_cache = model.run_with_cache(orig_input, return_type=None)
+        _, orig_cache = model.run_with_cache(orig_input, return_type=None, names_filter=relevant_names_filter)
+    
 
-    # Get most of the arguments we'll be using for the backend patching function
-    kwargs = dict(
+    # Get out backend patching function (fix all the arguments we won't be changing)
+    path_patch_single = partial(
+        _path_patch_single,
         model=model,
         orig_input=orig_input,
-        sender_components=sender_components,
-        receiver_components=receiver_components,
+        # sender=sender_nodes,
+        # receiver=receiver_nodes,
         patching_metric=patching_metric,
         orig_cache=orig_cache,
         new_cache=new_cache,
-        sender_seq_pos=sender_seq_pos,
-        receiver_seq_pos=receiver_seq_pos,
+        # seq_pos=seq_pos,
+        apply_metric_to_cache=apply_metric_to_cache,
         direct_includes_mlps=direct_includes_mlps,
     )
 
+    # Case where we don't iterate, just single instance of path patching:
+    if not any([isinstance(receiver_nodes, IterNode), isinstance(sender_nodes, IterNode)]):
+        return path_patch_single(sender=sender_nodes, receiver=receiver_nodes, seq_pos=seq_pos)
+
+    # Case where we're iterating: either over senders, or over receivers
+    assert seq_pos is None, "Can't specify seq_pos if you're iterating over nodes. Should use seq_pos='all' or 'each' in the IterNode class."
+    results_dict = defaultdict()
+    
     # If we're fixing sender(s), and iterating over receivers:
-    if isinstance(receiver_components, MultiComponent):
-        results_dict = dict()
-        receiver_components_dict = receiver_components.get_component_dict(model, logits)
-        for receiver_component_name, receiver_component_list in receiver_components_dict.items():
-            results_dict[receiver_component_name] = []
-            for receiver_component in tqdm(receiver_component_list, desc=f"Patching over receivers: {receiver_component_name}"):
-                kwargs.update({"receiver_components": receiver_component})
-                results_dict[receiver_component_name].append(_path_patch_single(**kwargs).item())
-        if verbose:
-            print("Fixing senders, iterating over receivers")
-            for component_name, component_shape in receiver_components.shapes.items():
-                component_shape_value = receiver_components.shape_values[component_name]
-                print(f"results[{component_name}].shape = {', '.join(f'{s}={v}' for s, v in zip(component_shape, component_shape_value))}")
-        return {component_name: t.tensor(results).reshape(receiver_components.shape_values[component_name]) for component_name, results in results_dict.items()}
+    if isinstance(receiver_nodes, IterNode):
+        receiver_nodes_dict = receiver_nodes.get_node_dict(model, new_cache["q", 0])
+        progress_bar = tqdm(total=sum(len(node_list) for node_list in receiver_nodes_dict.values()))
+        for receiver_node_name, receiver_node_list in receiver_nodes_dict.items():
+            progress_bar.set_description(f"Patching over {receiver_node_name!r}")
+            results_dict[receiver_node_name] = []
+            for (seq_pos, receiver_node) in receiver_node_list:
+                results_dict[receiver_node_name].append(path_patch_single(sender=sender_nodes, receiver=receiver_node, seq_pos=seq_pos))
+                progress_bar.update(1)
+        progress_bar.close()
+        for node_name, node_shape_dict in receiver_nodes.shape_values.items():
+            if verbose: print(f"results[{node_name!r}].shape = ({', '.join(f'{s}={v}' for s, v in node_shape_dict.items())})")
+        return {
+            node_name: t.tensor(results).reshape(list(receiver_nodes.shape_values[node_name].values())) if isinstance(results[0], float) else results
+            for node_name, results in results_dict.items()
+        }
+    
     # If we're fixing receiver(s), and iterating over senders:
-    elif isinstance(sender_components, MultiComponent):
-        results_dict = dict()
-        sender_components_dict = sender_components.get_component_dict(model, logits)
-        for sender_component_name, sender_component_list in sender_components_dict.items():
-            results_dict[sender_component_name] = []
-            for sender_component in tqdm(sender_component_list, desc=f"Patching over senders: {sender_component_name}"):
-                kwargs.update({"sender_components": sender_component})
-                results_dict[sender_component_name].append(_path_patch_single(**kwargs).item())
-        if verbose:
-            print("Fixing receivers, iterating over senders")
-            for component_name, component_shape in sender_components.shapes.items():
-                component_shape_value = sender_components.shape_values[component_name]
-                print(f"results[{component_name}].shape = ({', '.join(f'{s}={v}' for s, v in zip(component_shape, component_shape_value))})")
-        return {component_name: t.tensor(results).reshape(sender_components.shape_values[component_name]) for component_name, results in results_dict.items()}
-    # If we're not iterating over anything, i.e. it's just a single instance of path patching:
+    elif isinstance(sender_nodes, IterNode):
+        sender_nodes_dict = sender_nodes.get_node_dict(model, new_cache["q", 0])
+        progress_bar = tqdm(total=sum(len(node_list) for node_list in sender_nodes_dict.values()))
+        for sender_node_name, sender_node_list in sender_nodes_dict.items():
+            progress_bar.set_description(f"Patching over {sender_node_name!r}")
+            results_dict[sender_node_name] = []
+            for (seq_pos, sender_node) in sender_node_list:
+                results_dict[sender_node_name].append(path_patch_single(sender=sender_node, receiver=receiver_nodes, seq_pos=seq_pos))
+                progress_bar.update(1)
+        progress_bar.close()
+        for node_name, node_shape_dict in sender_nodes.shape_values.items():
+            if verbose: print(f"results[{node_name!r}].shape = ({', '.join(f'{s}={v}' for s, v in node_shape_dict.items())})")
+        return {
+            node_name: t.tensor(results).reshape(list(sender_nodes.shape_values[node_name].values())) if isinstance(results[0], float) else results
+            for node_name, results in results_dict.items()
+        }
+    
+
+
+
+
+
+def _act_patch_single(
+    model: HookedTransformer,
+    orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
+    patching_nodes: Union[Node, List[Node]],
+    patching_metric: Callable,
+    new_cache: ActivationCache,
+    apply_metric_to_cache: bool = False,
+) -> Float[Tensor, ""]:
+    '''Same principle as path patching, but we just patch a single activation at the 'activation' node.'''
+
+    # Call this at the start, just in case! This also clears context by default
+    model.reset_hooks()
+
+    batch_size, seq_len = new_cache["z", 0].shape[:2]
+
+    if isinstance(patching_nodes, Node): patching_nodes = [patching_nodes]
+    for node in patching_nodes:
+        batch_indices, seq_pos_indices = get_batch_and_seq_pos_indices(node.seq_pos, batch_size, seq_len)
+        model.add_hook(
+            node.activation_name, 
+            node.get_patching_hook_fn(new_cache, batch_indices, seq_pos_indices)
+        )
+
+    if apply_metric_to_cache:
+        _, cache = model.run_with_cache(orig_input, return_type=None)
+        return patching_metric(cache)
     else:
-        return _path_patch_single(**kwargs)
+        logits = model(orig_input)
+        return patching_metric(logits)
+
+
+def act_patch(
+    model: HookedTransformer,
+    orig_input: Union[str, List[str], Int[Tensor, "batch seq_len"]],
+    patching_nodes: Union[IterNode, Node, List[Node]],
+    patching_metric: Callable,
+    new_input: Optional[Union[str, List[str], Int[Tensor, "batch seq_len"]]] = None,
+    new_cache: Optional[ActivationCache] = None,
+    apply_metric_to_cache: bool = False,
+    verbose: bool = False,
+) -> Float[Tensor, "..."]:
+
+    assert (new_input is not None) or (new_cache is not None), "Must specify either new_input or new_cache."
+
+    if new_cache is None:
+        _, new_cache = model.run_with_cache(new_input, return_type=None)
+
+
+    # Get out backend patching function (fix all the arguments we won't be changing)
+    act_patch_single = partial(
+        _act_patch_single,
+        model=model,
+        orig_input=orig_input,
+        # patching_nodes=patching_nodes,
+        patching_metric=patching_metric,
+        new_cache=new_cache,
+        apply_metric_to_cache=apply_metric_to_cache,
+    )
+
+    # If we're not iterating over anything, i.e. it's just a single instance of activation patching:
+    if not isinstance(patching_nodes, IterNode):
+        return act_patch_single(patching_nodes=patching_nodes)
+
+    # If we're iterating over nodes:
+    results_dict = defaultdict(list)
+    nodes_dict = patching_nodes.get_node_dict(model, new_cache["q", 0])
+    progress_bar = tqdm(total=sum(len(node_list) for node_list in nodes_dict.values()))
+    for node_name, node_list in nodes_dict.items():
+        progress_bar.set_description(f"Patching {node_name!r}")
+        for (seq_pos, node) in node_list:
+            node.seq_pos = seq_pos
+            results_dict[node_name].append(act_patch_single(patching_nodes=node))
+            progress_bar.update(1)
+    progress_bar.close()
+    for node_name, node_shape_dict in patching_nodes.shape_values.items():
+        if verbose: print(f"results[{node_name!r}].shape = ({', '.join(f'{s}={v}' for s, v in node_shape_dict.items())})")
+    return {
+        node_name: t.tensor(results).reshape(list(patching_nodes.shape_values[node_name].values())) if isinstance(results[0], float) else results
+        for node_name, results in results_dict.items()
+    }
