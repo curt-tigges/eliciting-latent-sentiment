@@ -199,6 +199,8 @@ class EmbedType(Enum):
     UNEMBED = 'unembed_transpose'
     MLP = 'embed_and_mlp0'
 #%%
+_, train_cache = model.run_with_cache(train_adjectives, return_type=None)
+#%%
 def embed_str_tokens(
     str_tokens: List[str],
     embed_type: EmbedType,
@@ -218,7 +220,10 @@ def embed_str_tokens(
         wU: Float[Tensor, "model vocab"] = transformer.W_U
         embeddings = oh_tokens @ wU.T
     elif embed_type == EmbedType.MLP:
-        embeddings = transformer.blocks[0].mlp(transformer.embed(tokens))
+        mlp_out = transformer.blocks[0].mlp(transformer.embed(tokens))
+        embeddings = train_cache.apply_ln_to_stack(
+            mlp_out, layer=0, mlp_input=True
+        )
     else:
         raise ValueError(f'Unrecognised embed type: {embed_type}')
     embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
@@ -280,35 +285,44 @@ pos_first = (
 if pos_first:
     train_positive_cluster = first_cluster
     train_negative_cluster = second_cluster
-    positive_centroid = centroids[0, :]
-    negative_centroid = centroids[1, :]
+    km_positive_centroid = centroids[0, :]
+    km_negative_centroid = centroids[1, :]
     test_positive_cluster, test_negative_cluster = split_by_label(
         test_adjectives, test_km_labels
     )
     verb_positive_cluster, verb_negative_cluster = split_by_label(
         all_verbs, verb_km_labels
     )
-    km_line: Float[np.ndarray, "d_model"] = centroids[0] - centroids[1]
 else:
     train_positive_cluster = second_cluster
     train_negative_cluster = first_cluster
-    positive_centroid = centroids[1, :]
-    negative_centroid = centroids[0, :]
+    km_positive_centroid = centroids[1, :]
+    km_negative_centroid = centroids[0, :]
     test_negative_cluster, test_positive_cluster = split_by_label(
         test_adjectives, test_km_labels
     )
     verb_negative_cluster, verb_positive_cluster = split_by_label(
         all_verbs, verb_km_labels
     )
-    km_line: Float[np.ndarray, "d_model"] = centroids[1] - centroids[0]
     train_km_labels = 1 - train_km_labels
     test_km_labels = 1 - test_km_labels
     verb_km_labels = 1 - verb_km_labels
+km_line: Float[np.ndarray, "d_model"] = (
+    km_positive_centroid - km_negative_centroid
+)
 km_line_normalised: Float[
     Tensor, "d_model"
 ] = torch.tensor(km_line / np.linalg.norm(km_line), dtype=torch.float32)
+#%%
+print(np.linalg.norm(km_positive_centroid))
+print(np.linalg.norm(km_negative_centroid))
+print(np.linalg.norm(train_embeddings[0, :]))
 #%% # write k means line to file
-with open(f"km_line_{embedding_type.value}.npy", "wb") as f:
+with open(f"data/km_positive_{embedding_type.value}.npy", "wb") as f:
+    np.save(f, km_positive_centroid)
+with open(f"data/km_negative_{embedding_type.value}.npy", "wb") as f:
+    np.save(f, km_negative_centroid)
+with open(f"data/km_line_{embedding_type.value}.npy", "wb") as f:
     np.save(f, km_line)
 #%%
 # project adjectives onto k-means line
@@ -678,5 +692,5 @@ df = pd.DataFrame({
         "pca": train_pcs[:, 0],
         "binary_label": train_pca_labels,
 })
-df.to_csv("negativity_scores.csv", index=False)
+df.to_csv("data/negativity_scores.csv", index=False)
 # %%
