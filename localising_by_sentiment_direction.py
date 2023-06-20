@@ -58,15 +58,21 @@ sentiment_directions: Float[Tensor, "batch d_model"] = torch.where(
     -sentiment_repeated,
 )
 #%%
-def residual_stack_to_sentiment_directions(
+def residual_stack_to_sentiment_metrics(
     residual_stack: Float[Tensor, "components batch d_model"], 
     cache: ActivationCache,
+    normalise_residuals: bool = True,
 ) -> Float[Tensor, "layer head_index"]:
     scaled_residual_stack: Float[
         Tensor, "components batch d_model"
     ] = cache.apply_ln_to_stack(
         residual_stack, layer=-1, pos_slice=-1
     )
+    if normalise_residuals:
+        scaled_residual_stack = (
+            scaled_residual_stack.T /
+            scaled_residual_stack.norm(dim=-1).T
+        ).T
     component_means: Float[Tensor, "components"] = einops.einsum(
         scaled_residual_stack, sentiment_directions, 
         "components batch d_model, batch d_model -> components"
@@ -83,14 +89,14 @@ per_head_residual: Float[Tensor, "components batch d_model"]
 per_head_residual, labels = clean_cache.stack_head_results(
     layer=-1, pos_slice=-1, return_labels=True
 )
-per_head_sentiment_metrics = residual_stack_to_sentiment_directions(
+per_head_sentiment_metrics = residual_stack_to_sentiment_metrics(
     per_head_residual, clean_cache
 )
 
 # %%
 px.imshow(
     per_head_sentiment_metrics.cpu().detach().numpy(),
-    labels={'x': 'Position', 'y': 'Layer'},
+    labels={'x': 'Head', 'y': 'Layer'},
     title='Which components align with the sentiment direction?',
 )
 # %%
