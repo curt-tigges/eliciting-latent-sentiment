@@ -8,6 +8,11 @@ embed_only = np.load('data/km_line_embed_only.npy')
 embed_and_mlp = np.load('data/km_line_embed_and_mlp0.npy')
 unembed_transpose = np.load('data/km_line_unembed_transpose.npy')
 # %%
+px.line(embed_and_mlp, title='Components of sentiment direction')
+#%%
+px.histogram(
+    embed_and_mlp, title='Distribution of components of sentiment direction'
+)
 # %%
 stacked: Float[np.ndarray, "3 d"] = np.stack([
     embed_only, embed_and_mlp, unembed_transpose
