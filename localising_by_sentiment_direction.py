@@ -3,18 +3,22 @@ import einops
 import numpy as np
 from jaxtyping import Float
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from prompt_utils import get_dataset
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, utils
 #%%
+torch.set_grad_enabled(False)
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 model = HookedTransformer.from_pretrained(
     "gpt2-small",
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
+    device=device,
 )
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # %%
 sentiment_dir: Float[np.ndarray, "d_model"] = np.load(
     'data/km_line_embed_and_mlp0.npy'
@@ -44,6 +48,9 @@ heads = model.cfg.n_heads
 layers = model.cfg.n_layers
 batch_size, seq_len = clean_tokens.shape
 #%%
+example_prompt = model.to_str_tokens(clean_tokens[0])
+example_prompt
+#%%
 sentiment_repeated = einops.repeat(
     sentiment_dir, "d_model -> batch d_model", batch=batch_size
 )
@@ -56,19 +63,19 @@ sentiment_directions: Float[Tensor, "batch d_model"] = torch.where(
     even_batch_repeated,
     sentiment_repeated,
     -sentiment_repeated,
-)
+).to(device)
 #%%
 def residual_stack_to_sentiment_metrics(
     residual_stack: Float[Tensor, "components batch d_model"], 
     cache: ActivationCache,
     normalise_residuals: bool = True,
-) -> Float[Tensor, "layer head_index"]:
+) -> Float[Tensor, "components"]:
     scaled_residual_stack: Float[
         Tensor, "components batch d_model"
     ] = cache.apply_ln_to_stack(
         residual_stack, layer=-1, pos_slice=-1
     )
-    if normalise_residuals:
+    if normalise_residuals: # for cosine similarity
         scaled_residual_stack = (
             scaled_residual_stack.T /
             scaled_residual_stack.norm(dim=-1).T
@@ -77,26 +84,69 @@ def residual_stack_to_sentiment_metrics(
         scaled_residual_stack, sentiment_directions, 
         "components batch d_model, batch d_model -> components"
     ) / batch_size
-    return einops.rearrange(
-        component_means, 
-        "(layer head_index) -> layer head_index", 
-        layer=model.cfg.n_layers, 
-        head_index=model.cfg.n_heads
-    )
-
+    return component_means
+# by head
 #%%
-per_head_residual: Float[Tensor, "components batch d_model"]
-per_head_residual, labels = clean_cache.stack_head_results(
-    layer=-1, pos_slice=-1, return_labels=True
+per_head_residual: Float[
+    Tensor, "components batch d_model"
+] = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=False)
+per_head_sentiment_flat: Float[
+    Tensor, "components"
+] = residual_stack_to_sentiment_metrics(per_head_residual, clean_cache)
+per_head_sentiment: Float[Tensor, "layer head"] = einops.rearrange(
+    per_head_sentiment_flat, 
+    "(layer head) -> layer head", 
+    layer=model.cfg.n_layers, 
+    head=model.cfg.n_heads
 )
-per_head_sentiment_metrics = residual_stack_to_sentiment_metrics(
-    per_head_residual, clean_cache
-)
-
 # %%
-px.imshow(
-    per_head_sentiment_metrics.cpu().detach().numpy(),
+fig = px.imshow(
+    per_head_sentiment.cpu().detach().numpy(),
     labels={'x': 'Head', 'y': 'Layer'},
     title='Which components align with the sentiment direction?',
+    color_continuous_scale="RdBu",
+    color_continuous_midpoint=0,
 )
+fig.show()
+del per_head_residual, per_head_sentiment_flat, per_head_sentiment, model
+#%%
+# ============================================================================ #
+# Split by position
+#%%
+def residual_cosine_sim_by_pos(
+    cache: ActivationCache,
+) -> Float[Tensor, "components"]:
+    residual_stack: Float[
+        Tensor, "components batch pos d_model"
+    ] = cache.stack_head_results(layer=-1, return_labels=False)
+    for pos in range(seq_len):
+        residual_stack[:, :, pos, :] = cache.apply_ln_to_stack(
+            residual_stack[:, :, pos, :], layer=-1, pos_slice=pos
+        )
+        residual_stack[:, :, pos, :] = (
+            residual_stack[:, :, pos, :].T /
+            residual_stack[:, :, pos, :].norm(dim=-1).T
+        ).T
+    component_means: Float[Tensor, "components"] = einops.einsum(
+        residual_stack, sentiment_directions, 
+        "components batch pos d_model, batch d_model -> components pos"
+    ) / batch_size
+    return component_means
+#%%
+per_pos_sentiment: Float[
+    Tensor, "components pos"
+] = residual_cosine_sim_by_pos(clean_cache)
+# %%
+fig = px.imshow(
+    per_pos_sentiment.squeeze().cpu().detach().numpy(),
+    labels={'x': 'Position', 'y': 'Component'},
+    title='Head 4: Which positions align with the sentiment direction?',
+    color_continuous_scale="RdBu",
+    color_continuous_midpoint=0,
+    x=example_prompt,
+    y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
+    height = heads * layers * 10,
+)
+fig.write_html('data/sentiment_by_position.html')
+fig.show()
 # %%
