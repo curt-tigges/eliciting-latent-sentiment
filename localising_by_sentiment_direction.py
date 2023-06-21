@@ -68,7 +68,7 @@ def residual_stack_to_sentiment_metrics(
     ] = cache.apply_ln_to_stack(
         residual_stack, layer=-1, pos_slice=-1
     )
-    if normalise_residuals:
+    if normalise_residuals: # for cosine similarity
         scaled_residual_stack = (
             scaled_residual_stack.T /
             scaled_residual_stack.norm(dim=-1).T
@@ -99,5 +99,6 @@ px.imshow(
     labels={'x': 'Head', 'y': 'Layer'},
     title='Which components align with the sentiment direction?',
     color_continuous_scale="RdBu",
+    color_continuous_midpoint=0,
 )
 #%%
