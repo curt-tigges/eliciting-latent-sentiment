@@ -131,79 +131,22 @@ def residual_cosine_sim_by_pos(
         residual_stack, sentiment_directions, 
         "components batch pos d_model, batch d_model -> components pos"
     ) / batch_size
-    return einops.rearrange(
-        component_means, 
-        "(layer head) pos -> layer head pos", 
-        layer=layers, 
-        head=heads,
-    )
+    return component_means
 #%%
 per_pos_sentiment: Float[
-    Tensor, "layer head pos"
+    Tensor, "components pos"
 ] = residual_cosine_sim_by_pos(clean_cache)
 # %%
-fig = make_subplots(
-    cols=1, 
-    rows=seq_len, 
-    subplot_titles=[
-        f'Position {pos}: {example_prompt[pos]}' for pos in range(seq_len)
-    ],
-)
-# plot a heatmap for each token position
-for pos in range(seq_len):
-    fig.add_trace(
-        go.Heatmap(
-            z=per_pos_sentiment[:, :, pos].cpu().detach().numpy(),
-            x=np.arange(layers),
-            y=np.arange(heads),
-            name=f'pos_{pos}',
-            colorscale="RdBu",
-            zmin=-0.1,
-            zmax=0.1,
-            hovertemplate=(
-                "Head: %{x}<br>" +
-                "Layer: %{y}<br>" +
-                "Cosine similarity: %{z}<br>"
-            ),
-        ),
-        col=1,
-        row=pos+1,
-    )
-    fig.update_yaxes(
-        title_text="Layer",
-    )
-    fig.update_xaxes(
-        title_text="Head",
-    )
-fig.update_layout(
-    title='Which positions align with the sentiment direction?',
-    height=seq_len*200,
-)
-fig.write_html('data/sentiment_by_position.html')
-fig.show()
-#%%
-head_averages = einops.reduce(
-    per_pos_sentiment,
-    "layer head pos -> layer pos",
-    reduction='mean',
-)
 fig = px.imshow(
-    head_averages.cpu().detach().numpy(),
-    labels={'x': 'Position', 'y': 'Layer'},
-    title='Which positions align with the sentiment direction?',
-    color_continuous_scale="RdBu",
-    color_continuous_midpoint=0,
-    x=example_prompt,
-)
-fig.show()
-# %%
-fig = px.imshow(
-    per_pos_sentiment[:, 4, :].squeeze().cpu().detach().numpy(),
-    labels={'x': 'Position', 'y': 'Layer'},
+    per_pos_sentiment.squeeze().cpu().detach().numpy(),
+    labels={'x': 'Position', 'y': 'Component'},
     title='Head 4: Which positions align with the sentiment direction?',
     color_continuous_scale="RdBu",
     color_continuous_midpoint=0,
     x=example_prompt,
+    y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
+    height = heads * layers * 10,
 )
+fig.write_html('data/sentiment_by_position.html')
 fig.show()
 # %%
