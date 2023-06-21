@@ -26,6 +26,7 @@ from IPython.display import display, HTML
 import circuitsvis as cv
 from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache
 import transformer_lens.utils as utils
+import transformer_lens.evals as evals
 from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
@@ -213,6 +214,16 @@ class EmbedType(Enum):
 #%%
 _, train_cache = model.run_with_cache(train_adjectives, return_type=None)
 #%%
+def embed_and_mlp0(
+    tokens: Int[Tensor, "batch 1"],
+    transformer: HookedTransformer = model
+):
+    block0 = transformer.blocks[0]
+    resid_mid = transformer.embed(tokens)
+    mlp_out = block0.mlp((resid_mid))
+    resid_post = resid_mid + mlp_out
+    return block0.ln2(resid_post)
+#%%
 def embed_str_tokens(
     str_tokens: List[str],
     embed_type: EmbedType,
@@ -232,11 +243,7 @@ def embed_str_tokens(
         wU: Float[Tensor, "model vocab"] = transformer.W_U
         embeddings = oh_tokens @ wU.T
     elif embed_type == EmbedType.MLP:
-        block0 = transformer.blocks[0]
-        resid_mid = transformer.embed(tokens)
-        mlp_out = block0.mlp((resid_mid))
-        resid_post = resid_mid + mlp_out
-        embeddings = block0.ln2(resid_post)
+        embeddings = embed_and_mlp0(tokens)
     else:
         raise ValueError(f'Unrecognised embed type: {embed_type}')
     embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
@@ -270,7 +277,7 @@ kmeans.fit(train_embeddings)
 train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
 test_km_labels = kmeans.predict(test_embeddings)
 verb_km_labels = kmeans.predict(verb_embeddings)
-centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
+km_centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
 
 #%%
 def split_by_label(
@@ -288,18 +295,18 @@ def split_by_label(
     ]
     return first_cluster, second_cluster
 #%%
-first_cluster, second_cluster = split_by_label(
+km_first_cluster, km_second_cluster = split_by_label(
     train_adjectives, train_km_labels
 )
 pos_first = (
-    len(set(first_cluster) & set(train_positive_adjectives)) >
-    len(set(second_cluster) & set(train_negative_adjectives))
+    len(set(km_first_cluster) & set(train_positive_adjectives)) >
+    len(set(km_second_cluster) & set(train_negative_adjectives))
 )
 if pos_first:
-    train_positive_cluster = first_cluster
-    train_negative_cluster = second_cluster
-    km_positive_centroid = centroids[0, :]
-    km_negative_centroid = centroids[1, :]
+    train_positive_cluster = km_first_cluster
+    train_negative_cluster = km_second_cluster
+    km_positive_centroid = km_centroids[0, :]
+    km_negative_centroid = km_centroids[1, :]
     test_positive_cluster, test_negative_cluster = split_by_label(
         test_adjectives, test_km_labels
     )
@@ -307,10 +314,10 @@ if pos_first:
         all_verbs, verb_km_labels
     )
 else:
-    train_positive_cluster = second_cluster
-    train_negative_cluster = first_cluster
-    km_positive_centroid = centroids[1, :]
-    km_negative_centroid = centroids[0, :]
+    train_positive_cluster = km_second_cluster
+    train_negative_cluster = km_first_cluster
+    km_positive_centroid = km_centroids[1, :]
+    km_negative_centroid = km_centroids[0, :]
     test_negative_cluster, test_positive_cluster = split_by_label(
         test_adjectives, test_km_labels
     )
@@ -396,8 +403,8 @@ else:
     verb_pca_negative_cluster, verb_pca_positive_cluster = split_by_label(
         all_verbs, verb_pca_labels
     )
-    pca_negative_centroid = centroids[0, :]
-    pca_positive_centroid = centroids[1, :]
+    pca_negative_centroid = pca_centroids[0, :]
+    pca_positive_centroid = pca_centroids[1, :]
     train_pca_labels = 1 - train_pca_labels
     test_pca_labels = 1 - test_pca_labels
     verb_pca_labels = 1 - verb_pca_labels
@@ -704,15 +711,120 @@ df = pd.DataFrame({
 })
 df.to_csv("data/negativity_scores.csv", index=False)
 # %%
-# histogram of dot product of embeddings and km_line
+# ============================================================================ #
+# Histogram of dot product of embeddings and km_line
+
 fig = go.Figure()
 fig.add_trace(
     go.Histogram(
-        x=train_embeddings.numpy().dot(km_line),
-        color=train_true_labels,_
-        name="in-sample",
-        opacity=0.8,
-        nbins=50,
+        x=train_embeddings[:len(train_positive_adjectives)].numpy().dot(km_line),
+        marker=dict(
+            color="red",
+            opacity=0.5,
+        ),
+        name="positive adj in-sample",
+        nbinsx=20,
+        showlegend=True,
     )
 )
+fig.add_trace(
+    go.Histogram(
+        x=train_embeddings[len(train_positive_adjectives):].numpy().dot(km_line),
+        marker=dict(
+            color="blue",
+            opacity=0.5,
+        ),
+        name="negative adj in-sample",
+        nbinsx=20,
+        showlegend=True,
+    )
+)
+fig.add_trace(
+    go.Histogram(
+        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+        marker=dict(
+            color="darkred",
+            opacity=0.5,
+        ),
+        name="positive adj out-of-sample",
+        nbinsx=20,
+        showlegend=True,
+    )
+)
+fig.add_trace(
+    go.Histogram(
+        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+        marker=dict(
+            color="darkblue",
+            opacity=0.5,
+        ),
+        name="negative adj out-of-sample",
+        nbinsx=20,
+        showlegend=True,
+    )
+)
+fig.add_trace(
+    go.Histogram(
+        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+        marker=dict(
+            color="pink",
+            opacity=0.5,
+        ),
+        name="positive verb out-of-sample",
+        nbinsx=20,
+        showlegend=True,
+    )
+)
+fig.add_trace(
+    go.Histogram(
+        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+        marker=dict(
+            color="teal",
+            opacity=0.5,
+        ),
+        name="negative verb out-of-sample",
+        nbinsx=20,
+        showlegend=True,
+    )
+)
+fig.update_layout(
+    title="Histogram of dot product of embeddings and KM line",
+    barmode="overlay",
+    bargap=0.1,
+)
 #%%
+pile_loader = evals.make_pile_data_loader(model.tokenizer, batch_size=8)
+#%%
+sample_size = 10_000
+dot_data = []
+for x in pile_loader:
+    batch_embed: Float[Tensor, "batch pos d_model"] = embed_and_mlp0(
+        x['tokens']
+    )
+    batch_dots: Float[np.ndarray, "batch pos"] = (
+        batch_embed.cpu().detach().numpy().dot(km_line)
+    )
+    flattened_dots = batch_dots.flatten()
+    list_of_str_tokens = [
+        s 
+        for i in range(len(x['tokens']))
+        for s in model.to_str_tokens(x['tokens'][i]) 
+    ]
+    dot_df = pd.DataFrame({
+        "dot": flattened_dots,
+        "token": list_of_str_tokens,
+    })
+    dot_data.append(dot_df)
+    sample_size -= len(flattened_dots)
+    if sample_size <= 0:
+        break
+#%%
+dots_df = pd.concat(dot_data)
+len(dots_df)
+#%%
+fig = px.histogram(
+    data_frame=dots_df, x='dot', hover_data=['token'], marginal="rug",
+)
+fig.show()
+
+# %%
