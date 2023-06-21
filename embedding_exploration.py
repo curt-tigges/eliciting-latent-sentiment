@@ -157,6 +157,10 @@ train_negative_adjectives = [
 train_adjectives = prepend_space(
     train_positive_adjectives + train_negative_adjectives
 )
+train_true_labels = (
+    [1] * len(train_positive_adjectives) + 
+    [0] * len(train_negative_adjectives)
+)
 check_for_duplicates(train_adjectives)
 check_single_tokens(train_adjectives)
 #%%
@@ -173,6 +177,10 @@ test_negative_adjectives = [
 test_adjectives = prepend_space(
     test_positive_adjectives + test_negative_adjectives
 )
+test_true_labels = (
+    [1] * len(test_positive_adjectives) +
+    [0] * len(test_negative_adjectives)
+)
 check_overlap(train_positive_adjectives, test_positive_adjectives)
 check_overlap(train_negative_adjectives, test_negative_adjectives)
 check_single_tokens(test_positive_adjectives)
@@ -186,6 +194,10 @@ negative_verbs = [
     'hated', 'despised', 'disliked',
 ]
 all_verbs = prepend_space(positive_verbs + negative_verbs)
+verb_true_labels = (
+    [1] * len(positive_verbs) +
+    [0] * len(negative_verbs)
+)
 check_for_duplicates(all_verbs)
 check_single_tokens(positive_verbs)
 check_single_tokens(negative_verbs)
@@ -206,24 +218,25 @@ def embed_str_tokens(
     embed_type: EmbedType,
     transformer: HookedTransformer = model,
 ) -> Float[Tensor, "batch d_model"]:
-    tokens: Int[Tensor, "batch pos"] = transformer.to_tokens(
+    tokens: Int[Tensor, "batch 1"] = transformer.to_tokens(
         str_tokens, prepend_bos=False
     )
-    embeddings: Float[Tensor, "batch pos d_model"]
+    embeddings: Float[Tensor, "batch 1 d_model"]
     if embed_type == EmbedType.EMBED:
         embeddings = transformer.embed(tokens)
     elif embed_type == EmbedType.UNEMBED:
         # one-hot encode tokens
-        oh_tokens: Int[Tensor, "batch pos vocab"] = F.one_hot(
+        oh_tokens: Int[Tensor, "batch 1 vocab"] = F.one_hot(
             tokens, num_classes=transformer.cfg.d_vocab
         ).to(torch.float32)
         wU: Float[Tensor, "model vocab"] = transformer.W_U
         embeddings = oh_tokens @ wU.T
     elif embed_type == EmbedType.MLP:
-        mlp_out = transformer.blocks[0].mlp(transformer.embed(tokens))
-        embeddings = train_cache.apply_ln_to_stack(
-            mlp_out, layer=0, mlp_input=True
-        )
+        block0 = transformer.blocks[0]
+        resid_mid = transformer.embed(tokens)
+        mlp_out = block0.mlp((resid_mid))
+        resid_post = resid_mid + mlp_out
+        embeddings = block0.ln2(resid_post)
     else:
         raise ValueError(f'Unrecognised embed type: {embed_type}')
     embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
@@ -365,37 +378,34 @@ if pca_pos_first:
     # positive first
     train_pca_positive_cluster = pca_first_cluster
     train_pca_negative_cluster = pca_second_cluster
-    pca_positive_centroid = pca_centroids[0, :]
-    pca_negative_centroid = pca_centroids[1, :]
     test_pca_positive_cluster, test_pca_negative_cluster = split_by_label(
         test_adjectives, test_pca_labels
     )
     verb_pca_positive_cluster, verb_pca_negative_cluster = split_by_label(
         all_verbs, verb_pca_labels
     )
-    pca_line: Float[np.ndarray, "d_model"] = (
-        pca_centroids[0] - pca_centroids[1]
-    )
+    pca_positive_centroid = pca_centroids[0, :]
+    pca_negative_centroid = pca_centroids[1, :]
 else:
     # negative first
     train_pca_positive_cluster = pca_second_cluster
     train_pca_negative_cluster = pca_first_cluster
-    pca_positive_centroid = pca_centroids[1, :]
-    pca_negative_centroid = pca_centroids[0, :]
     test_pca_negative_cluster, test_pca_positive_cluster = split_by_label(
         test_adjectives, test_pca_labels
     )
     verb_pca_negative_cluster, verb_pca_positive_cluster = split_by_label(
         all_verbs, verb_pca_labels
     )
-    pca_line: Float[np.ndarray, "d_model"] = (
-        pca_centroids[1] - pca_centroids[0]
-    )
+    pca_negative_centroid = centroids[0, :]
+    pca_positive_centroid = centroids[1, :]
     train_pca_labels = 1 - train_pca_labels
     test_pca_labels = 1 - test_pca_labels
     verb_pca_labels = 1 - verb_pca_labels
+pca_line: Float[np.ndarray, "2"] = (
+    pca_positive_centroid - pca_negative_centroid
+)
 pca_line_normalised: Float[
-    Tensor, "d_model"
+    Tensor, "2"
 ] = torch.tensor(pca_line / np.linalg.norm(pca_line), dtype=torch.float32)
 #%%
 # project adjectives onto PCA line
@@ -694,3 +704,15 @@ df = pd.DataFrame({
 })
 df.to_csv("data/negativity_scores.csv", index=False)
 # %%
+# histogram of dot product of embeddings and km_line
+fig = go.Figure()
+fig.add_trace(
+    go.Histogram(
+        x=train_embeddings.numpy().dot(km_line),
+        color=train_true_labels,_
+        name="in-sample",
+        opacity=0.8,
+        nbins=50,
+    )
+)
+#%%
