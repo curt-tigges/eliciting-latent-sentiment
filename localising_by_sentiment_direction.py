@@ -98,5 +98,6 @@ px.imshow(
     per_head_sentiment_metrics.cpu().detach().numpy(),
     labels={'x': 'Head', 'y': 'Layer'},
     title='Which components align with the sentiment direction?',
+    color_continuous_scale="RdBu",
 )
-# %%
+#%%
