@@ -802,7 +802,7 @@ for x in pile_loader:
         x['tokens']
     )
     batch_dots: Float[np.ndarray, "batch pos"] = (
-        batch_embed.cpu().detach().numpy().dot(km_line)
+        batch_embed.cpu().detach().numpy().dot(km_line_normalised)
     )
     flattened_dots = batch_dots.flatten()
     list_of_str_tokens = [
@@ -824,7 +824,9 @@ len(dots_df)
 #%%
 fig = px.histogram(
     data_frame=dots_df, x='dot', hover_data=['token'], marginal="rug",
+    title="Histogram of dot product of embeddings and KM line on pile",
 )
+fig.write_html("data/pile_embeddings.html")
 fig.show()
 
 # %%
