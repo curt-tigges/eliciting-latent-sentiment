@@ -40,7 +40,7 @@ negative_dir: Float[Tensor, "d_model"] = torch.tensor(negative_dir).to(
     device, dtype=torch.float32
 )
 # %%
-clean_tokens, corrupted_tokens, answer_tokens = get_dataset(model, device)
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
 #%%
 clean_logits, clean_cache = model.run_with_cache(clean_tokens)
 # %%
@@ -143,7 +143,7 @@ example_prompt[17] = 'SBJ2'
 fig = px.imshow(
     per_pos_sentiment.squeeze().cpu().detach().numpy(),
     labels={'x': 'Position', 'y': 'Component'},
-    title='Head 4: Which positions align with the sentiment direction?',
+    title='Which positions align with the sentiment direction?',
     color_continuous_scale="RdBu",
     color_continuous_midpoint=0,
     x=example_prompt,
