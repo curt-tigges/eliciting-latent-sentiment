@@ -24,8 +24,8 @@ pos_prompts = [
 neg_prompts = [
     f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives))
 ]
-pos_tokens = [" amazing", " good", " pleasant", " horrendous", "awful"]
-neg_tokens = [" terrible", " bad", " unpleasant", " wonderful", "great"]
+pos_tokens = [" amazing", " good", " pleasant", " wonderful", " great"]
+neg_tokens = [" terrible", " bad", " unpleasant", " horrendous", " awful"]
 
 def get_dataset(
     model: HookedTransformer, 
@@ -77,6 +77,7 @@ def get_logit_diff(
     logits: Float[Tensor, "batch pos vocab"],
     answer_tokens: Float[Tensor, "batch n_pairs 2"], 
     per_prompt: bool = False,
+    per_completion: bool = False,
 ):
     """
     Gets the difference between the logits of the provided tokens 
@@ -96,12 +97,16 @@ def get_logit_diff(
     logits = einops.repeat(
         logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
     )
-    left_logits: Float[Tensor, "batch"] = logits.gather(
+    left_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
         -1, answer_tokens[:, :, 0].unsqueeze(-1)
-    ).mean(dim=1)
-    right_logits: Float[Tensor, "batch"] = logits.gather(
+    )
+    right_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
         -1, answer_tokens[:, :, 1].unsqueeze(-1)
-    ).mean(dim=1)
+    )
+    if per_completion:
+        print(left_logits - right_logits)
+    left_logits: Float[Tensor, "batch"] = left_logits.mean(dim=1)
+    right_logits: Float[Tensor, "batch"] = right_logits.mean(dim=1)
     if per_prompt:
         print(left_logits - right_logits)
 

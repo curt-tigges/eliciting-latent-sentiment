@@ -159,20 +159,17 @@ example_answer = " terrible"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %%
-example_prompt = "I thought this movie was amazing, I loved it. \nConclusion: This movie is"
-example_answer = " amazing"
+example_prompt = "I thought this movie was perfect, I loved it. \nConclusion: This movie is"
+example_answer = " bad"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %% [markdown]
 # ### Dataset Construction
-import importlib
-importlib.reload(prompt_utils)
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 # %%
 (
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens
 ) = prompt_utils.get_dataset(
-    model, device
+    model, device, n_pairs=5
 )
 # %%
 for i in range(len(all_prompts)):
