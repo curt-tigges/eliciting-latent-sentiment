@@ -189,3 +189,4 @@ for experiment_name, experiment_hook in experiments.items():
 
 
 # %%
+# FIXME: check results with negative prompt
