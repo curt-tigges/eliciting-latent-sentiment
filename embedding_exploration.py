@@ -169,7 +169,7 @@ check_single_tokens(train_adjectives)
 # Testing set
 test_positive_adjectives = [
     'breathtaking', 'stunning', 'impressive', 'admirable', 'phenomenal', 
-    'radiant', 'sublime', 'glorious', 'magical', 'sensational', 'pleasing'
+    'radiant', 'sublime', 'glorious', 'magical', 'sensational', 'pleasing', 'movie'
 ]
 
 test_negative_adjectives = [

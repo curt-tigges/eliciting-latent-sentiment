@@ -137,6 +137,9 @@ per_pos_sentiment: Float[
     Tensor, "components pos"
 ] = residual_cosine_sim_by_pos(clean_cache)
 # %%
+
+example_prompt[4] = 'SBJ1'
+example_prompt[17] = 'SBJ2'
 fig = px.imshow(
     per_pos_sentiment.squeeze().cpu().detach().numpy(),
     labels={'x': 'Position', 'y': 'Component'},
@@ -145,7 +148,7 @@ fig = px.imshow(
     color_continuous_midpoint=0,
     x=example_prompt,
     y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
-    height = heads * layers * 10,
+    height = heads * layers * 20,
 )
 fig.write_html('data/sentiment_by_position.html')
 fig.show()
