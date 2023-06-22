@@ -65,8 +65,7 @@ from visualization_utils import get_attn_head_patterns
 
 # %%
 torch.set_grad_enabled(False)
-device = 'cpu'
-# device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 # %%
 update_layout_set = {
