@@ -1,4 +1,6 @@
 #%%
+from functools import partial
+from typing import Iterable, Optional
 from jaxtyping import Int, Float
 import numpy as np
 import torch
@@ -88,7 +90,11 @@ px.line(beta)
 # ============================================================================ #
 # Hooks
 top_k = 20
+# ============================================================================ #
+# Baseline prompt
+
 model.reset_hooks()
+print('Baseline prompt')
 utils.test_prompt(
     example_string, example_answer, model, 
     prepend_space_to_answer=False,
@@ -97,38 +103,89 @@ utils.test_prompt(
 )
 
 # %%
-def leace_hook(
-    input: Float[Tensor, "batch pos d_model"], hook: HookPoint,
+def leace_hook_base(
+    input: Float[Tensor, "batch pos d_model"], 
+    hook: HookPoint,
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    double: bool = False,
+    layer: Optional[int] = None,
 ):
-    input[:, adjective_token, :] = eraser(input[:, adjective_token, :])
-    input[:, verb_token, :] = eraser(input[:, verb_token, :])
+    if layer is not None and hook.layer() != layer:
+        return input
+    for token in tokens:
+        input[:, token, :] += (
+            eraser(input[:, token, :]) - input[:, token, :]
+            ) * (2 if double else 1)
     assert 'hook_resid_post' in hook.name
     return input
-#%%
-#%%
-model.reset_hooks()
-model.add_hook(
-    'blocks.0.hook_resid_post', 
-    leace_hook
-)
-utils.test_prompt(
-    example_string, example_answer, model, 
-    prepend_space_to_answer=False,
-    prepend_bos=False,
-    top_k=top_k,
-)
 
 #%%
-model.reset_hooks()
-model.add_hook(
-    lambda name: 'hook_resid_post' in name,
-    leace_hook
+def name_filter(name: str):
+    return 'hook_resid_post' in name
+#%%
+# ============================================================================ #
+# Define a hook for each experiment
+experiments = dict(
+    layer_zero_adj_verb_hook = partial(
+        leace_hook_base,
+        tokens=(adjective_token, verb_token),
+        layer=0,
+        double=False,
+    ),
+    layer_zero_adj_verb_double_hook = partial(
+        leace_hook_base,
+        tokens=(adjective_token, verb_token),
+        layer=0,
+        double=True,
+    ),
+    layer_zero_all_pos_hook = partial(
+        leace_hook_base,
+        tokens=np.arange(len(example_prompt)),
+        layer=0,
+        double=False,
+    ),
+    layer_zero_all_pos_double_hook = partial(
+        leace_hook_base,
+        tokens=np.arange(len(example_prompt)),
+        layer=0,
+        double=True,
+    ),
+
+    all_layer_adj_verb_hook = partial(
+        leace_hook_base,
+        tokens=(adjective_token, verb_token),
+        double=False,
+    ),
+    all_layer_adj_verb_double_hook = partial(
+        leace_hook_base,
+        tokens=(adjective_token, verb_token),
+        double=True,
+    ),
+    all_layer_all_pos_hook = partial(
+        leace_hook_base,
+        tokens=np.arange(len(example_prompt)),
+        double=False,
+    ),
+    all_layer_all_pos_double_hook = partial(
+        leace_hook_base,
+        tokens=np.arange(len(example_prompt)),
+        double=True,
+    ),
 )
-utils.test_prompt(
-    example_string, example_answer, model, 
-    prepend_space_to_answer=False,
-    prepend_bos=False,
-    top_k=top_k,
-)
+#%%
+for experiment_name, experiment_hook in experiments.items():
+    model.reset_hooks()
+    model.add_hook(
+        name_filter,
+        experiment_hook
+    )
+    print(experiment_name)
+    utils.test_prompt(
+        example_string, example_answer, model, 
+        prepend_space_to_answer=False,
+        prepend_bos=False,
+        top_k=top_k,
+    )
+
 
 # %%
