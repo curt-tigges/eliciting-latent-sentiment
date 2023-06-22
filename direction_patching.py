@@ -282,7 +282,6 @@ fig = px.imshow(
 )
 fig.update_layout(dict(
     coloraxis=dict(colorbar_ticksuffix = "%"),
-    # border=True,
     margin={"r": 100, "l": 100}
 ))
 
