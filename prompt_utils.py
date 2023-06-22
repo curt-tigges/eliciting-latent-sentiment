@@ -25,13 +25,13 @@ neg_prompts = [
 ]
 
 def get_dataset(
-        model: HookedTransformer, device: torch.device
-    ) -> Tuple[
-        Float[Tensor, "batch pos"] 
-        Float[Tensor, "batch 2"],
-        Float[Tensor, "batch pos"],
-        Float[Tensor, "batch pos"],
-    ]:
+    model: HookedTransformer, device: torch.device
+) -> Tuple[
+    Float[Tensor, "batch pos"],
+    Float[Tensor, "batch 2"],
+    Float[Tensor, "batch pos"],
+    Float[Tensor, "batch pos"],
+]:
     '''
     answer_tokens:
         list of the token (ie an integer) corresponding to each answer, 
