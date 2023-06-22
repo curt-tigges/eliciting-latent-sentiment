@@ -27,7 +27,7 @@ model = HookedTransformer.from_pretrained(
 km_line = np.load('data/km_line_embed_and_mlp0.npy')
 km_line = torch.from_numpy(km_line).to(device)
 #%%
-clean_tokens, corrupted_tokens, answer_tokens = get_dataset(model, device)
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
 #%%
 example_prompt = model.to_str_tokens(clean_tokens[0])
 example_string = model.to_string(clean_tokens[0])
@@ -122,7 +122,6 @@ utils.test_prompt(
 model.reset_hooks()
 model.add_hook(
     lambda name: 'hook_resid_post' in name,
-    # 'blocks.0.hook_resid_post', 
     leace_hook
 )
 utils.test_prompt(
