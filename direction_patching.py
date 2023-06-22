@@ -31,7 +31,7 @@ sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
     device, dtype=torch.float32
 )
 #%% # Data loading
-clean_tokens, corrupted_tokens, answer_tokens = get_dataset(model, device)
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
 #%%
 def get_logit_diff(logits, answer_token_indices, per_prompt=False):
     """Gets the difference between the logits of the provided tokens (e.g., the correct and incorrect tokens in IOI)

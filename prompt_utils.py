@@ -17,8 +17,6 @@ negative_adjectives = [
     ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
     ]
 
-all_prompts = []
-
 pos_prompts = [
     f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives)-1)
 ]
@@ -29,15 +27,17 @@ neg_prompts = [
 def get_dataset(
         model: HookedTransformer, device: torch.device
     ) -> Tuple[
-        Float[Tensor, "batch pos"],
-        Float[Tensor, "batch pos"],
+        Float[Tensor, "batch pos"] 
         Float[Tensor, "batch 2"],
+        Float[Tensor, "batch pos"],
+        Float[Tensor, "batch pos"],
     ]:
     '''
     answer_tokens:
         list of the token (ie an integer) corresponding to each answer, 
         in the format (correct_token, incorrect_token)
     '''
+    all_prompts = []
     answer_tokens = []
     for i in range(len(pos_prompts)-1):
 
@@ -67,4 +67,6 @@ def get_dataset(
     corrupted_tokens = model.to_tokens(
         all_prompts[1:] + [all_prompts[0]], prepend_bos=True
     ).to(device)
-    return clean_tokens, corrupted_tokens, answer_tokens
+    return (
+        all_prompts, answer_tokens, clean_tokens, corrupted_tokens
+    )
