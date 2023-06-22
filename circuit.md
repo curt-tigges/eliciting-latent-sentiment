@@ -1,0 +1,23 @@
+**Categories (non-exclusive):**
+- Intermediate Attribute Mapping Heads (sentiment mover heads?)
+	- **L6H4** attends to **ADJ+1** from VRB. It writes out in the sentiment direction at **SBJ2** and VRB+1/PRN1.
+	- **L7H1** attends to **SBJ1** ("movie", in this case) position from the final DTR ("this") as well as to **ADJ** from **SBJ2**, and writes out strongly in the sentiment direction at **SBJ2** and **END**.
+	- **L9H2** attends to **SBJ1** from ADJ+2 and VRB, and to **ADJ** and **SBJ2** from **END**. It produces strong sentiment output at **SBJ2**, ADJ+1/+2, VRB+1/+2, CLN, and **END.**
+	- **L10H4** attends to **ADJ** and **VRB** from **END**. It produces strong sentiment output at ADJ+1, **DTR**, **SBJ2** and **END**.
+- Next-Token Mapping Heads
+	- *L3H11 attends to ADJ and VRB from ADJ and VRB and subsequent positions (7 and 10) as well as the subsequent+1 positions (8 and 11), and writes in the sentiment direction most strongly at ADJ+1 and VRB+1/+2.*
+	- **L5H7** attends slightly to ADJ from **ADJ+1**, and strongly to **VRB** from VRB+1. It strongly writes in the sentiment direction at **ADJ+1** and VRB+1.
+	- *L8H4 attends to VRB from ADJ+1. It produces moderate sentiment output at ADJ+1/+2 and VRB+1.*
+	- **L9H2** attends to **SBJ1** from ADJ+2 and VRB, and to **ADJ** and **SBJ2** from **END**. It produces strong sentiment output at **SBJ2**, ADJ+1/+2, VRB+1/+2, CLN, and **END.**
+- Direct Attribute Extraction Heads
+	- **L7H1** attends to **SBJ1** ("movie", in this case) position from the final DTR ("this") as well as to **ADJ** from **SBJ2**, and writes out strongly in the sentiment direction at **SBJ2** and **END**.
+	- **L10H1** attends to **ADJ** from **END**. It writes only slightly in the sentiment direction at that position.
+	- **L10H4** attends to **ADJ** and **VRB** from **END**. It produces strong sentiment output at ADJ+1, **DTR**, **SBJ2** and **END**.
+	- **L11H9** attends to **ADJ** at the **END** position. It produces slight sentiment output at **END**.
+- Intermediate Attribute Extraction Heads
+	- **L7H1** attends to **SBJ1** ("movie", in this case) position from the final DTR ("this") as well as to **ADJ** from **SBJ2**, and writes out strongly in the sentiment direction at **SBJ2** and **END**.
+	- **L8H5** attends to **DTR** and **SBJ2** from END, and writes weakly in the direction of sentiment at **END**.
+	- **L9H2** attends to **SBJ1** from ADJ+2 and VRB, and to **ADJ** and **SBJ2** from **END**. It produces strong sentiment output at **SBJ2**, ADJ+1/+2, VRB+1/+2, CLN, and **END.**
+	- **L9H10** mostly attends to immediately previous tokens at each position, including to VRB from VRB+1, and **SBJ2** from **END**. It produces weak sentiment output at **END**.
+- Next-Token Attribute Extractors (Feature Induction Heads)
+    - **L6H4** attends to **ADJ+1** from VRB. It writes out in the sentiment direction at **SBJ2** and VRB+1/PRN1.
