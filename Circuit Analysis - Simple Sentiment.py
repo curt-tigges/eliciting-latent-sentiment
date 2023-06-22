@@ -30,17 +30,11 @@ from typing import List, Optional, Union
 
 import torch
 import numpy as np
-import yaml
 
 import einops
 from fancy_einsum import einsum
 
-from datasets import load_dataset
-#from transformers import pipeline
-
-import transformers
 import circuitsvis as cv
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 import transformer_lens
 import transformer_lens.utils as utils
 from transformer_lens.hook_points import (
@@ -59,20 +53,20 @@ from typing import List, Union
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import re
 
 from functools import partial
 
 from torchtyping import TensorType as TT
 
 from path_patching import Node, IterNode, path_patch, act_patch
+import prompt_utils
 
 from visualization_utils import get_attn_head_patterns
 
 # %%
 torch.set_grad_enabled(False)
-
-device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+device = 'cpu'
+# device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 # %%
 update_layout_set = {
@@ -140,45 +134,18 @@ def scatter(x, y, xaxis="", yaxis="", caxis="", renderer=None, **kwargs):
     px.scatter(y=y, x=x, labels={"x":xaxis, "y":yaxis, "color":caxis}, **kwargs).show(renderer)
 
 
-# %%
-def get_logit_diff(logits, answer_token_indices, per_prompt=False):
-    """Gets the difference between the logits of the provided tokens (e.g., the correct and incorrect tokens in IOI)
-
-    Args:
-        logits (torch.Tensor): Logits to use.
-        answer_token_indices (torch.Tensor): Indices of the tokens to compare.
-
-    Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
-    """
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits = logits[:, -1, :]
-    left_logits = logits.gather(1, answer_token_indices[:, 0].unsqueeze(1))
-    right_logits = logits.gather(1, answer_token_indices[:, 1].unsqueeze(1))
-    if per_prompt:
-        print(left_logits - right_logits)
-
-    return (left_logits - right_logits).mean()
-
-
-
 # %% [markdown] id="y5jV1EnY0dpf"
 # ## Exploratory Analysis
 #
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="bjeWvBNOn2VT" outputId="dff069ed-56d5-414d-d649-2c70f073b1fc"
-#source_model = AutoModelForCausalLM.from_pretrained("lvwerra/gpt2-imdb")
-#rlhf_model = AutoModelForCausalLM.from_pretrained("curt-tigges/gpt2-negative-movie-reviews")
-
-#hooked_source_model = HookedTransformer.from_pretrained(model_name="gpt2", hf_model=source_model)
-#model = HookedTransformer.from_pretrained(model_name="EleutherAI/pythia-410m")
 model = HookedTransformer.from_pretrained(
     "gpt2-small",
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
     refactor_factored_attn_matrices=True,
+    device=device,
 )
 
 # %% [markdown]
@@ -192,83 +159,32 @@ example_answer = " terrible"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %%
-example_prompt = "I thought this movie was amazing, I loved it. \nConclusion: This movie is"
-example_answer = " amazing"
+example_prompt = "I thought this movie was perfect, I loved it. \nConclusion: This movie is"
+example_answer = " bad"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %% [markdown]
 # ### Dataset Construction
-
 # %%
-positive_adjectives = [
-    ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
-    ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
-    ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
-    ' beautiful',' joyful',' positive',' excellent'
-    ]
-
-negative_adjectives = [
-    ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
-    ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
-    ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
-    ]
-
-#negative_adjectives = [' lousy', ' dire', ' bad', ' nasty', ' miserable', ' wretched', ' disgusting', ' ugly', ' disastrous', ' tragic']
-
-len(positive_adjectives), len(negative_adjectives)
-
-
-# %%
-all_prompts = []
-
-pos_prompts = [
-    f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives)-1)
-]
-neg_prompts = [
-    f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives)-1)
-]
-# List of the token (ie an integer) corresponding to each answer, in the format (correct_token, incorrect_token)
-answer_tokens = []
-for i in range(len(pos_prompts)-1):
-
-    all_prompts.append(pos_prompts[i])
-    all_prompts.append(neg_prompts[i])
-    
-    answer_tokens.append(
-        (
-            model.to_single_token(" amazing"),
-            model.to_single_token(" terrible"),
-        )
-    )
-
-    answer_tokens.append(
-        (
-            model.to_single_token(" terrible"),
-            model.to_single_token(" amazing"),
-        )
-    )
-
-answer_tokens = torch.tensor(answer_tokens).to(device)
-
-prompts_tokens = model.to_tokens(all_prompts, prepend_bos=True)
-clean_tokens = prompts_tokens.to(device)
-
-corrupted_tokens = model.to_tokens(all_prompts[1:] + [all_prompts[0]], prepend_bos=True)
-
+(
+    all_prompts, answer_tokens, clean_tokens, corrupted_tokens
+) = prompt_utils.get_dataset(
+    model, device, n_pairs=5
+)
 # %%
 for i in range(len(all_prompts)):
     logits, _ = model.run_with_cache(all_prompts[i])
     print(all_prompts[i])
-    print(get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
+    print(prompt_utils.get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
 
 # %%
 clean_logits, clean_cache = model.run_with_cache(clean_tokens)
-clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
+clean_logit_diff = prompt_utils.get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
 clean_logit_diff
 
 # %%
 corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
-corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
+corrupted_logit_diff = prompt_utils.get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 corrupted_logit_diff
 
 
@@ -283,7 +199,7 @@ def logit_diff_denoising(
     Linear function of logit diff, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
-    patched_logit_diff = get_logit_diff(logits, answer_tokens)
+    patched_logit_diff = prompt_utils.get_logit_diff(logits, answer_tokens)
     return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
 
 def logit_diff_noising(
@@ -296,7 +212,7 @@ def logit_diff_noising(
         We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
         and -1 when performance has been destroyed (i.e. is same as ABC dataset).
         '''
-        patched_logit_diff = get_logit_diff(logits, answer_tokens)
+        patched_logit_diff = prompt_utils.get_logit_diff(logits, answer_tokens)
         return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
 
 
@@ -304,9 +220,14 @@ def logit_diff_noising(
 # ### Direct Logit Attribution
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="bt_jzrazlMAK" outputId="39683745-1153-4a0f-bdbf-5f3be977abe3"
-answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
+answer_residual_directions: Float[
+    Tensor, "batch n_pairs 2 d_model"
+] = model.tokens_to_residual_directions(answer_tokens)
 print("Answer residual directions shape:", answer_residual_directions.shape)
-logit_diff_directions = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
+logit_diff_directions: Float[Tensor, "batch d_model"] = (
+    answer_residual_directions[:, :, 0, :] - 
+    answer_residual_directions[:, :, 1, :]
+).mean(dim=1)
 print("Logit difference directions shape:", logit_diff_directions.shape)
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="LsDE7VUGIX8l" outputId="226c2ad4-fb5b-44f4-b872-1d06eee7cbd5"
