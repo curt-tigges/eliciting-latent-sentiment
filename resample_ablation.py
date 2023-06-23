@@ -45,16 +45,8 @@ corrupted_logits, corrupted_cache = model.run_with_cache(
 corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 print('corrupted logit diff', corrupted_logit_diff)
 #%%
-clean_cache = ActivationCache(
-    {k: v.to(device) for k, v in clean_cache.items()},
-    model,
-    has_batch_dim=clean_cache.has_batch_dim,
-)
-corrupted_cache = ActivationCache(
-    {k: v.to(device) for k, v in corrupted_cache.items()},
-    model,
-    has_batch_dim=corrupted_cache.has_batch_dim,
-)
+clean_cache = clean_cache.to(device)
+corrupted_cache = corrupted_cache.to(device)
 #%%
 assert clean_cache['blocks.0.attn.hook_z'].device == device
 #%%
