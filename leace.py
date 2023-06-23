@@ -9,7 +9,7 @@ from torch import Tensor
 import einops
 from sklearn.linear_model import LogisticRegression
 from concept_erasure import ConceptEraser
-from transformer_lens import HookedTransformer, utils
+from transformer_lens import ActivationCache, HookedTransformer, utils
 from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
@@ -29,7 +29,7 @@ model = HookedTransformer.from_pretrained(
     fold_ln=True,
     device=device,
 )
-model.cfg.use_attn_results = True
+model.cfg.use_attn_result = True
 #%%
 heads = model.cfg.n_heads
 layers = model.cfg.n_layers
@@ -181,6 +181,26 @@ example_answer = model.to_str_tokens(answer_tokens[example_index])[0]
 #%%
 def stack_name_filter(name: str) -> bool:
     return name.endswith('result') or name.endswith('z') or name.endswith('_scale')
+#%%
+def extract_sentiment_layer_pos(
+    cache: ActivationCache,
+    centre_residuals: bool = True,
+) -> Float[Tensor, "layer pos"]:
+    dots: Float[Tensor, "layer pos"] = torch.empty((layers, seq_len))
+    for layer in range(layers):
+        act: Float[Tensor, "batch pos d_model"] = cache[
+            utils.get_act_name('resid_post', layer)
+        ]
+        if centre_residuals:
+            act -= einops.reduce(
+                act, "b p d -> 1 p d", reduction="mean"
+            ) # centre residual stream vectors
+        dots[layer] = torch.einsum(
+            "b p d, b d -> p", act, sentiment_directions
+        ) / batch_size
+    return dots
+
+
 # ============================================================================ #
 # Baseline prompts
 
@@ -195,24 +215,22 @@ utils.test_prompt(
 #%%
 _, base_cache = model.run_with_cache(
     clean_tokens,
-    names_filter=stack_name_filter,
+    names_filter=lambda name: name.endswith('resid_post'), 
     prepend_bos=False,
     return_type=None
 )
 #%%
-per_pos_sentiment = residual_sentiment_sim_by_pos(
-    base_cache, sentiment_directions, len(example_prompt)
+base_sentiment = extract_sentiment_layer_pos(
+    base_cache,
 )
-del base_cache
+#%%
 fig = px.imshow(
-    per_pos_sentiment.squeeze().cpu().detach().numpy(),
-    labels={'x': 'Position', 'y': 'Component'},
-    title=f'Per position sentiment for baseline',
+    base_sentiment.cpu().detach().numpy(),
+    x=example_prompt_indexed,
+    labels={'x': 'Position', 'y': 'Layer'},
+    title='Baseline sentiment',
     color_continuous_scale="RdBu",
     color_continuous_midpoint=0,
-    x=example_prompt,
-    y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
-    height = heads * layers * 20,
 )
 fig.show()
 #%%
@@ -356,18 +374,14 @@ for experiment_name, experiment_hook in experiments.items():
         prepend_bos=False,
         return_type=None
     )
-    per_pos_sentiment = residual_sentiment_sim_by_pos(
-        test_cache, sentiment_directions, len(example_prompt)
-    )
+    test_sentiment = extract_sentiment_layer_pos(test_cache)
     fig = px.imshow(
-        per_pos_sentiment.squeeze().cpu().detach().numpy(),
-        labels={'x': 'Position', 'y': 'Component'},
-        title=f'Per position sentiment for {experiment_name}',
+        test_sentiment.cpu().detach().numpy(),
+        labels={'x': 'Position', 'y': 'Layer'},
+        x=example_prompt_indexed,
+        title=f'Sentiment on {experiment_name}',
         color_continuous_scale="RdBu",
         color_continuous_midpoint=0,
-        x=example_prompt,
-        y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
-        height = heads * layers * 20,
     )
     fig.show()
 
