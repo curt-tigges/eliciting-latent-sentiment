@@ -7,16 +7,18 @@ import pandas as pd
 import torch
 from torch import Tensor
 import einops
-from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
 from concept_erasure import ConceptEraser
-from transformer_lens import HookedTransformer, utils
+from transformer_lens import ActivationCache, HookedTransformer, utils
 from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
 )  # Hooking utilities
 from prompt_utils import get_dataset
 import plotly.express as px
+from cache_utils import (
+    residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
+)
 #%%
 torch.set_grad_enabled(False)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -27,6 +29,10 @@ model = HookedTransformer.from_pretrained(
     fold_ln=True,
     device=device,
 )
+model.cfg.use_attn_result = True
+#%%
+heads = model.cfg.n_heads
+layers = model.cfg.n_layers
 #%%
 km_line = np.load('data/km_line_embed_and_mlp0.npy')
 km_line = torch.from_numpy(km_line).to(device, torch.float32)
@@ -34,10 +40,26 @@ km_line_unit = km_line / km_line.norm()
 #%%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
 #%%
+batch_size = clean_tokens.shape[0]
+sentiment_repeated = einops.repeat(
+    km_line, "d_model -> batch d_model", batch=batch_size
+)
+even_batch_repeated = einops.repeat(
+    torch.arange(batch_size, device=device) % 2 == 0, 
+    "batch -> batch d_model", 
+    d_model=len(km_line)
+)
+sentiment_directions: Float[Tensor, "batch d_model"] = torch.where(
+    even_batch_repeated,
+    sentiment_repeated,
+    -sentiment_repeated,
+).to(device)
+#%%
 example_prompt = model.to_str_tokens(clean_tokens[0])
 adjective_token = 6
 verb_token = 9
 example_prompt_indexed = [f'{i}: {s}' for i, s in enumerate(example_prompt)]
+seq_len = len(example_prompt)
 print(example_prompt_indexed)
 #%%
 all_adjectives = [
@@ -76,10 +98,14 @@ def mean_ablate_km_component(
 # Fit LEACE
 
 #%% # Setup training data
-X_t: Float[Tensor, "batch pos d_model"] = embed_and_mlp0(clean_tokens, model)
-X_t: Float[Tensor, "batch d_model"] = X_t[:, adjective_token, :].to(
-    torch.float32
+clean_embeddings: Float[Tensor, "batch pos d_model"] = embed_and_mlp0(
+    clean_tokens, model
+).to(torch.float32)
+clean_projections: Float[Tensor, "batch"] = einops.einsum(
+    clean_embeddings, km_line_unit, "b s d, d -> b s"
 )
+X_t: Float[Tensor, "batch d_model"] = clean_embeddings[:, adjective_token, :]
+X_c: Float[Tensor, "batch"] = clean_projections[:, adjective_token]
 Y_t: Float[Tensor, "batch"] = (
     torch.arange(len(X_t), device=device) % 2 == 0
 ).to(torch.int64)
@@ -87,12 +113,10 @@ X = X_t.cpu().detach().numpy()
 Y = Y_t.cpu().detach().numpy()
 X_t.shape, Y_t.shape, X_t.dtype, Y_t.dtype
 #%%
-km_components: Float[Tensor, "batch"] = einops.einsum(
-    X_t, km_line_unit, "b d, d -> b"
-)
+
 pre_comp_df = pd.DataFrame({
     'token': all_adjectives,
-    'km_components': km_components.cpu().detach().numpy(),
+    'km_components': X_c.cpu().detach().numpy(),
 })
 px.histogram(
     data_frame=pre_comp_df,
@@ -103,7 +127,7 @@ px.histogram(
     title="Histogram of km_components before intervention",
 )
 #%%
-average_km_component: Float[Tensor, ""] = km_components.mean()
+average_km_component: Float[Tensor, ""] = X_c.mean()
 #%% # Before concept erasure
 real_lr = LogisticRegression(max_iter=1000).fit(X, Y)
 beta = torch.from_numpy(real_lr.coef_[0, :]).to(device, torch.float32)
@@ -128,12 +152,12 @@ assert beta.norm(p=torch.inf) < 1e-4
 # %%
 px.line(beta)
 #%%
-km_components_ablated: Float[Tensor, "batch"] = einops.einsum(
+X_c_ablated: Float[Tensor, "batch"] = einops.einsum(
     X_ablated, km_line_unit, "b d, d -> b"
 )
 post_comp_df = pd.DataFrame({
     'token': all_adjectives,
-    'km_components': km_components_ablated.cpu().detach().numpy(),
+    'km_components': X_c_ablated.cpu().detach().numpy(),
 })
 px.histogram(
     data_frame=post_comp_df,
@@ -151,9 +175,32 @@ induction_prompt = "Here, this is an induction prompt for you. \n Here, this is 
 memorisation_prompt = "The famous quote from Neil Armstrong is: One small step for man, one giant leap for"
 induction_answer = " you"
 memorisation_answer = " mankind"
-example_index = 1
+example_index = 0
 example_string = model.to_string(clean_tokens[example_index])
 example_answer = model.to_str_tokens(answer_tokens[example_index])[0]
+#%%
+def stack_name_filter(name: str) -> bool:
+    return name.endswith('result') or name.endswith('z') or name.endswith('_scale')
+#%%
+def extract_sentiment_layer_pos(
+    cache: ActivationCache,
+    centre_residuals: bool = True,
+) -> Float[Tensor, "layer pos"]:
+    dots: Float[Tensor, "layer pos"] = torch.empty((layers, seq_len))
+    for layer in range(layers):
+        act: Float[Tensor, "batch pos d_model"] = cache[
+            utils.get_act_name('resid_post', layer)
+        ]
+        if centre_residuals:
+            act -= einops.reduce(
+                act, "b p d -> 1 p d", reduction="mean"
+            ) # centre residual stream vectors
+        dots[layer] = torch.einsum(
+            "b p d, b d -> p", act, sentiment_directions
+        ) / batch_size
+    return dots
+
+
 # ============================================================================ #
 # Baseline prompts
 
@@ -166,25 +213,46 @@ utils.test_prompt(
     top_k=top_k,
 )
 #%%
-
-model.reset_hooks()
-print('Baseline induction prompt')
-utils.test_prompt(
-    induction_prompt, induction_answer, model, 
-    prepend_space_to_answer=False,
+_, base_cache = model.run_with_cache(
+    clean_tokens,
+    names_filter=lambda name: name.endswith('resid_post'), 
     prepend_bos=False,
-    top_k=top_k,
+    return_type=None
 )
 #%%
-
-model.reset_hooks()
-print('Baseline memorisation prompt')
-utils.test_prompt(
-    memorisation_prompt, memorisation_answer, model, 
-    prepend_space_to_answer=False,
-    prepend_bos=False,
-    top_k=top_k,
+base_sentiment = extract_sentiment_layer_pos(
+    base_cache,
 )
+#%%
+fig = px.imshow(
+    base_sentiment.cpu().detach().numpy(),
+    x=example_prompt_indexed,
+    labels={'x': 'Position', 'y': 'Layer'},
+    title='Baseline sentiment',
+    color_continuous_scale="RdBu",
+    color_continuous_midpoint=0,
+)
+fig.show()
+#%%
+
+# model.reset_hooks()
+# print('Baseline induction prompt')
+# utils.test_prompt(
+#     induction_prompt, induction_answer, model, 
+#     prepend_space_to_answer=False,
+#     prepend_bos=False,
+#     top_k=top_k,
+# )
+#%%
+
+# model.reset_hooks()
+# print('Baseline memorisation prompt')
+# utils.test_prompt(
+#     memorisation_prompt, memorisation_answer, model, 
+#     prepend_space_to_answer=False,
+#     prepend_bos=False,
+#     top_k=top_k,
+# )
 # %%
 def leace_hook_base(
     input: Float[Tensor, "batch pos d_model"], 
@@ -215,7 +283,7 @@ def linear_hook_base(
     
 
 #%%
-def name_filter(name: str):
+def hook_name_filter(name: str):
     return 'hook_resid_post' in name
 #%%
 # ============================================================================ #
@@ -291,7 +359,7 @@ experiments = dict(
 for experiment_name, experiment_hook in experiments.items():
     model.reset_hooks()
     model.add_hook(
-        name_filter,
+        hook_name_filter,
         experiment_hook
     )
     print(experiment_name)
@@ -301,20 +369,35 @@ for experiment_name, experiment_hook in experiments.items():
         prepend_bos=False,
         top_k=top_k,
     )
+    _, test_cache = model.run_with_cache(
+        clean_tokens, 
+        prepend_bos=False,
+        return_type=None
+    )
+    test_sentiment = extract_sentiment_layer_pos(test_cache)
+    fig = px.imshow(
+        test_sentiment.cpu().detach().numpy(),
+        labels={'x': 'Position', 'y': 'Layer'},
+        x=example_prompt_indexed,
+        title=f'Sentiment on {experiment_name}',
+        color_continuous_scale="RdBu",
+        color_continuous_midpoint=0,
+    )
+    fig.show()
 
 
-# %%
-utils.test_prompt(
-    induction_prompt, induction_answer, model,
-    prepend_space_to_answer=False,
-    prepend_bos=False,
-    top_k=top_k,
-)
-# %%
-utils.test_prompt(
-    memorisation_prompt, memorisation_answer, model,
-    prepend_space_to_answer=False,
-    prepend_bos=False,
-    top_k=top_k,
-)
+# # %%
+# utils.test_prompt(
+#     induction_prompt, induction_answer, model,
+#     prepend_space_to_answer=False,
+#     prepend_bos=False,
+#     top_k=top_k,
+# )
+# # %%
+# utils.test_prompt(
+#     memorisation_prompt, memorisation_answer, model,
+#     prepend_space_to_answer=False,
+#     prepend_bos=False,
+#     top_k=top_k,
+# )
 #%%
