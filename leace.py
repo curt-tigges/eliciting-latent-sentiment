@@ -33,15 +33,11 @@ km_line_unit = km_line / km_line.norm()
 #%%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
 #%%
-example_index = 4
-example_prompt = model.to_str_tokens(clean_tokens[example_index])
-example_string = model.to_string(clean_tokens[example_index])
+example_prompt = model.to_str_tokens(clean_tokens[0])
 adjective_token = 6
 verb_token = 9
 example_prompt_indexed = [f'{i}: {s}' for i, s in enumerate(example_prompt)]
-example_answer = model.to_str_tokens(answer_tokens[example_index])[0]
 print(example_prompt_indexed)
-print(example_answer)
 #%%
 def embed_and_mlp0(
     tokens: Int[Tensor, "batch 1"],
@@ -100,6 +96,9 @@ induction_prompt = "Here, this is an induction prompt for you. \n Here, this is 
 memorisation_prompt = "The famous quote from Neil Armstrong is: One small step for man, one giant leap for"
 induction_answer = " you"
 memorisation_answer = " mankind"
+example_index = 1
+example_string = model.to_string(clean_tokens[example_index])
+example_answer = model.to_str_tokens(answer_tokens[example_index])[0]
 # ============================================================================ #
 # Baseline prompts
 
@@ -151,6 +150,7 @@ def leace_hook_base(
 def linear_hook_base(
     input: Float[Tensor, "batch pos d_model"], 
     hook: HookPoint,
+    tokens: Iterable[int] = (adjective_token, verb_token),
     layer: Optional[int] = None,
 ):
     assert 'hook_resid_post' in hook.name
@@ -161,7 +161,10 @@ def linear_hook_base(
         average_km_component, " -> b p", 
         b=input.shape[0], p=input.shape[1]
     )
-    input += (avg_broadcast - proj).unsqueeze(dim=-1) * (km_line_unit)
+    proj_diff: Float[Tensor, "batch pos 1"] = (
+        avg_broadcast - proj
+    )[:, tokens].unsqueeze(dim=-1)
+    input[:, tokens, :] += proj_diff * km_line_unit
     return input
 
 #%%
@@ -216,13 +219,26 @@ experiments = dict(
     #     tokens=np.arange(len(example_prompt)),
     #     double=True,
     # ),
-    layer_0_linear = partial(
+
+
+    layer_0_linear_adj_verb = partial(
         linear_hook_base,
-        layer=0
+        layer=0,
+        tokens=(adjective_token, verb_token),
     ),
-    all_layer_linear = partial(
+    all_layer_linear_adj_verb = partial(
         linear_hook_base,
+        tokens=(adjective_token, verb_token),
     ),
+    # layer_0_linear = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    # ),
+    # all_layer_linear = partial(
+    #     linear_hook_base,
+    #     tokens=np.arange(len(example_prompt)),
+    # ),
 )
 #%%
 for experiment_name, experiment_hook in experiments.items():
