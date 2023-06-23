@@ -154,6 +154,12 @@ fig = px.line(
     title='Which components align with the sentiment direction at each position?',
     hover_name=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
 )
+example_prompt_dict = {f'{i}': f'{i}: {t}' for i, t in enumerate(example_prompt)}
+fig.for_each_trace(lambda t: t.update(
+    name = example_prompt_dict[t.name],
+    legendgroup = example_prompt_dict[t.name],
+    hovertemplate = t.hovertemplate.replace(t.name, example_prompt_dict[t.name])
+))
 fig.write_html(f'data/sentiment_by_position_line{HTML_SUFFIX}.html')
 fig.show()
 # %%
