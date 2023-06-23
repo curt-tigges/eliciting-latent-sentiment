@@ -1,21 +1,7 @@
-# ---
-# jupyter:
-#   jupytext:
-#     custom_cell_magics: kql
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.11.2
-#   kernelspec:
-#     display_name: Python 3
-#     name: python3
-# ---
-
-# %% [markdown] id="CbZUo-Tev4QM"
+# %% [markdown]
 # # Initial Exploratory Analysis
 
-# %% [markdown] id="5vLV3GuDd415"
+# %% [markdown]
 # ## Setup
 
 # %%
@@ -24,7 +10,7 @@ ipython = get_ipython()
 ipython.run_line_magic("load_ext", "autoreload")
 ipython.run_line_magic("autoreload", "2")
 
-# %% id="8QQvkqmWcB2v"
+# %%
 import os
 import pathlib
 from typing import List, Optional, Union
@@ -124,8 +110,7 @@ def hist_p(tensor, renderer=None, **kwargs):
             fig.data[i]["name"] = names[i // 2]
     fig.show(renderer)
 
-
-# %% id="0c0JbzPpI0-D"
+# %%
 def imshow(tensor, renderer=None, xaxis="", yaxis="", **kwargs):
     px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, color_continuous_scale="RdBu", labels={"x":xaxis, "y":yaxis}, **kwargs).show(renderer)
 
@@ -139,7 +124,6 @@ def scatter(x, y, xaxis="", yaxis="", caxis="", renderer=None, **kwargs):
     x = utils.to_numpy(x)
     y = utils.to_numpy(y)
     px.scatter(y=y, x=x, labels={"x":xaxis, "y":yaxis, "color":caxis}, **kwargs).show(renderer)
-
 
 # %%
 def get_logit_diff(logits, answer_token_indices, per_prompt=False):
@@ -164,11 +148,11 @@ def get_logit_diff(logits, answer_token_indices, per_prompt=False):
 
 
 
-# %% [markdown] id="y5jV1EnY0dpf"
+# %% [markdown]
 # ## Exploratory Analysis
-#
+# 
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="bjeWvBNOn2VT" outputId="dff069ed-56d5-414d-d649-2c70f073b1fc"
+# %%
 #source_model = AutoModelForCausalLM.from_pretrained("lvwerra/gpt2-imdb")
 #rlhf_model = AutoModelForCausalLM.from_pretrained("curt-tigges/gpt2-negative-movie-reviews")
 
@@ -186,15 +170,15 @@ model = HookedTransformer.from_pretrained(
 # ### Initial Examination
 
 # %%
-example_prompt = "I thought this movie was lousy, I hated it. \nConclusion: This movie is"
-example_answer = " terrible"
+example_prompt = "I thought this movie was lousy, I hated it. The acting was atrocious, the plot was ridiculous, and overall it was just very"
+example_answer = " bad"
 
 # %%
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %%
-example_prompt = "I thought this movie was amazing, I loved it. \nConclusion: This movie is"
-example_answer = " amazing"
+example_prompt = "I thought this movie was great, I loved it. The acting was fantastic, the plot was fascinating, and overall it was just very"
+example_answer = " good"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %% [markdown]
@@ -218,15 +202,22 @@ negative_adjectives = [
 
 len(positive_adjectives), len(negative_adjectives)
 
+# %%
+# write a for loop that goes through a list and circles back to the beginning if the index is out of range
+# this is so we can have a prompt like "I thought this movie was [adjective], I loved it. The acting was fantastic, the plot was fascinating, and overall it was just very [adjective]"
+# and we can cycle through the adjectives in the list
+def get_adjective(adjective_list, index):
+    return adjective_list[index % len(adjective_list)]
+
 
 # %%
 all_prompts = []
 
 pos_prompts = [
-    f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives)-1)
+    f"I thought this movie was {get_adjective(positive_adjectives, i)}, I loved it. The acting was {get_adjective(positive_adjectives, i+1)}, the plot was {get_adjective(positive_adjectives, i+2)}, and overall the movie was just very" for i in range(len(positive_adjectives))
 ]
 neg_prompts = [
-    f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives)-1)
+    f"I thought this movie was {get_adjective(negative_adjectives, i)}, I hated it. The acting was {get_adjective(negative_adjectives, i+1)}, the plot was {get_adjective(negative_adjectives, i+2)}, and overall the movie was just very" for i in range(len(negative_adjectives))
 ]
 # List of the token (ie an integer) corresponding to each answer, in the format (correct_token, incorrect_token)
 answer_tokens = []
@@ -237,15 +228,15 @@ for i in range(len(pos_prompts)-1):
     
     answer_tokens.append(
         (
-            model.to_single_token(" amazing"),
-            model.to_single_token(" terrible"),
+            model.to_single_token(" good"),
+            model.to_single_token(" bad"),
         )
     )
 
     answer_tokens.append(
         (
-            model.to_single_token(" terrible"),
-            model.to_single_token(" amazing"),
+            model.to_single_token(" bad"),
+            model.to_single_token(" good"),
         )
     )
 
@@ -271,7 +262,6 @@ clean_logit_diff
 corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
 corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 corrupted_logit_diff
-
 
 # %%
 def logit_diff_denoising(
@@ -300,17 +290,16 @@ def logit_diff_noising(
         patched_logit_diff = get_logit_diff(logits, answer_tokens)
         return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
 
-
-# %% [markdown] id="TfiWnZtelFMV"
+# %% [markdown]
 # ### Direct Logit Attribution
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="bt_jzrazlMAK" outputId="39683745-1153-4a0f-bdbf-5f3be977abe3"
+# %%
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
 print("Answer residual directions shape:", answer_residual_directions.shape)
 logit_diff_directions = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
 print("Logit difference directions shape:", logit_diff_directions.shape)
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="LsDE7VUGIX8l" outputId="226c2ad4-fb5b-44f4-b872-1d06eee7cbd5"
+# %%
 # cache syntax - resid_post is the residual stream at the end of the layer, -1 gets the final layer. The general syntax is [activation_name, layer_index, sub_layer_type]. 
 final_residual_stream = clean_cache["resid_post", -1]
 print("Final residual stream shape:", final_residual_stream.shape)
@@ -323,30 +312,27 @@ average_logit_diff = einsum("batch d_model, batch d_model -> ", scaled_final_tok
 print("Calculated average logit diff:", average_logit_diff.item())
 print("Original logit difference:",clean_logit_diff.item())
 
-
-# %% [markdown] id="Nb2nC45lIohT"
+# %% [markdown]
 # #### Logit Lens
 
-# %% id="DvRDK2krIrid"
+# %%
 def residual_stack_to_logit_diff(residual_stack: TT["components", "batch", "d_model"], cache: ActivationCache) -> float:
     scaled_residual_stack = clean_cache.apply_ln_to_stack(residual_stack, layer = -1, pos_slice=-1)
     return einsum("... batch d_model, batch d_model -> ...", scaled_residual_stack, logit_diff_directions)/len(all_prompts)
 
-
-# %% colab={"base_uri": "https://localhost:8080/", "height": 542} id="7vxP1pNuPMhr" outputId="616ac0ef-ddd2-4b1e-bccd-8ee3a3ebce23"
+# %%
 accumulated_residual, labels = clean_cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
 logit_lens_logit_diffs = residual_stack_to_logit_diff(accumulated_residual, clean_cache)
 line(logit_lens_logit_diffs, x=np.arange(model.cfg.n_layers*2+1)/2, hover_name=labels, title="Logit Difference From Accumulate Residual Stream")
 
-# %% [markdown] id="s60emfYIbTuT"
+# %% [markdown]
 # #### Layer Attribution
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 542} id="yGgAVYgIJi9Z" outputId="2d6b1ffe-b701-419d-a786-24f0d24d2b54"
+# %%
 per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
 per_layer_logit_diffs = residual_stack_to_logit_diff(per_layer_residual, clean_cache)
 
 line(per_layer_logit_diffs, hover_name=labels, title="Logit Difference From Each Layer")
-
 
 # %% [markdown]
 # #### Head Attribution
@@ -459,9 +445,6 @@ imshow_p(
 # %% [markdown]
 # #### Heads Influencing Logit Diff
 
-# %% [markdown]
-#
-
 # %%
 results = path_patch(
     model,
@@ -497,7 +480,7 @@ plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
 # %%
 from visualization_utils import get_attn_head_patterns
 
-top_k = 5
+top_k = 8
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
 heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
 tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
@@ -537,13 +520,6 @@ for i in range(1, 3):
 
 fig.show()
 
-
-# %% [markdown]
-# Observations: There appear to be at least three types of heads contributing to the final logit difference: 
-# - UNIVERSAL SENTIMENT ATTENDERS: One type attends to the sentiment word--"perfect" in this case--and writes out in the direction of the positive or negative class, regardless of whether the word is positive or negative. L10H4 is the biggest example of this.
-# - NEGATIVE SENTIMENT ATTENDERS: Another type seems to focus mostly on negative-sentiment words, and then writes out in the direction of the correct class when the answer is negative (but not in the positive case). L9H2 is the primary example. L10H1 seems to be midway between L10H4 and L9H2 in its behavior. L7H1 seems to do this in a weaker way.
-# - POSITIVITY BOOSTERS: L8H5 displays interestingly different behavior. It does not attend to the sentiment word, but writes out in the positive or negative class direction--but much more when the sentiment word is positive.
-
 # %% [markdown]
 # #### Direct Attribute Extraction Heads
 
@@ -551,7 +527,7 @@ fig.show()
 # ##### Overall
 
 # %%
-DAE_HEADS = [(7, 1), (10, 1), (10, 4), (11, 9)]
+DAE_HEADS = [(10, 4), (7, 5)]
 
 results = path_patch(
     model,
@@ -617,13 +593,13 @@ cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names
 # ##### Overall
 
 # %%
-IAE_HEADS = [(8, 5), (9, 2), (9, 10)]
+IAE_HEADS = [(8, 5), (9, 2), (9, 3), (9, 10), (10, 9), (11, 10)]
 
 results = path_patch(
     model,
     orig_input=clean_tokens,
     new_input=corrupted_tokens,
-    sender_nodes=IterNode("z", seq_pos=17),
+    sender_nodes=IterNode("z"),
     receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
     patching_metric=logit_diff_noising,
     verbose=True,
@@ -655,7 +631,7 @@ results = path_patch(
 )
 
 # %%
-for i in range(17, results["z"].shape[0]):
+for i in range(20, results["z"].shape[0]):
     imshow_p(
         results["z"][i][:10] * 100,
         title=f"Direct effect on Intermediate AE Heads' values from position {i} ({tokens[i]})",
@@ -665,8 +641,6 @@ for i in range(17, results["z"].shape[0]):
         width=700,
         margin={"r": 100, "l": 100}
     )
-
-# %%
 
 # %% [markdown]
 # #### Various Attention Patterns
@@ -683,3 +657,6 @@ attn = torch.stack(attn_list, dim=0).mean(dim=0)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
+
+
+

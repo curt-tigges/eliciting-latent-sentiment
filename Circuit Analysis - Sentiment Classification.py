@@ -1,11 +1,12 @@
 # ---
 # jupyter:
 #   jupytext:
+#     custom_cell_magics: kql
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.14.6
+#       jupytext_version: 1.11.2
 #   kernelspec:
 #     display_name: Python 3
 #     name: python3
@@ -66,6 +67,8 @@ from functools import partial
 from torchtyping import TensorType as TT
 
 from path_patching import Node, IterNode, path_patch, act_patch
+
+from visualization_utils import get_attn_head_patterns
 
 # %%
 torch.set_grad_enabled(False)
@@ -166,37 +169,35 @@ def get_logit_diff(logits, answer_token_indices, per_prompt=False):
 #
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="bjeWvBNOn2VT" outputId="dff069ed-56d5-414d-d649-2c70f073b1fc"
-source_model = AutoModelForCausalLM.from_pretrained("lvwerra/gpt2-imdb")
-#source_model = AutoModelForCausalLM.from_pretrained("curt-tigges/gpt2-negative-movie-reviews")
+#source_model = AutoModelForCausalLM.from_pretrained("lvwerra/gpt2-imdb")
+#rlhf_model = AutoModelForCausalLM.from_pretrained("curt-tigges/gpt2-negative-movie-reviews")
 
 #hooked_source_model = HookedTransformer.from_pretrained(model_name="gpt2", hf_model=source_model)
 #model = HookedTransformer.from_pretrained(model_name="EleutherAI/pythia-410m")
 model = HookedTransformer.from_pretrained(
-    "gpt2-small",
-    hf_model=source_model,
+    #"gpt2-small",
+    "EleutherAI/pythia-410m",
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
-    refactor_factored_attn_matrices=True,
+    refactor_factored_attn_matrices=False,
+    #hf_model=source_model,
 )
 
 # %% [markdown]
 # ### Initial Examination
 
 # %%
-example_prompt = "I thought this movie was lousy, I hated it. \nConclusion: This movie is"
-example_answer = " amazing"
+example_prompt = "Review:\n'I thought this movie was lousy, I hated it. The acting was atrocious, the plot was ridiculous, and overall it was just very bad.'\n\nSentiment (positive/negative):\n"
+example_answer = " negative"
 
 # %%
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %%
-example_prompt = "I thought this movie was amazing, I loved it. \nConclusion: This movie is"
-example_answer = " amazing"
+example_prompt = "Review:\nI thought this movie was great, I loved it. The acting was fantastic, the plot was fascinating, and overall it was just very good.\n\nSentiment (positive/negative):\n"
+example_answer = " positive"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
-
-# %%
-model.generate("I was walking on the street one day and", prepend_bos=True, max_new_tokens=100)
 
 # %% [markdown]
 # ### Dataset Construction
@@ -359,7 +360,8 @@ def imshow(tensor, renderer=None, **kwargs):
 per_head_residual, labels = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
 per_head_logit_diffs = residual_stack_to_logit_diff(per_head_residual, clean_cache)
 per_head_logit_diffs = einops.rearrange(per_head_logit_diffs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
-imshow(per_head_logit_diffs, labels={"x":"Head", "y":"Layer"}, title="Logit Difference From Each Head")
+per_head_logit_diffs_pct = per_head_logit_diffs/clean_logit_diff
+imshow(per_head_logit_diffs_pct, labels={"x":"Head", "y":"Layer"}, title="Logit Difference From Each Head")
 
 # %% [markdown]
 # ### Activation Patching
@@ -448,6 +450,8 @@ imshow_p(
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=1300,
+    zmin=-50,
+    zmax=50,
     margin={"r": 100, "l": 100}
 )
 
@@ -456,6 +460,9 @@ imshow_p(
 
 # %% [markdown]
 # #### Heads Influencing Logit Diff
+
+# %% [markdown]
+#
 
 # %%
 results = path_patch(
@@ -495,57 +502,186 @@ from visualization_utils import get_attn_head_patterns
 top_k = 5
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
 heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
-tokens, attn, names = get_attn_head_patterns(model, all_prompts[0], heads)
+tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
 from visualization_utils import scatter_attention_and_contribution_sentiment
 
-scatter_attention_and_contribution_sentiment(
-    model, 
-    (9, 2), 
-    all_prompts, 
-    [6 for _ in range(len(all_prompts))],
-    answer_residual_directions
-)
+from plotly.subplots import make_subplots
+
+# Get the figures
+fig1 = scatter_attention_and_contribution_sentiment(model, (7, 1), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig2 = scatter_attention_and_contribution_sentiment(model, (9, 2), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig3 = scatter_attention_and_contribution_sentiment(model, (10, 1), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig4 = scatter_attention_and_contribution_sentiment(model, (10, 4), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+
+# Create subplot
+fig = make_subplots(rows=2, cols=2, subplot_titles=("Head 7.1", "Head 9.2", "Head 10.1", "Head 10.4"))
+
+# Add each figure's data to the subplot
+for i, subplot_fig in enumerate([fig1, fig2, fig3, fig4], start=1):
+    row = (i-1)//2 + 1
+    col = (i-1)%2 + 1
+    for trace in subplot_fig['data']:
+        # Only show legend for the first subplot
+        trace.showlegend = (i == 1)
+        fig.add_trace(trace, row=row, col=col)
+
+# Update layout
+fig.update_layout(height=600, title_text="DAE Heads")
+
+# Update axes labels
+for i in range(1, 3):
+    for j in range(1, 3):
+        fig.update_xaxes(title_text="Attn Prob on Word", row=i, col=j)
+        fig.update_yaxes(title_text="Dot w Sentiment Output Embed", row=i, col=j)
+
+fig.show()
+
 
 # %% [markdown]
-# #### Heads Influencing Sentiment-Attenders
+# Observations: There appear to be at least three types of heads contributing to the final logit difference: 
+# - UNIVERSAL SENTIMENT ATTENDERS: One type attends to the sentiment word--"perfect" in this case--and writes out in the direction of the positive or negative class, regardless of whether the word is positive or negative. L10H4 is the biggest example of this.
+# - NEGATIVE SENTIMENT ATTENDERS: Another type seems to focus mostly on negative-sentiment words, and then writes out in the direction of the correct class when the answer is negative (but not in the positive case). L9H2 is the primary example. L10H1 seems to be midway between L10H4 and L9H2 in its behavior. L7H1 seems to do this in a weaker way.
+# - POSITIVITY BOOSTERS: L8H5 displays interestingly different behavior. It does not attend to the sentiment word, but writes out in the positive or negative class direction--but much more when the sentiment word is positive.
+
+# %% [markdown]
+# #### Direct Attribute Extraction Heads
+
+# %% [markdown]
+# ##### Overall
 
 # %%
-SENTIMENT_ATTENDERS = [(10, 4), (10, 1)]
+DAE_HEADS = [(7, 1), (10, 1), (10, 4), (11, 9)]
 
 results = path_patch(
     model,
     orig_input=clean_tokens,
     new_input=corrupted_tokens,
     sender_nodes=IterNode("z"),
-    receiver_nodes=[Node("v", layer, head=head) for layer, head in SENTIMENT_ATTENDERS],
+    receiver_nodes=[Node("v", layer, head=head) for layer, head in DAE_HEADS],
     patching_metric=logit_diff_noising,
     verbose=True,
 )
 
 # %%
 imshow_p(
-    results["z"][:10] * 100,
-    title="Direct effect on Sentiment Attenders' values",
-    labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
-    coloraxis=dict(colorbar_ticksuffix = "%"),
-    border=True,
-    width=700,
-    margin={"r": 100, "l": 100}
+        results["z"][:10] * 100,
+        title=f"Direct effect on Sentiment Attenders' values)",
+        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        border=True,
+        width=700,
+        margin={"r": 100, "l": 100}
+    )
+
+# %% [markdown]
+# ##### Key Positions
+
+# %%
+results = path_patch(
+    model,
+    orig_input=clean_tokens,
+    new_input=corrupted_tokens,
+    sender_nodes=IterNode("z", seq_pos="each"),
+    receiver_nodes=[Node("v", layer, head=head) for layer, head in DAE_HEADS],
+    patching_metric=logit_diff_noising,
+    verbose=True,
 )
+
+# %%
+for i in range(10, results["z"].shape[0]):
+    imshow_p(
+        results["z"][i][:10] * 100,
+        title=f"Direct effect on Sentiment Attenders' values from position {i} ({tokens[i]})",
+        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        border=True,
+        width=700,
+        margin={"r": 100, "l": 100}
+    )
 
 # %%
 plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.1])
 
 # %%
-from visualization_utils import get_attn_head_patterns
-
-top_k = 2
+top_k = 4
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
 heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
 tokens, attn, names = get_attn_head_patterns(model, all_prompts[0], heads)
+cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
+
+# %% [markdown]
+# #### Intermediate Attribute Extraction Heads
+
+# %% [markdown]
+# ##### Overall
+
+# %%
+IAE_HEADS = [(8, 5), (9, 2), (9, 10)]
+
+results = path_patch(
+    model,
+    orig_input=clean_tokens,
+    new_input=corrupted_tokens,
+    sender_nodes=IterNode("z", seq_pos=17),
+    receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
+    patching_metric=logit_diff_noising,
+    verbose=True,
+)
+
+# %%
+imshow_p(
+        results["z"][:10] * 100,
+        title=f"Direct effect on Intermediate AE Heads' values",
+        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        border=True,
+        width=700,
+        margin={"r": 100, "l": 100}
+    )
+
+# %% [markdown]
+# ##### By Position
+
+# %%
+results = path_patch(
+    model,
+    orig_input=clean_tokens,
+    new_input=corrupted_tokens,
+    sender_nodes=IterNode("z", seq_pos="each"),
+    receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
+    patching_metric=logit_diff_noising,
+    verbose=True,
+)
+
+# %%
+for i in range(17, results["z"].shape[0]):
+    imshow_p(
+        results["z"][i][:10] * 100,
+        title=f"Direct effect on Intermediate AE Heads' values from position {i} ({tokens[i]})",
+        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        border=True,
+        width=700,
+        margin={"r": 100, "l": 100}
+    )
+
+# %%
+
+# %% [markdown]
+# #### Various Attention Patterns
+
+# %%
+heads = [(0, 4), (3, 11), (5, 7), (6, 4), (6, 7), (6,11), (7, 1), (7, 5), (8, 4), (8, 5), (9, 2), (9, 10), (10, 1), (10, 4), (11, 9)]
+#heads = [(6, 4),(7, 1),(7,5)]
+attn_list = []
+for i in range(len(all_prompts)):
+    tokens, attn, names = get_attn_head_patterns(model, all_prompts[i], heads)
+    attn_list.append(attn)
+tokens, _, names = get_attn_head_patterns(model, all_prompts[0], heads)
+attn = torch.stack(attn_list, dim=0).mean(dim=0)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
