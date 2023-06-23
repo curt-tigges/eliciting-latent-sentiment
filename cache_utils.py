@@ -64,7 +64,7 @@ def residual_sentiment_sim_by_pos(
     if centre_residuals:
         residual_stack -= einops.reduce(
             residual_stack, 
-            "components batch pos d_model -> components 1 1 d_model", 
+            "components batch pos d_model -> components 1 pos d_model", 
             "mean"
         )
     if normalise_residuals: # for cosine similarity
