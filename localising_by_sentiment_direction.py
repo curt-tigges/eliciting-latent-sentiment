@@ -154,5 +154,6 @@ fig = px.line(
     title='Which components align with the sentiment direction at each position?',
     hover_name=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
 )
+fig.write_html(f'data/sentiment_by_position_line{HTML_SUFFIX}.html')
 fig.show()
 # %%
