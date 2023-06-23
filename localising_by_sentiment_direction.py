@@ -43,7 +43,9 @@ negative_dir: Float[Tensor, "d_model"] = torch.tensor(negative_dir).to(
     device, dtype=torch.float32
 )
 # %%
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+    model, device
+)
 #%%
 def name_filter(name: str) -> bool:
     return name.endswith('result') or name.endswith('z') or name.endswith('_scale')
@@ -78,8 +80,8 @@ sentiment_directions: Float[Tensor, "batch d_model"] = torch.where(
 #%%
 del model
 #%%
-NORMALISE_RESIDUALS = True
-CENTRE_RESIDUALS = False
+NORMALISE_RESIDUALS = False
+CENTRE_RESIDUALS = True
 HTML_SUFFIX = (
     ('_normalised' if NORMALISE_RESIDUALS else '') + 
     ('_centred' if CENTRE_RESIDUALS else '')
@@ -144,5 +146,13 @@ fig = px.imshow(
     height = heads * layers * 20,
 )
 fig.write_html(f'data/sentiment_by_position{HTML_SUFFIX}.html')
+fig.show()
+# %%
+fig = px.line(
+    per_pos_sentiment.squeeze().cpu().detach().numpy(),
+    labels={'index': 'Component', 'value': 'dot product', 'variable': 'Position'},
+    title='Which components align with the sentiment direction at each position?',
+    hover_name=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
+)
 fig.show()
 # %%
