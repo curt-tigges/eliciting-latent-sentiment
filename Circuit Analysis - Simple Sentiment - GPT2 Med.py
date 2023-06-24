@@ -36,6 +36,7 @@
 # !pip install protobuf==3.20.*
 # !pip install plotly
 # !pip install torchtyping
+# !pip install git+https://github.com/neelnanda-io/neel-plotly.git
 
 # %%
 from IPython import get_ipython
@@ -195,52 +196,26 @@ def get_logit_diff(logits, answer_token_indices, per_prompt=False):
 #model = HookedTransformer.from_pretrained(model_name="EleutherAI/pythia-410m")
 model = HookedTransformer.from_pretrained(
     "gpt2-medium",
-    #"EleutherAI/pythia-410m",
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
-    refactor_factored_attn_matrices=False,
-    #hf_model=source_model,
+    refactor_factored_attn_matrices=True,
 )
 
 # %% [markdown]
 # ### Initial Examination
 
 # %%
-example_prompt = """Review Text: 'I thought this movie was amazing, I loved it.'
-                    Review Sentiment: Positive
-                    Review Text: 'I thought this movie was great, I loved it.'
-                    Review Sentiment:"""
-example_answer = " Positive"
-
-utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
+example_prompt = "I thought this movie was lousy, I hated it. \nConclusion: This movie is"
+example_answer = " terrible"
 
 # %%
-example_prompt = """Review Text: 'I thought this movie was lousy, I hated it.'
-                    Review Sentiment: Negative
-                    Review Text: 'I thought this movie was amazing, I loved it.'
-                    Review Sentiment:"""
-example_answer = " Positive"
-
-utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
+utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %%
-example_prompt = """Review Text: 'I thought this movie was amazing, I loved it.'
-                    Review Sentiment: Positive
-                    Review Text: 'I thought this movie was lousy, I hated it.'
-                    Review Sentiment:"""
-example_answer = " Negative"
-
-utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
-
-# %%
-example_prompt = """Review Text: 'I thought this movie was terrible, I hated it.'
-                    Review Sentiment: Negative
-                    Review Text: 'I thought this movie was lousy, I hated it.'
-                    Review Sentiment:"""
-example_answer = " Negative"
-
-utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
+example_prompt = "I thought this movie was amazing, I loved it. \nConclusion: This movie is"
+example_answer = " amazing"
+utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %% [markdown]
 # ### Dataset Construction
@@ -263,76 +238,43 @@ negative_adjectives = [
 
 len(positive_adjectives), len(negative_adjectives)
 
-# %%
-if model.cfg.model_name=="pythia-410m":
-    new_positive_adj = []
-    for a in positive_adjectives:
-        tkn = model.to_str_tokens(a)
-        if len(tkn)==2:
-            new_positive_adj.append(a)
-
-    positive_adjectives = new_positive_adj
-
-    new_negative_adj = []
-    for a in negative_adjectives:
-        tkn = model.to_str_tokens(a)
-        if len(tkn)==2:
-            new_negative_adj.append(a)
-
-    negative_adjectives = new_negative_adj
-
-len(positive_adjectives), len(negative_adjectives)
-
-
-# %%
-def get_adjective(adjective_list, index):
-    return adjective_list[index % len(adjective_list)]
-
 
 # %%
 all_prompts = []
 
 pos_prompts = [
-    f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it.' \nReview Sentiment: Positive \nReview Text: 'I thought this movie was{get_adjective(positive_adjectives, i+1)}, I loved it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-pos_prompts_alt = [
-    f"Review Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it.' \nReview Sentiment: Negative \nReview Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
+    f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives)-1)
 ]
 neg_prompts = [
-    f"Review Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it.' \nReview Sentiment: Negative \nReview Text: 'I thought this movie was{get_adjective(negative_adjectives, i+1)}, I hated it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-neg_prompts_alt = [
-    f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it.' \nReview Sentiment: Positive \nReview Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
+    f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives)-1)
 ]
 # List of the token (ie an integer) corresponding to each answer, in the format (correct_token, incorrect_token)
 answer_tokens = []
-neg_token = model.to_single_token(" Negative")
-pos_token = model.to_single_token(" Positive")
 for i in range(len(pos_prompts)-1):
 
     all_prompts.append(pos_prompts[i])
     all_prompts.append(neg_prompts[i])
-    all_prompts.append(pos_prompts_alt[i])
-    all_prompts.append(neg_prompts_alt[i])
     
-    answer_tokens.append((pos_token, neg_token))
-    answer_tokens.append((neg_token, pos_token))
-    answer_tokens.append((pos_token, neg_token))
-    answer_tokens.append((neg_token, pos_token))
+    answer_tokens.append(
+        (
+            model.to_single_token(" amazing"),
+            model.to_single_token(" terrible"),
+        )
+    )
+
+    answer_tokens.append(
+        (
+            model.to_single_token(" terrible"),
+            model.to_single_token(" amazing"),
+        )
+    )
 
 answer_tokens = torch.tensor(answer_tokens).to(device)
-
-# reduce batch size if you run out of memory
-all_prompts = all_prompts[:50]
-answer_tokens = answer_tokens[:50]
-
 
 prompts_tokens = model.to_tokens(all_prompts, prepend_bos=True)
 clean_tokens = prompts_tokens.to(device)
 
 corrupted_tokens = model.to_tokens(all_prompts[1:] + [all_prompts[0]], prepend_bos=True)
-
-clean_tokens.shape
 
 # %%
 for i in range(len(all_prompts)):
@@ -341,13 +283,13 @@ for i in range(len(all_prompts)):
     print(get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
 
 # %%
-clean_logits, clean_cache = model.run_with_cache(clean_tokens[:50])
-clean_logit_diff = get_logit_diff(clean_logits, answer_tokens[:50], per_prompt=False)
+clean_logits, clean_cache = model.run_with_cache(clean_tokens)
+clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
 clean_logit_diff
 
 # %%
-corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens[:50])
-corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens[:50], per_prompt=False)
+corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
+corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 corrupted_logit_diff
 
 
@@ -363,7 +305,7 @@ def logit_diff_denoising(
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
+    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff))
 
 def logit_diff_noising(
         logits: Float[Tensor, "batch seq d_vocab"],
@@ -438,6 +380,12 @@ per_head_logit_diffs = residual_stack_to_logit_diff(per_head_residual, clean_cac
 per_head_logit_diffs = einops.rearrange(per_head_logit_diffs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
 per_head_logit_diffs_pct = per_head_logit_diffs/clean_logit_diff
 imshow(per_head_logit_diffs_pct, labels={"x":"Head", "y":"Layer"}, title="Logit Difference From Each Head")
+
+# %%
+per_head_logit_diffs_pct.sum()
+
+# %%
+(per_layer_logit_diffs).sum()
 
 # %% [markdown]
 # ### Activation Patching
@@ -531,14 +479,38 @@ imshow_p(
     margin={"r": 100, "l": 100}
 )
 
+# %%
+import transformer_lens.patching as patching
+ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
+ans_get_logit_diff = partial(get_logit_diff, answer_token_indices=answer_tokens)
+if True:
+    attn_head_out_act_patch_results = patching.get_act_patch_attn_head_out_by_pos(model, corrupted_tokens, clean_cache, logit_diff_denoising)
+    attn_head_out_act_patch_results = einops.rearrange(attn_head_out_act_patch_results, "layer pos head -> (layer head) pos")
+    
+
+# %%
+from neel_plotly import imshow as imshow_n
+imshow_n(attn_head_out_act_patch_results[130:], 
+        yaxis="Head Label", 
+        xaxis="Pos", 
+        x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))],
+        y=ALL_HEAD_LABELS[130:],
+        height=1200,
+        width=500,
+        title="attn_head_out Activation Patching By Pos")
+
+# %%
+attn_head_out_act_patch_results.shape
+
+# %%
+test = 8
+test
+
 # %% [markdown]
 # ### Circuit Analysis With Patch Patching & Attn Visualization
 
 # %% [markdown]
 # #### Heads Influencing Logit Diff
-
-# %% [markdown]
-#
 
 # %%
 results = path_patch(
@@ -553,9 +525,10 @@ results = path_patch(
 
 # %%
 imshow_p(
-    results['z'],
+    results['z'] * 100,
     title="Direct effect on logit diff (patch from head output -> final resid)",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+    coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=600,
     margin={"r": 100, "l": 100}
@@ -575,7 +548,7 @@ plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
 # %%
 from visualization_utils import get_attn_head_patterns
 
-top_k = 4
+top_k = 8
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
 heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
 tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
@@ -587,13 +560,13 @@ from visualization_utils import scatter_attention_and_contribution_sentiment
 from plotly.subplots import make_subplots
 
 # Get the figures
-fig1 = scatter_attention_and_contribution_sentiment(model, (10, 11), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig2 = scatter_attention_and_contribution_sentiment(model, (13, 8), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig3 = scatter_attention_and_contribution_sentiment(model, (16, 10), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig4 = scatter_attention_and_contribution_sentiment(model, (18, 0), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig1 = scatter_attention_and_contribution_sentiment(model, (13, 8), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig2 = scatter_attention_and_contribution_sentiment(model, (19, 6), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig3 = scatter_attention_and_contribution_sentiment(model, (21, 0), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig4 = scatter_attention_and_contribution_sentiment(model, (22, 1), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
 
 # Create subplot
-fig = make_subplots(rows=2, cols=2, subplot_titles=("Head 10.11", "Head 13.8", "Head 16.10", "Head 18.0"))
+fig = make_subplots(rows=2, cols=2, subplot_titles=("Head 13.8", "Head 19.6", "Head 21.0", "Head 22.1"))
 
 # Add each figure's data to the subplot
 for i, subplot_fig in enumerate([fig1, fig2, fig3, fig4], start=1):
@@ -605,7 +578,7 @@ for i, subplot_fig in enumerate([fig1, fig2, fig3, fig4], start=1):
         fig.add_trace(trace, row=row, col=col)
 
 # Update layout
-fig.update_layout(height=600, title_text="DAE Heads")
+fig.update_layout(height=900, title_text="DAE Heads")
 
 # Update axes labels
 for i in range(1, 3):
@@ -623,7 +596,8 @@ fig.show()
 # ##### Overall
 
 # %%
-DAE_HEADS = [(7, 1), (10, 1), (10, 4), (11, 9)]
+from path_patching import IterSeqPos
+DAE_HEADS = [(13, 8), (19, 6), (21, 0), (22, 1)]
 
 results = path_patch(
     model,
@@ -638,7 +612,7 @@ results = path_patch(
 # %%
 imshow_p(
         results["z"][:10] * 100,
-        title=f"Direct effect on Sentiment Attenders' values)",
+        title=f"Direct effect on DAE Heads' values)",
         labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
         border=True,
@@ -689,13 +663,13 @@ cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names
 # ##### Overall
 
 # %%
-IAE_HEADS = [(8, 5), (9, 2), (9, 10)]
+IAE_HEADS = [(13, 8), (14, 1), (11, 0),(17, 13), (15, 2)]
 
 results = path_patch(
     model,
     orig_input=clean_tokens,
     new_input=corrupted_tokens,
-    sender_nodes=IterNode("z", seq_pos=17),
+    sender_nodes=IterNode("z"),
     receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
     patching_metric=logit_diff_noising,
     verbose=True,
@@ -703,7 +677,7 @@ results = path_patch(
 
 # %%
 imshow_p(
-        results["z"][:10] * 100,
+        results["z"][:19] * 100,
         title=f"Direct effect on Intermediate AE Heads' values",
         labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
@@ -727,7 +701,20 @@ results = path_patch(
 )
 
 # %%
-for i in range(17, results["z"].shape[0]):
+results_after_sentiment_words = results["z"][10:].sum(dim=0)
+
+imshow_p(
+        results_after_sentiment_words * 100,
+        title=f"Direct effect on Intermediate AE Heads' values",
+        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        border=True,
+        width=700,
+        margin={"r": 100, "l": 100}
+    )
+
+# %%
+for i in range(6, results["z"].shape[0]):
     imshow_p(
         results["z"][i][:10] * 100,
         title=f"Direct effect on Intermediate AE Heads' values from position {i} ({tokens[i]})",
@@ -744,7 +731,7 @@ for i in range(17, results["z"].shape[0]):
 # #### Various Attention Patterns
 
 # %%
-heads = [(0, 4), (3, 11), (5, 7), (6, 4), (6, 7), (6,11), (7, 1), (7, 5), (8, 4), (8, 5), (9, 2), (9, 10), (10, 1), (10, 4), (11, 9)]
+heads = IAE_HEADS
 #heads = [(6, 4),(7, 1),(7,5)]
 attn_list = []
 for i in range(len(all_prompts)):
