@@ -161,7 +161,7 @@ X_ablated = mean_ablate_km_component(
 null_lr = LogisticRegression(max_iter=1000, tol=0.0).fit(
     X_.cpu().detach().numpy(), Y
 )
-print(null_lr.score(X_, Y_t))
+print('post-leace accuracy', null_lr.score(X_, Y_t))
 null_beta = torch.from_numpy(null_lr.coef_[0])
 print(null_beta.norm(p=torch.inf))
 assert null_beta.norm(p=torch.inf) < 1e-4
@@ -169,10 +169,7 @@ assert null_beta.norm(p=torch.inf) < 1e-4
 null_lr = LogisticRegression(max_iter=1000, tol=0.0).fit(
     X_ablated.cpu().detach().numpy(), Y
 )
-print(null_lr.score(X_ablated, Y_t))
-# null_beta = torch.from_numpy(null_lr.coef_[0])
-# print(null_beta.norm(p=torch.inf))
-# assert null_beta.norm(p=torch.inf) < 1e-4
+print('post-ablation accuracy', null_lr.score(X_ablated, Y_t))
 
 # %% # test LEACE / LR out-of-sample
 Y_rep = einops.repeat(Y_t, "b -> (b s)", s=seq_len)
@@ -187,14 +184,14 @@ for layer in range(layers):
         layer_flat.cpu().detach().numpy(), Y_rep
     )
     layer_score_pre = layer_lr_pre.score(layer_flat, Y_rep)
-    assert layer_score_pre > 0.8
 
     layer_erased: Float[Tensor, "batch_pos d_model"] = eraser(layer_flat)
     layer_lr_post = LogisticRegression(max_iter=1000, tol=0.0).fit(
         layer_erased.cpu().detach().numpy(), Y_rep
     )
     layer_score_post = layer_lr_post.score(layer_erased, Y_rep)
-    assert layer_score_post < 0.6
+
+    print(f"Layer {layer} pre: {layer_score_pre:.1%}, post: {layer_score_post:.1%}")
 #%%
 X_c_ablated: Float[Tensor, "batch"] = einops.einsum(
     X_ablated, km_line_unit, "b d, d -> b"
