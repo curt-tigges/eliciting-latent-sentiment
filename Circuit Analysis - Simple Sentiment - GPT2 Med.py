@@ -305,6 +305,19 @@ def logit_diff_denoising(
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
+    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
+
+def logit_diff_denoising_n(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
+    flipped_logit_diff: float = corrupted_logit_diff,
+    clean_logit_diff: float = clean_logit_diff,
+) -> Float[Tensor, ""]:
+    '''
+    Linear function of logit diff, calibrated so that it equals 0 when performance is
+    same as on flipped input, and 1 when performance is same as on clean input.
+    '''
+    patched_logit_diff = get_logit_diff(logits, answer_tokens)
     return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff))
 
 def logit_diff_noising(
@@ -319,6 +332,19 @@ def logit_diff_noising(
         '''
         patched_logit_diff = get_logit_diff(logits, answer_tokens)
         return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
+
+def logit_diff_noising_n(
+        logits: Float[Tensor, "batch seq d_vocab"],
+        clean_logit_diff: float = clean_logit_diff,
+        corrupted_logit_diff: float = corrupted_logit_diff,
+        answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
+    ) -> float:
+        '''
+        We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
+        and -1 when performance has been destroyed (i.e. is same as ABC dataset).
+        '''
+        patched_logit_diff = get_logit_diff(logits, answer_tokens)
+        return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff))
 
 
 # %% [markdown] id="TfiWnZtelFMV"
@@ -482,15 +508,17 @@ imshow_p(
 # %%
 import transformer_lens.patching as patching
 ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
-ans_get_logit_diff = partial(get_logit_diff, answer_token_indices=answer_tokens)
-if True:
-    attn_head_out_act_patch_results = patching.get_act_patch_attn_head_out_by_pos(model, corrupted_tokens, clean_cache, logit_diff_denoising)
-    attn_head_out_act_patch_results = einops.rearrange(attn_head_out_act_patch_results, "layer pos head -> (layer head) pos")
-    
+
+attn_head_out_act_patch_results = patching.get_act_patch_attn_head_out_by_pos(model, corrupted_tokens, clean_cache, logit_diff_denoising_n)
+attn_head_out_act_patch_results = einops.rearrange(attn_head_out_act_patch_results, "layer pos head -> (layer head) pos")
+
+
+# %%
+corrupted_logit_diff
 
 # %%
 from neel_plotly import imshow as imshow_n
-imshow_n(attn_head_out_act_patch_results[130:], 
+imshow_n(attn_head_out_act_patch_results[130:]+torch.tensor([0.0656], device="cuda:0"), 
         yaxis="Head Label", 
         xaxis="Pos", 
         x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))],
@@ -498,13 +526,6 @@ imshow_n(attn_head_out_act_patch_results[130:],
         height=1200,
         width=500,
         title="attn_head_out Activation Patching By Pos")
-
-# %%
-attn_head_out_act_patch_results.shape
-
-# %%
-test = 8
-test
 
 # %% [markdown]
 # ### Circuit Analysis With Patch Patching & Attn Visualization
@@ -611,7 +632,7 @@ results = path_patch(
 
 # %%
 imshow_p(
-        results["z"][:10] * 100,
+        results["z"] * 100,
         title=f"Direct effect on DAE Heads' values)",
         labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
@@ -677,7 +698,7 @@ results = path_patch(
 
 # %%
 imshow_p(
-        results["z"][:19] * 100,
+        results["z"][:23] * 100,
         title=f"Direct effect on Intermediate AE Heads' values",
         labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
@@ -701,7 +722,7 @@ results = path_patch(
 )
 
 # %%
-results_after_sentiment_words = results["z"][10:].sum(dim=0)
+results_after_sentiment_words = results["z"][0:].sum(dim=0)
 
 imshow_p(
         results_after_sentiment_words * 100,
@@ -716,7 +737,7 @@ imshow_p(
 # %%
 for i in range(6, results["z"].shape[0]):
     imshow_p(
-        results["z"][i][:10] * 100,
+        results["z"][i][9:] * 100,
         title=f"Direct effect on Intermediate AE Heads' values from position {i} ({tokens[i]})",
         labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
