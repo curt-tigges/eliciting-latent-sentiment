@@ -119,8 +119,8 @@ def get_dataset(
         all_prompts.append(neg_prompts[i])
         
         for pair_idx in range(n_pairs):
-            pos_token = model.to_single_token(pos_tokens[pair_idx])
-            neg_token = model.to_single_token(neg_tokens[pair_idx])
+            pos_token = model.to_single_token(pos_answers[pair_idx])
+            neg_token = model.to_single_token(neg_answers[pair_idx])
             answer_tokens[i * 2, pair_idx, 0] = pos_token
             answer_tokens[i * 2, pair_idx, 1] = neg_token
             answer_tokens[i * 2 + 1, pair_idx, 0] = neg_token

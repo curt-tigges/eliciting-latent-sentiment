@@ -9,7 +9,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.11.2
 #   kernelspec:
-#     display_name: circuits
+#     display_name: Python 3 (ipykernel)
 #     language: python
 #     name: python3
 # ---
@@ -27,7 +27,7 @@
 # %cd eliciting-latent-sentiment
 
 # %%
-# !source activate circuits/bin/activate
+# #!source activate circuits/bin/activate
 
 # %%
 # !pip install git+https://github.com/neelnanda-io/TransformerLens.git
@@ -227,9 +227,6 @@ all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
 )
 
 # %%
-answer_tokens
-
-# %%
 from utils.circuit_analysis import get_logit_diff_multi as get_logit_diff
 for i in range(len(all_prompts)):
     logits, _ = model.run_with_cache(all_prompts[i])
@@ -237,7 +234,16 @@ for i in range(len(all_prompts)):
     print(get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
 
 # %%
-answer_tokens
+pos_logits, pos_cache = model.run_with_cache(clean_tokens[::2,:])
+pos_logit_diff = get_logit_diff(pos_logits, answer_tokens[::2,:])
+pos_logit_diff
+
+# %%
+# get every other 
+model.to_string(clean_tokens[::2, :])
+
+# %%
+model.to_str_tokens(answer_tokens[0])
 
 # %%
 clean_logits, clean_cache = model.run_with_cache(clean_tokens)
