@@ -14,7 +14,7 @@ from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
 )  # Hooking utilities
-from prompt_utils import get_dataset, get_logit_diff, logit_diff_denoising
+from utils.prompts import get_dataset, get_logit_diff, logit_diff_denoising
 import plotly.express as px
 from cache_utils import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
@@ -448,7 +448,7 @@ experiments = dict(
     #     layer=0,
     #     tokens=np.arange(len(example_prompt)),
     #     multiplier=2.0,
-    ),
+    # ),
 )
 #%%
 for experiment_name, experiment_hook in experiments.items():

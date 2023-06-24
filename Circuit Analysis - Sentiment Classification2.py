@@ -1,3 +1,19 @@
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: -all
+#     custom_cell_magics: kql
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.11.2
+#   kernelspec:
+#     display_name: circuits
+#     language: python
+#     name: python3
+# ---
+
 # %% [markdown]
 # # Initial Exploratory Analysis
 
@@ -5,22 +21,22 @@
 # ## Setup
 
 # %%
-!ls
+# !ls
 
 # %%
-%cd eliciting-latent-sentiment
+# %cd eliciting-latent-sentiment
 
 # %%
-!source activate circuits/bin/activate
+# !source activate circuits/bin/activate
 
 # %%
-!pip install git+https://github.com/neelnanda-io/TransformerLens.git
-!pip install circuitsvis
-!pip install jaxtyping==0.2.13
-!pip install einops
-!pip install protobuf==3.20.*
-!pip install plotly
-!pip install torchtyping
+# !pip install git+https://github.com/neelnanda-io/TransformerLens.git
+# !pip install circuitsvis
+# !pip install jaxtyping==0.2.13
+# !pip install einops
+# !pip install protobuf==3.20.*
+# !pip install plotly
+# !pip install torchtyping
 
 # %%
 from IPython import get_ipython
@@ -40,13 +56,9 @@ import yaml
 import einops
 from fancy_einsum import einsum
 
-from datasets import load_dataset
-#from transformers import pipeline
 
-import transformers
 import circuitsvis as cv
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
-import transformer_lens
+
 import transformer_lens.utils as utils
 from transformer_lens.hook_points import (
     HookedRootModule,
@@ -72,7 +84,8 @@ from torchtyping import TensorType as TT
 
 from path_patching import Node, IterNode, path_patch, act_patch
 
-from visualization_utils import get_attn_head_patterns
+from utils.visualization import get_attn_head_patterns
+from utils.prompts import get_dataset
 
 # %%
 torch.set_grad_enabled(False)
@@ -168,7 +181,7 @@ def get_logit_diff(logits, answer_token_indices, per_prompt=False):
 
 # %% [markdown]
 # ## Exploratory Analysis
-# 
+#
 
 # %%
 #source_model = AutoModelForCausalLM.from_pretrained("lvwerra/gpt2-imdb")
@@ -177,7 +190,7 @@ def get_logit_diff(logits, answer_token_indices, per_prompt=False):
 #hooked_source_model = HookedTransformer.from_pretrained(model_name="gpt2", hf_model=source_model)
 #model = HookedTransformer.from_pretrained(model_name="EleutherAI/pythia-410m")
 model = HookedTransformer.from_pretrained(
-    #"gpt2-medium",
+    #"gpt2-small",
     "EleutherAI/pythia-1.4b",
     center_unembed=True,
     center_writing_weights=True,
@@ -207,89 +220,24 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 # ### Dataset Construction
 
 # %%
-positive_adjectives = [
-    ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
-    ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
-    ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
-    ' beautiful',' joyful',' positive',' excellent'
-    ]
-
-negative_adjectives = [
-    ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
-    ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
-    ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
-    ]
-
-#negative_adjectives = [' lousy', ' dire', ' bad', ' nasty', ' miserable', ' wretched', ' disgusting', ' ugly', ' disastrous', ' tragic']
-
-len(positive_adjectives), len(negative_adjectives)
+pos_answers = [" Positive"]
+neg_answers = [" Negative"]
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+    model, device, 1, "classification", pos_answers, neg_answers
+)
 
 # %%
-if "pythia" in model.cfg.model_name:
-    print("Using Pythia model")
-    new_positive_adj = []
-    for a in positive_adjectives:
-        tkn = model.to_str_tokens(a)
-        if len(tkn)==2:
-            new_positive_adj.append(a)
-
-    positive_adjectives = new_positive_adj
-
-    new_negative_adj = []
-    for a in negative_adjectives:
-        tkn = model.to_str_tokens(a)
-        if len(tkn)==2:
-            new_negative_adj.append(a)
-
-    negative_adjectives = new_negative_adj
-
-len(positive_adjectives), len(negative_adjectives)
+answer_tokens
 
 # %%
-def get_adjective(adjective_list, index):
-    return adjective_list[index % len(adjective_list)]
-
-# %%
-all_prompts = []
-
-pos_prompts = [
-    f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-neg_prompts = [
-    f"Review Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-# List of the token (ie an integer) corresponding to each answer, in the format (correct_token, incorrect_token)
-answer_tokens = []
-neg_token = model.to_single_token(" Negative")
-pos_token = model.to_single_token(" Positive")
-for i in range(len(pos_prompts)-1):
-
-    all_prompts.append(pos_prompts[i])
-    all_prompts.append(neg_prompts[i])
-    
-    answer_tokens.append((pos_token, neg_token))
-    answer_tokens.append((neg_token, pos_token))
-
-answer_tokens = torch.tensor(answer_tokens).to(device)
-
-# reduce batch size if you run out of memory
-all_prompts = all_prompts
-answer_tokens = answer_tokens
-
-
-prompts_tokens = model.to_tokens(all_prompts, prepend_bos=True)
-clean_tokens = prompts_tokens.to(device)
-
-corrupted_tokens = model.to_tokens(all_prompts[1:] + [all_prompts[0]], prepend_bos=True)
-
-clean_tokens.shape
-
-
-# %%
+from utils.circuit_analysis import get_logit_diff_multi as get_logit_diff
 for i in range(len(all_prompts)):
     logits, _ = model.run_with_cache(all_prompts[i])
     print(all_prompts[i])
     print(get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
+
+# %%
+answer_tokens
 
 # %%
 clean_logits, clean_cache = model.run_with_cache(clean_tokens)
@@ -484,7 +432,7 @@ imshow_p(
 # #### Heads Influencing Logit Diff
 
 # %% [markdown]
-# 
+#
 
 # %%
 results = path_patch(

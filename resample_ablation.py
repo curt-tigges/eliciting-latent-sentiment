@@ -3,7 +3,8 @@ import einops
 import numpy as np
 from jaxtyping import Float, Int
 import plotly.express as px
-from prompt_utils import get_dataset, get_logit_diff
+from utils.prompts import get_dataset
+from utils.circuit_analysis import get_logit_diff_multi as get_logit_diff
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
