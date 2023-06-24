@@ -3,6 +3,10 @@ from functools import partial
 
 import torch
 from torchtyping import TensorType as TT
+from torch import Tensor
+from jaxtyping import Float
+from typing import Tuple
+import einops
 
 import transformer_lens.patching as patching
 from fancy_einsum import einsum
@@ -12,7 +16,6 @@ import torch
 import ipywidgets as widgets
 from IPython.display import display
 
-from model_utils import load_model, clear_gpu_memory
 
 if torch.cuda.is_available():
     device = int(os.environ.get("LOCAL_RANK", 0))
@@ -137,22 +140,44 @@ def get_logit_diff(logits, answer_token_indices, per_prompt=False):
     return (correct_logits - incorrect_logits).mean()
 
 
-def ioi_metric(logits, clean_baseline, corrupted_baseline, answer_token_indices):
-    """Computes the IOI metric for a given set of logits, baselines, and answer token indices. Metric is relative to the
-    provided baselines.
+def get_logit_diff_multi(
+    logits: Float[Tensor, "batch pos vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs 2"], 
+    per_prompt: bool = False,
+    per_completion: bool = False,
+):
+    """
+    Gets the difference between the logits of the provided tokens 
+    e.g., the correct and incorrect tokens in IOI
 
     Args:
         logits (torch.Tensor): Logits to use.
-        clean_baseline (float): Baseline for the clean model.
-        corrupted_baseline (float): Baseline for the corrupted model.
-        answer_token_indices (torch.Tensor): Indices of the tokens to compare.
+        answer_tokens (torch.Tensor): Indices of the tokens to compare.
 
     Returns:
-        torch.Tensor: IOI metric.
+        torch.Tensor: Difference between the logits of the provided tokens.
     """
-    return (get_logit_diff(logits, answer_token_indices) - corrupted_baseline) / (
-        clean_baseline - corrupted_baseline
+    n_pairs = answer_tokens.shape[1]
+    if len(logits.shape) == 3:
+        # Get final logits only
+        logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
+    logits = einops.repeat(
+        logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
     )
+    left_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
+        -1, answer_tokens[:, :, 0].unsqueeze(-1)
+    )
+    right_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
+        -1, answer_tokens[:, :, 1].unsqueeze(-1)
+    )
+    if per_completion:
+        print(left_logits - right_logits)
+    left_logits: Float[Tensor, "batch"] = left_logits.mean(dim=1)
+    right_logits: Float[Tensor, "batch"] = right_logits.mean(dim=1)
+    if per_prompt:
+        print(left_logits - right_logits)
+
+    return (left_logits - right_logits).mean()
 
 
 # =============== LOGIT LENS UTILS ===============

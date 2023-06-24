@@ -68,7 +68,7 @@ from torchtyping import TensorType as TT
 
 from path_patching import Node, IterNode, path_patch, act_patch
 
-from visualization_utils import get_attn_head_patterns
+from visualization import get_attn_head_patterns
 
 # %%
 torch.set_grad_enabled(False)
@@ -484,7 +484,7 @@ imshow_p(
 )
 
 # %%
-from visualization_utils import (
+from visualization import (
     plot_attention_heads,
     scatter_attention_and_contribution
 )
@@ -495,7 +495,7 @@ import circuitsvis as cv
 plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
 
 # %%
-from visualization_utils import get_attn_head_patterns
+from visualization import get_attn_head_patterns
 
 top_k = 5
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
@@ -504,7 +504,7 @@ tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
-from visualization_utils import scatter_attention_and_contribution_sentiment
+from visualization import scatter_attention_and_contribution_sentiment
 
 from plotly.subplots import make_subplots
 

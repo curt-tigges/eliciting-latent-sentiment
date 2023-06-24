@@ -15,7 +15,7 @@ from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
 )  # Hooking utilities
-from prompt_utils import get_dataset
+from utils.prompts import get_dataset
 import plotly.express as px
 #%%
 torch.set_grad_enabled(False)
