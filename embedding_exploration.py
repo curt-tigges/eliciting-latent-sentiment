@@ -801,8 +801,10 @@ for x in pile_loader:
     batch_embed: Float[Tensor, "batch pos d_model"] = embed_and_mlp0(
         x['tokens']
     )
-    batch_dots: Float[np.ndarray, "batch pos"] = (
-        batch_embed.cpu().detach().numpy().dot(km_line_normalised)
+    batch_dots: Float[np.ndarray, "batch pos"] = einops.einsum(
+        batch_embed, 
+        km_line_normalised,
+        "batch pos d_model, d_model -> batch pos",
     )
     flattened_dots = batch_dots.flatten()
     list_of_str_tokens = [

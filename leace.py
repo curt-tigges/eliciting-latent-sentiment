@@ -14,14 +14,14 @@ from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
 )  # Hooking utilities
-from prompt_utils import get_dataset
+from prompt_utils import get_dataset, get_logit_diff, logit_diff_denoising
 import plotly.express as px
 from cache_utils import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
 )
 #%%
 torch.set_grad_enabled(False)
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 model = HookedTransformer.from_pretrained(
     "gpt2-small",
     center_unembed=True,
@@ -82,6 +82,7 @@ def embed_and_mlp0(
 def mean_ablate_km_component(
     input: Float[Tensor, "batch pos d_model"],
     tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
 ):
     proj = einops.einsum(input, km_line_unit, "b p d, d -> b p")
     avg_broadcast = einops.repeat(
@@ -91,7 +92,7 @@ def mean_ablate_km_component(
     proj_diff: Float[Tensor, "batch pos 1"] = (
         avg_broadcast - proj
     )[:, tokens].unsqueeze(dim=-1)
-    input[:, tokens, :] += proj_diff * km_line_unit
+    input[:, tokens, :] += multiplier * proj_diff * km_line_unit
     return input
 #%%
 # ============================================================================ #
@@ -128,6 +129,7 @@ px.histogram(
 )
 #%%
 average_km_component: Float[Tensor, ""] = X_c.mean()
+print('Average km component', average_km_component)
 #%% # Before concept erasure
 real_lr = LogisticRegression(max_iter=1000).fit(X, Y)
 beta = torch.from_numpy(real_lr.coef_[0, :]).to(device, torch.float32)
@@ -175,7 +177,7 @@ induction_prompt = "Here, this is an induction prompt for you. \n Here, this is 
 memorisation_prompt = "The famous quote from Neil Armstrong is: One small step for man, one giant leap for"
 induction_answer = " you"
 memorisation_answer = " mankind"
-example_index = 0
+example_index = 1
 example_string = model.to_string(clean_tokens[example_index])
 example_answer = model.to_str_tokens(answer_tokens[example_index])[0]
 #%%
@@ -213,26 +215,44 @@ utils.test_prompt(
     top_k=top_k,
 )
 #%%
-_, base_cache = model.run_with_cache(
+base_logits, base_cache = model.run_with_cache(
     clean_tokens,
     names_filter=lambda name: name.endswith('resid_post'), 
     prepend_bos=False,
-    return_type=None
 )
+base_cache.to(device)
 #%%
-base_sentiment = extract_sentiment_layer_pos(
-    base_cache,
-)
+clean_logit_diff = get_logit_diff(base_logits, answer_tokens)
+print('clean logit diff', clean_logit_diff)
 #%%
-fig = px.imshow(
-    base_sentiment.cpu().detach().numpy(),
-    x=example_prompt_indexed,
-    labels={'x': 'Position', 'y': 'Layer'},
-    title='Baseline sentiment',
-    color_continuous_scale="RdBu",
-    color_continuous_midpoint=0,
-)
-fig.show()
+def ablation_metric(
+    logits: Float[Tensor, "batch pos vocab"],
+) -> float:
+    zero = torch.tensor(0.0, device=device)
+    logit_diffs: Float[Tensor, "batch"] = get_logit_diff(
+        logits, answer_tokens, per_prompt=True
+    ).squeeze(1)
+    return (
+        torch.max(logit_diffs, zero).mean() / 
+        clean_logit_diff
+    ).cpu().detach().numpy()
+#%%
+#%%
+results_dict = {'base': ablation_metric(base_logits)}
+#%%
+# base_sentiment = extract_sentiment_layer_pos(
+#     base_cache,
+# )
+# #%%
+# fig = px.imshow(
+#     base_sentiment.cpu().detach().numpy(),
+#     x=example_prompt_indexed,
+#     labels={'x': 'Position', 'y': 'Layer'},
+#     title='Baseline sentiment',
+#     color_continuous_scale="RdBu",
+#     color_continuous_midpoint=0,
+# )
+# fig.show()
 #%%
 
 # model.reset_hooks()
@@ -275,11 +295,14 @@ def linear_hook_base(
     hook: HookPoint,
     tokens: Iterable[int] = (adjective_token, verb_token),
     layer: Optional[int] = None,
+    multiplier: float = 1.0,
 ):
     assert 'hook_resid_post' in hook.name
     if layer is not None and hook.layer() != layer:
         return input
-    return mean_ablate_km_component(input, tokens=tokens)
+    return mean_ablate_km_component(
+        input, tokens=tokens, multiplier=multiplier
+    )
     
 
 #%%
@@ -350,9 +373,40 @@ experiments = dict(
     #     layer=0,
     #     tokens=np.arange(len(example_prompt)),
     # ),
-    all_layer_linear = partial(
+    # all_layer_linear = partial(
+    #     linear_hook_base,
+    #     tokens=np.arange(len(example_prompt)),
+    # ),
+
+    layer_0_linear_0_2 = partial(
         linear_hook_base,
+        layer=0,
         tokens=np.arange(len(example_prompt)),
+        multiplier=0.2,
+    ),
+    layer_0_linear_0_4 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=0.4,
+    ),
+    layer_0_linear_0_6 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=0.6,
+    ),
+    layer_0_linear_0_8 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=0.8,
+    ),
+    layer_0_linear_1_0 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=1.0,
     ),
 )
 #%%
@@ -362,29 +416,53 @@ for experiment_name, experiment_hook in experiments.items():
         hook_name_filter,
         experiment_hook
     )
-    print(experiment_name)
-    utils.test_prompt(
-        example_string, example_answer, model, 
-        prepend_space_to_answer=False,
-        prepend_bos=False,
-        top_k=top_k,
-    )
-    _, test_cache = model.run_with_cache(
+    test_logits, test_cache = model.run_with_cache(
         clean_tokens, 
         prepend_bos=False,
-        return_type=None
     )
-    test_sentiment = extract_sentiment_layer_pos(test_cache)
-    fig = px.imshow(
-        test_sentiment.cpu().detach().numpy(),
-        labels={'x': 'Position', 'y': 'Layer'},
-        x=example_prompt_indexed,
-        title=f'Sentiment on {experiment_name}',
-        color_continuous_scale="RdBu",
-        color_continuous_midpoint=0,
+    test_cache.to(device)
+    test_logit_diffs = get_logit_diff(
+        test_logits, answer_tokens, per_prompt=True
     )
-    fig.show()
+    test_metric = ablation_metric(test_logits)
+    results_dict[experiment_name] = test_metric
+    print(experiment_name, test_metric)
+    if experiment_name == 'all_layer_linear':
+        utils.test_prompt(
+            example_string, example_answer, model, 
+            prepend_space_to_answer=False,
+            prepend_bos=False,
+            top_k=top_k,
+        )
+        # fig = px.histogram(
+        #     x=test_logit_diffs.squeeze().cpu().detach().numpy(),
+        #     title=f'Logit difference distribution for {experiment_name}',
+        #     nbins=len(clean_tokens),
+        #     color=answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0],
+        #     labels={'x': 'Logit difference', 'color': 'Positive sentiment?'},
+        # )
+        # fig.show()
+    # test_sentiment = extract_sentiment_layer_pos(test_cache)
+    # fig = px.imshow(
+    #     test_sentiment.cpu().detach().numpy(),
+    #     labels={'x': 'Position', 'y': 'Layer'},
+    #     x=example_prompt_indexed,
+    #     title=f'Sentiment on {experiment_name}',
+    #     color_continuous_scale="RdBu",
+    #     color_continuous_midpoint=0,
+    # )
+    # fig.show()
 
+#%%
+px.bar(
+    pd.Series(results_dict).reset_index().rename(
+        columns={'index': 'experiment', 0: 'metric'}
+    ),
+    x='experiment',
+    y='metric',
+    title='Logit difference metric by experiment'
+)
+#%%
 
 # # %%
 # utils.test_prompt(

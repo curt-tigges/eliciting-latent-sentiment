@@ -108,6 +108,22 @@ def get_logit_diff(
     left_logits: Float[Tensor, "batch"] = left_logits.mean(dim=1)
     right_logits: Float[Tensor, "batch"] = right_logits.mean(dim=1)
     if per_prompt:
-        print(left_logits - right_logits)
-
+        return left_logits - right_logits
     return (left_logits - right_logits).mean()
+
+def logit_diff_denoising(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch 2"],
+    flipped_logit_diff: float,
+    clean_logit_diff: float,
+) -> Float[Tensor, ""]:
+    '''
+    Linear function of logit diff, calibrated so that it equals 
+    0 when performance is same as on flipped input, and 
+    1 when performance is same as on clean input.
+    '''
+    patched_logit_diff = get_logit_diff(logits, answer_tokens)
+    return (
+        (patched_logit_diff - flipped_logit_diff) / 
+        (clean_logit_diff  - flipped_logit_diff)
+    ).item()
