@@ -19,6 +19,9 @@ import plotly.express as px
 from cache_utils import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
 )
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 #%%
 torch.set_grad_enabled(False)
 device = torch.device("cpu")
@@ -67,6 +70,13 @@ all_adjectives = [
     for i in range(len(clean_tokens))
 ]
 all_adjectives[:5]
+#%%
+clean_logits, clean_cache = model.run_with_cache(
+    clean_tokens,
+    names_filter=lambda name: name.endswith('resid_post'), 
+    prepend_bos=False,
+)
+clean_cache.to(device)
 
 #%%
 def embed_and_mlp0(
@@ -132,27 +142,59 @@ average_km_component: Float[Tensor, ""] = X_c.mean()
 print('Average km component', average_km_component)
 #%% # Before concept erasure
 real_lr = LogisticRegression(max_iter=1000).fit(X, Y)
-beta = torch.from_numpy(real_lr.coef_[0, :]).to(device, torch.float32)
-print('L infinity norm', beta.norm(p=torch.inf))
-assert beta.norm(p=torch.inf) > 0.1
+print('Accuracy', real_lr.score(X, Y))
+real_beta = torch.from_numpy(real_lr.coef_[0, :]).to(device, torch.float32)
+print('L infinity norm', real_beta.norm(p=torch.inf))
+assert real_beta.norm(p=torch.inf) > 0.1
 #%% # compute cosine similarity of beta and km_line
 print(
     'Cosine similarity', 
-    torch.dot(beta / beta.norm(), km_line / km_line.norm())
+    torch.dot(real_beta / real_beta.norm(), km_line / km_line.norm())
 )
 #%% # fit eraser
 eraser = ConceptEraser.fit(X_t, Y_t)
 X_ = eraser(X_t)
-X_ablated = mean_ablate_km_component(X_t.unsqueeze(1), (0)).squeeze(1)
-#%% # LR learns nothing after
+X_ablated = mean_ablate_km_component(
+    X_t.unsqueeze(1), (0)
+).squeeze(1)
+#%% # LR learns nothing after LEACE (in-sample)
 null_lr = LogisticRegression(max_iter=1000, tol=0.0).fit(
     X_.cpu().detach().numpy(), Y
 )
-beta = torch.from_numpy(null_lr.coef_[0])
-print(beta.norm(p=torch.inf))
-assert beta.norm(p=torch.inf) < 1e-4
-# %%
-px.line(beta)
+print(null_lr.score(X_, Y_t))
+null_beta = torch.from_numpy(null_lr.coef_[0])
+print(null_beta.norm(p=torch.inf))
+assert null_beta.norm(p=torch.inf) < 1e-4
+#%% # LR learns nothing after ablation (in-sample) 
+null_lr = LogisticRegression(max_iter=1000, tol=0.0).fit(
+    X_ablated.cpu().detach().numpy(), Y
+)
+print(null_lr.score(X_ablated, Y_t))
+# null_beta = torch.from_numpy(null_lr.coef_[0])
+# print(null_beta.norm(p=torch.inf))
+# assert null_beta.norm(p=torch.inf) < 1e-4
+
+# %% # test LEACE / LR out-of-sample
+Y_rep = einops.repeat(Y_t, "b -> (b s)", s=seq_len)
+for layer in range(layers):
+    layer_cache: Float[Tensor, "batch pos d_model"] = clean_cache[
+        utils.get_act_name('resid_post', layer)
+    ]
+    layer_flat: Float[Tensor, "batch_pos d_model"] = einops.rearrange(
+        layer_cache, "b p d -> (b p) d"
+    )
+    layer_lr_pre = LogisticRegression(max_iter=1000, tol=0.0).fit(
+        layer_flat.cpu().detach().numpy(), Y_rep
+    )
+    layer_score_pre = layer_lr_pre.score(layer_flat, Y_rep)
+    assert layer_score_pre > 0.8
+
+    layer_erased: Float[Tensor, "batch_pos d_model"] = eraser(layer_flat)
+    layer_lr_post = LogisticRegression(max_iter=1000, tol=0.0).fit(
+        layer_erased.cpu().detach().numpy(), Y_rep
+    )
+    layer_score_post = layer_lr_post.score(layer_erased, Y_rep)
+    assert layer_score_post < 0.6
 #%%
 X_c_ablated: Float[Tensor, "batch"] = einops.einsum(
     X_ablated, km_line_unit, "b d, d -> b"
@@ -215,14 +257,7 @@ utils.test_prompt(
     top_k=top_k,
 )
 #%%
-base_logits, base_cache = model.run_with_cache(
-    clean_tokens,
-    names_filter=lambda name: name.endswith('resid_post'), 
-    prepend_bos=False,
-)
-base_cache.to(device)
-#%%
-clean_logit_diff = get_logit_diff(base_logits, answer_tokens)
+clean_logit_diff = get_logit_diff(clean_logits, answer_tokens)
 print('clean logit diff', clean_logit_diff)
 #%%
 def ablation_metric(
@@ -238,7 +273,7 @@ def ablation_metric(
     ).cpu().detach().numpy()
 #%%
 #%%
-results_dict = {'base': ablation_metric(base_logits)}
+results_dict = {'base': ablation_metric(clean_logits)}
 #%%
 # base_sentiment = extract_sentiment_layer_pos(
 #     base_cache,
@@ -378,35 +413,65 @@ experiments = dict(
     #     tokens=np.arange(len(example_prompt)),
     # ),
 
-    layer_0_linear_0_2 = partial(
-        linear_hook_base,
-        layer=0,
-        tokens=np.arange(len(example_prompt)),
-        multiplier=0.2,
-    ),
-    layer_0_linear_0_4 = partial(
-        linear_hook_base,
-        layer=0,
-        tokens=np.arange(len(example_prompt)),
-        multiplier=0.4,
-    ),
-    layer_0_linear_0_6 = partial(
-        linear_hook_base,
-        layer=0,
-        tokens=np.arange(len(example_prompt)),
-        multiplier=0.6,
-    ),
-    layer_0_linear_0_8 = partial(
-        linear_hook_base,
-        layer=0,
-        tokens=np.arange(len(example_prompt)),
-        multiplier=0.8,
-    ),
-    layer_0_linear_1_0 = partial(
-        linear_hook_base,
-        layer=0,
-        tokens=np.arange(len(example_prompt)),
-        multiplier=1.0,
+    # layer_0_linear_0_2 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=0.2,
+    # ),
+    # layer_0_linear_0_4 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=0.4,
+    # ),
+    # layer_0_linear_0_6 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=0.6,
+    # ),
+    # layer_0_linear_0_8 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=0.8,
+    # ),
+    # layer_0_linear_1_0 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=1.0,
+    # ),
+    # layer_0_linear_1_2 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=1.2,
+    # ),
+    # layer_0_linear_1_4 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=1.4,
+    # ),
+    # layer_0_linear_1_6 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=1.6,
+    # ),
+    # layer_0_linear_1_8 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=1.8,
+    # ),
+    # layer_0_linear_2_0 = partial(
+    #     linear_hook_base,
+    #     layer=0,
+    #     tokens=np.arange(len(example_prompt)),
+    #     multiplier=2.0,
     ),
 )
 #%%
@@ -419,6 +484,7 @@ for experiment_name, experiment_hook in experiments.items():
     test_logits, test_cache = model.run_with_cache(
         clean_tokens, 
         prepend_bos=False,
+        names_filter=lambda name: name.endswith('resid_post'),
     )
     test_cache.to(device)
     test_logit_diffs = get_logit_diff(
