@@ -22,47 +22,6 @@ if torch.cuda.is_available():
 else:
     device = "cpu"
 
-# =============== DATA UTILS ===============
-def set_up_data(model, prompts, answers):
-    """Sets up data for a given model, prompts, and answers.
-
-    Args:
-        model (HookedTransformer): Model to set up data for.
-        prompts (List[str]): List of prompts to use.
-        answers (List[List[str]]): List of answers to use.
-
-    Returns:
-        Tuple[List[str], List[str], torch.Tensor]: Clean tokens, corrupted tokens, and answer token indices.
-    """
-    clean_tokens = model.to_tokens(prompts)
-    # Swap each adjacent pair of tokens
-    corrupted_tokens = clean_tokens[
-        [(i + 1 if i % 2 == 0 else i - 1) for i in range(len(clean_tokens))]
-    ]
-
-    answer_token_indices = torch.tensor(
-        [
-            [model.to_single_token(answers[i][j]) for j in range(2)]
-            for i in range(len(answers))
-        ],
-        device=model.cfg.device,
-    )
-
-    return clean_tokens, corrupted_tokens, answer_token_indices
-
-
-def read_data(file_path):
-    with open(file_path, "r") as f:
-        content = f.read()
-
-    prompts_str, answers_str = content.split("\n\n")
-    prompts = prompts_str.split("\n")  # Remove the last empty item
-    answers = [
-        tuple(answer.split(",")) for answer in answers_str.split(";")[:-1]
-    ]  # Remove the last empty item
-
-    return prompts, answers
-
 
 # =============== VISUALIZATION UTILS ===============
 def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
@@ -119,28 +78,8 @@ def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
 
 
 # =============== METRIC UTILS ===============
-def get_logit_diff(logits, answer_token_indices, per_prompt=False):
-    """Gets the difference between the logits of the provided tokens (e.g., the correct and incorrect tokens in IOI)
 
-    Args:
-        logits (torch.Tensor): Logits to use.
-        answer_token_indices (torch.Tensor): Indices of the tokens to compare.
-
-    Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
-    """
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits = logits[:, -1, :]
-    correct_logits = logits.gather(1, answer_token_indices[:, 0].unsqueeze(1))
-    incorrect_logits = logits.gather(1, answer_token_indices[:, 1].unsqueeze(1))
-    if per_prompt:
-        print(correct_logits - incorrect_logits)
-
-    return (correct_logits - incorrect_logits).mean()
-
-
-def get_logit_diff_multi(
+def get_logit_diff(
     logits: Float[Tensor, "batch pos vocab"],
     answer_tokens: Float[Tensor, "batch n_pairs 2"], 
     per_prompt: bool = False,
@@ -178,6 +117,44 @@ def get_logit_diff_multi(
         print(left_logits - right_logits)
 
     return (left_logits - right_logits).mean()
+
+def logit_diff_denoising(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs 2"],
+    flipped_logit_diff: float,
+    clean_logit_diff: float,
+    return_tensor: bool = False,
+) -> Float[Tensor, ""]:
+    '''
+    Linear function of logit diff, calibrated so that it equals 0 when performance is
+    same as on flipped input, and 1 when performance is same as on clean input.
+    '''
+    patched_logit_diff = get_logit_diff(logits, answer_tokens)
+    ld = ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff))
+    if return_tensor:
+        return ld
+    else:
+        return ld.item()
+
+
+def logit_diff_noising(
+        logits: Float[Tensor, "batch seq d_vocab"],
+        clean_logit_diff: float,
+        corrupted_logit_diff: float,
+        answer_tokens: Float[Tensor, "batch n_pairs 2"],
+        return_tensor: bool = False,
+    ) -> float:
+        '''
+        We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
+        and -1 when performance has been destroyed (i.e. is same as ABC dataset).
+        '''
+        patched_logit_diff = get_logit_diff(logits, answer_tokens)
+        ld = ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff))
+
+        if return_tensor:
+            return ld
+        else:
+            return ld.item()
 
 
 # =============== LOGIT LENS UTILS ===============

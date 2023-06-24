@@ -220,10 +220,10 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 # ### Dataset Construction
 
 # %%
-pos_answers = [" Positive"]
-neg_answers = [" Negative"]
+pos_answers = [" Positive", " amazing", " good"]
+neg_answers = [" Negative", " terrible", " bad"]
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
-    model, device, 1, "classification", pos_answers, neg_answers
+    model, device, 3, "classification", #pos_answers, neg_answers
 )
 
 # %%
@@ -239,11 +239,9 @@ pos_logit_diff = get_logit_diff(pos_logits, answer_tokens[::2,:])
 pos_logit_diff
 
 # %%
-# get every other 
-model.to_string(clean_tokens[::2, :])
-
-# %%
-model.to_str_tokens(answer_tokens[0])
+neg_logits, neg_cache = model.run_with_cache(clean_tokens[1::2,:])
+neg_logit_diff = get_logit_diff(neg_logits, answer_tokens[1::2,:])
+neg_logit_diff
 
 # %%
 clean_logits, clean_cache = model.run_with_cache(clean_tokens)
@@ -256,31 +254,19 @@ corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_promp
 corrupted_logit_diff
 
 # %%
-def logit_diff_denoising(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    flipped_logit_diff: float = corrupted_logit_diff,
-    clean_logit_diff: float = clean_logit_diff,
-) -> Float[Tensor, ""]:
-    '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
-    same as on flipped input, and 1 when performance is same as on clean input.
-    '''
-    patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
+logit_diff_denoising = partial(
+    logit_diff_denoising, 
+    answer_tokens=answer_tokens, 
+    clean_logit_diff=clean_logit_diff, 
+    flipped_logit_diff=corrupted_logit_diff
+)
 
-def logit_diff_noising(
-        logits: Float[Tensor, "batch seq d_vocab"],
-        clean_logit_diff: float = clean_logit_diff,
-        corrupted_logit_diff: float = corrupted_logit_diff,
-        answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    ) -> float:
-        '''
-        We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
-        and -1 when performance has been destroyed (i.e. is same as ABC dataset).
-        '''
-        patched_logit_diff = get_logit_diff(logits, answer_tokens)
-        return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
+logit_diff_noising = partial(
+    logit_diff_noising, 
+    answer_tokens=answer_tokens, 
+    clean_logit_diff=clean_logit_diff, 
+    flipped_logit_diff=corrupted_logit_diff
+)
 
 # %% [markdown]
 # ### Direct Logit Attribution
