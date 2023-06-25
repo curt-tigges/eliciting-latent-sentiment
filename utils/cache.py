@@ -1,5 +1,5 @@
 from transformer_lens import ActivationCache
-from jaxtyping import Float
+from jaxtyping import Float, Bool
 from torch import Tensor
 import einops
 
@@ -81,3 +81,22 @@ def residual_sentiment_sim_by_pos(
         "components batch pos d_model, batch d_model -> components pos"
     ) / batch_size
     return component_means
+
+
+def residual_flip_dir_by_pos(
+    cache: ActivationCache,
+    is_positive: Bool[Tensor, "batch"],
+    seq_len: int,
+) -> Float[Tensor, "components pos d_model"]:
+    # we consider corrupt -> clean flips
+    stack: Float[
+        Tensor, "components batch pos d_model"
+    ] = cache.stack_head_results(layer=-1, return_labels=False)
+    for pos in range(seq_len):
+        stack[:, :, pos, :] = cache.apply_ln_to_stack(
+            stack[:, :, pos, :], layer=-1, pos_slice=pos
+        )
+    flip_dirs: Float[Tensor, "components pos d_model"] = (
+        stack[:, is_positive, :, :] - stack[:, ~is_positive, :, :]
+    ).mean(dim=1)
+    return flip_dirs
