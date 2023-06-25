@@ -169,6 +169,9 @@ train_neutral_adjectives = [
     'sufficient',
     'acceptable',
     'satisfactory',
+    'balanced',
+    'valid',
+    'appropriate',
 ]
 
 train_adjectives = prepend_space(
@@ -188,7 +191,7 @@ check_single_tokens(train_adjectives)
 # Testing set
 test_positive_adjectives = [
     'breathtaking', 'stunning', 'impressive', 'admirable', 'phenomenal', 
-    'radiant', 'sublime', 'glorious', 'magical', 'sensational', 'pleasing', 'movie'
+    'radiant', 'sublime', 'glorious', 'magical', 'sensational', 'pleasing',
 ]
 
 test_negative_adjectives = [
@@ -584,6 +587,9 @@ positive_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
 negative_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
     train_pcs - pca_negative_centroid, axis=-1
 )
+neutral_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
+    train_pcs - pca_neutral_centroid, axis=-1
+)
 # print the adjectives closest to each centroid
 positive_closest = np.array(train_adjectives)[
     np.argsort(positive_distances)[:5]
@@ -594,9 +600,16 @@ negative_closest = np.array(train_adjectives)[
 negative_closest_distances = [
     f"{d:.2f}" for d in np.sort(negative_distances)[:10]
 ]
+neutral_closest = np.array(train_adjectives)[
+    np.argsort(neutral_distances)[:10]
+]
+neutral_closest_distances = [
+    f"{d:.2f}" for d in np.sort(neutral_distances)[:10]
+]
 print(f"Positive centroid nearest adjectives: {positive_closest}")
 print(f"Negative centroid nearest adjectives: {negative_closest}")
 print(f"Negative centroid distances: {negative_closest_distances}")
+print(f"Neutral centroid nearest adjectives: {neutral_closest}")
 #%% # 
 # ============================================================================ #
 # Plotting
@@ -664,8 +677,15 @@ def plot_pca_1d():
 if pca.n_components_== 1:
     fig = plot_pca_1d()
     fig.show()
+#%%
+label_colorscale = [
+    [0, 'blue'],       # color for values at the lower end of the scale
+    [0.5, 'green'],    # color for values in the middle of the scale
+    [1, 'red']         # color for values at the higher end of the scale
+]
 # %%
 # plot the PCA
+
 def plot_pca_2d():
     fig = go.Figure()
     fig.add_trace(
@@ -675,8 +695,8 @@ def plot_pca_2d():
             text=train_adjectives,
             mode="markers",
             marker=dict(
-                color=train_pca_labels,
-                colorscale="RdBu",
+                color=train_true_labels,
+                colorscale=label_colorscale,
                 opacity=0.8,
             ),
             name="PCA in-sample",
@@ -689,10 +709,10 @@ def plot_pca_2d():
             text=test_adjectives,
             mode="markers",
             marker=dict(
-                color=test_pca_labels,
-                colorscale="RdBu",
+                color=test_true_labels,
+                colorscale=label_colorscale,
                 opacity=0.8,
-                symbol="arrow",
+                symbol="square",
             ),
             name="PCA out-of-sample",
         )
@@ -704,48 +724,48 @@ def plot_pca_2d():
             text=all_verbs,
             mode="markers",
             marker=dict(
-                color=verb_pca_labels,
-                colorscale="RdBu",
+                color=verb_true_labels,
+                colorscale=label_colorscale,
                 opacity=0.8,
                 symbol="star",
             ),
             name="PCA verbs",
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=train_pcs[np.argsort(positive_distances)[:5], 0],
-            y=train_pcs[np.argsort(positive_distances)[:5], 1],
-            text=positive_closest,
-            mode="markers",
-            marker=dict(
-                color="red",
-                opacity=0.8,
-                symbol="square",
-            ),
-            name="Positive centroid nearest adjectives",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=train_pcs[np.argsort(negative_distances)[:5], 0],
-            y=train_pcs[np.argsort(negative_distances)[:5], 1],
-            text=negative_closest,
-            mode="markers",
-            marker=dict(
-                color="blue",
-                opacity=0.8,
-                symbol="square",
-            ),
-            name="Negative centroid nearest adjectives",
-        )
-    )
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=train_pcs[np.argsort(positive_distances)[:5], 0],
+    #         y=train_pcs[np.argsort(positive_distances)[:5], 1],
+    #         text=positive_closest,
+    #         mode="markers",
+    #         marker=dict(
+    #             color="red",
+    #             opacity=0.8,
+    #             symbol="square",
+    #         ),
+    #         name="Positive centroid nearest adjectives",
+    #     )
+    # )
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=train_pcs[np.argsort(negative_distances)[:5], 0],
+    #         y=train_pcs[np.argsort(negative_distances)[:5], 1],
+    #         text=negative_closest,
+    #         mode="markers",
+    #         marker=dict(
+    #             color="blue",
+    #             opacity=0.8,
+    #             symbol="square",
+    #         ),
+    #         name="Negative centroid nearest adjectives",
+    #     )
+    # )
     fig.add_trace(
         go.Scatter(
             x=pca_centroids[:, 0],
             y=pca_centroids[:, 1],
             mode="markers",
-            marker=dict(color='green', symbol='x', size=10),
+            marker=dict(color='black', symbol='x', size=10),
             name="Centroids",
         )
     )
@@ -769,8 +789,8 @@ fig.add_trace(
         y=train_km_projected,
         mode="markers",
         marker=dict(
-            color=train_pca_labels,
-            colorscale="RdBu",
+            color=train_true_labels,
+            colorscale=label_colorscale,
             opacity=0.8,
         ),
         name="Kmeans vs PCA scores",
@@ -885,7 +905,7 @@ dot_data = []
 for x in pile_loader:
     batch_embed: Float[Tensor, "batch pos d_model"] = embed_and_mlp0(
         x['tokens']
-    )
+    ).cpu().detach().numpy()
     batch_dots: Float[np.ndarray, "batch pos"] = einops.einsum(
         batch_embed, 
         km_pos_neg_normalised,
