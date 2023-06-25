@@ -139,18 +139,18 @@ def get_dataset(
         "negative": neg_prompts,
         "neutral": neutral_prompts,
     }
-
-    batch_size = len(pos_prompts) * 2
+    n_prompts = min(
+        len(prompts_dict[comparison[0]]), 
+        len(prompts_dict[comparison[1]]), 
+        )
+    batch_size = n_prompts * 2
     all_prompts = []
     answer_tokens = torch.empty(
         (batch_size, n_pairs, 2), 
         device=device, 
         dtype=torch.long
     )
-    n_prompts = min(
-        len(prompts_dict[comparison[0]]), 
-        len(prompts_dict[comparison[1]]), 
-        )
+    
     for i in range(n_prompts):
 
         all_prompts.append(prompts_dict[comparison[0]][i])
@@ -168,7 +168,7 @@ def get_dataset(
             answer_tokens[i * 2, pair_idx, 0] = tokens_dict[comparison[0]]
             answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
             answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
-            answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[1]]
+            answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
     
     prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(
         all_prompts, prepend_bos=True
