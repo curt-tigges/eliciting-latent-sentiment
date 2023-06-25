@@ -3,7 +3,7 @@ import einops
 import numpy as np
 from jaxtyping import Float, Int
 import plotly.express as px
-from utils.prompts import get_dataset
+from utils.prompts import get_dataset, get_logit_diff
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
@@ -32,26 +32,6 @@ sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
 )
 #%% # Data loading
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
-#%%
-def get_logit_diff(logits, answer_token_indices, per_prompt=False):
-    """Gets the difference between the logits of the provided tokens (e.g., the correct and incorrect tokens in IOI)
-
-    Args:
-        logits (torch.Tensor): Logits to use.
-        answer_token_indices (torch.Tensor): Indices of the tokens to compare.
-
-    Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
-    """
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits = logits[:, -1, :]
-    left_logits = logits.gather(1, answer_token_indices[:, 0].unsqueeze(1))
-    right_logits = logits.gather(1, answer_token_indices[:, 1].unsqueeze(1))
-    if per_prompt:
-        print(left_logits - right_logits)
-
-    return (left_logits - right_logits).mean()
 #%%
 # ============================================================================ #
 # Directional activation patching
@@ -263,7 +243,7 @@ resample_cache = create_cache_for_resample_ablation(
 )
 print(resample_cache.keys())
 #%%
-resample_ablation_results: Float[Tensor, "layer head"] = act_patch(
+head_resample_ablation_results: Float[Tensor, "layer head"] = act_patch(
     model=model,
     orig_input=corrupted_tokens,
     new_cache=resample_cache,
@@ -273,7 +253,7 @@ resample_ablation_results: Float[Tensor, "layer head"] = act_patch(
 )
 #%%
 fig = px.imshow(
-    resample_ablation_results['result'] * 100,
+    head_resample_ablation_results['result'] * 100,
     title="Resample-ablating KM component of attention heads",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
     color_continuous_scale="RdBu",

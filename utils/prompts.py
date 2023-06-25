@@ -134,3 +134,58 @@ def get_dataset(
     return (
         all_prompts, answer_tokens, clean_tokens, corrupted_tokens
     )
+
+def get_logit_diff(
+    logits: Float[Tensor, "batch pos vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs 2"], 
+    per_prompt: bool = False,
+    per_completion: bool = False,
+):
+    """
+    Gets the difference between the logits of the provided tokens 
+    e.g., the correct and incorrect tokens in IOI
+
+    Args:
+        logits (torch.Tensor): Logits to use.
+        answer_tokens (torch.Tensor): Indices of the tokens to compare.
+
+    Returns:
+        torch.Tensor: Difference between the logits of the provided tokens.
+    """
+    n_pairs = answer_tokens.shape[1]
+    if len(logits.shape) == 3:
+        # Get final logits only
+        logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
+    logits = einops.repeat(
+        logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
+    )
+    left_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
+        -1, answer_tokens[:, :, 0].unsqueeze(-1)
+    )
+    right_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
+        -1, answer_tokens[:, :, 1].unsqueeze(-1)
+    )
+    if per_completion:
+        print(left_logits - right_logits)
+    left_logits: Float[Tensor, "batch"] = left_logits.mean(dim=1)
+    right_logits: Float[Tensor, "batch"] = right_logits.mean(dim=1)
+    if per_prompt:
+        return left_logits - right_logits
+    return (left_logits - right_logits).mean()
+
+def logit_diff_denoising(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch 2"],
+    flipped_logit_diff: float,
+    clean_logit_diff: float,
+) -> Float[Tensor, ""]:
+    '''
+    Linear function of logit diff, calibrated so that it equals 
+    0 when performance is same as on flipped input, and 
+    1 when performance is same as on clean input.
+    '''
+    patched_logit_diff = get_logit_diff(logits, answer_tokens)
+    return (
+        (patched_logit_diff - flipped_logit_diff) / 
+        (clean_logit_diff  - flipped_logit_diff)
+    ).item()
