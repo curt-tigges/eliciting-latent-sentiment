@@ -17,10 +17,19 @@ neg_adj = [
     ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
     ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
     ]
+neutral_adj = [
+    ' average',' normal',' standard',' typical',' common',' ordinary',
+    ' regular',' usual',' familiar',' generic',' conventional',
+    ' fine', ' okay', ' ok', ' decent', ' passable', ' fair', ' satisfactory', 
+    ' adequate', ' alright',
 
+]
 
 pos_tokens = [" amazing", " good", " pleasant", " wonderful", " great"]
 neg_tokens = [" terrible", " bad", " unpleasant", " horrendous", " awful"]
+neutral_tokens = [
+    " OK", " mediocre", "fine", "okay", "alright", "ok", "decent",
+]
 
 
 def get_adjective(adjective_list, index):
@@ -45,12 +54,12 @@ def remove_pythia_double_token_words(model, words: list = None) -> list:
 
 
 def get_prompts(
-        prompt_type: str = "simple", 
-        positive_adjectives: list = pos_adj, 
-        negative_adjectives: list = neg_adj
+    prompt_type: str = "simple", 
+    positive_adjectives: list = pos_adj, 
+    negative_adjectives: list = neg_adj,
+    neutral_adjectives: list = neutral_adj,
 ) -> Tuple[list, list]:
     assert prompt_type in ["simple", "completion", "classification"]
-    pos_prompts, neg_prompts = [], []
     if prompt_type == "simple":
         pos_prompts = [
             f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives))
@@ -58,6 +67,10 @@ def get_prompts(
         neg_prompts = [
             f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives))
         ]
+        neutral_prompts = [
+            f"I thought this movie was{neutral_adjectives[i]}, I watched it. \nConclusion: This movie is" for i in range(len(neutral_adjectives))
+        ]
+
     elif prompt_type == "completion":
         pos_prompts = [
             f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very" for i in range(len(positive_adjectives))
@@ -65,6 +78,9 @@ def get_prompts(
         neg_prompts = [
             f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very" for i in range(len(negative_adjectives))
         ]
+        neutral_prompts = [
+            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very" for i in range(len(neutral_adjectives))
+
     elif prompt_type == "classification":
         pos_prompts = [
             f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
@@ -72,8 +88,13 @@ def get_prompts(
         neg_prompts = [
             f"Review Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
         ]
+        neutral_prompts = [
+            f"Review Text: 'I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+    else:
+        raise ValueError(f"Invalid prompt type: {prompt_type}}")
 
-    return pos_prompts, neg_prompts
+    return pos_prompts, neg_prompts, neutral_prompts
 
 
 def get_dataset(
@@ -83,6 +104,8 @@ def get_dataset(
     prompt_type: str = "simple",
     pos_answers: list = pos_tokens,
     neg_answers: list = neg_tokens,
+    neutral_answers: list = neutral_tokens,
+    comparison: Tuple[str, str] = ("positive", "negative"),
 ) -> Tuple[
     Float[Tensor, "batch pos"],
     Float[Tensor, "batch n_pairs 2"],
@@ -100,11 +123,22 @@ def get_dataset(
     if "pythia" in model.cfg.model_name:
         positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
         negative_adjectives = remove_pythia_double_token_words(model, neg_adj)
+        neutral_adjectives = remove_pythia_double_token_words(
+            model, neutral_adj
+        )
     else:
         positive_adjectives = pos_adj
         negative_adjectives = neg_adj
+        neutral_adjectives = neutral_adj
 
-    pos_prompts, neg_prompts = get_prompts(prompt_type, positive_adjectives, negative_adjectives)
+    pos_prompts, neg_prompts, neutral_prompts = get_prompts(
+        prompt_type, positive_adjectives, negative_adjectives, neutral_adjectives
+    )
+    prompts_dict = {
+        "positive": pos_prompts,
+        "negative": neg_prompts,
+        "neutral": neutral_prompts,
+    }
 
     batch_size = len(pos_prompts) * 2
     all_prompts = []
@@ -113,23 +147,37 @@ def get_dataset(
         device=device, 
         dtype=torch.long
     )
-    for i in range(min(len(pos_prompts), len(neg_prompts))):
+    n_prompts = min(
+        len(prompts_dict[comparison[0]]), 
+        len(prompts_dict[comparison[1]]), 
+        )
+    for i in range(n_prompts):
 
-        all_prompts.append(pos_prompts[i])
-        all_prompts.append(neg_prompts[i])
+        all_prompts.append(prompts_dict[comparison[0]][i])
+        all_prompts.append(prompts_dict[comparison[1]][i])
         
         for pair_idx in range(n_pairs):
             pos_token = model.to_single_token(pos_answers[pair_idx])
             neg_token = model.to_single_token(neg_answers[pair_idx])
-            answer_tokens[i * 2, pair_idx, 0] = pos_token
-            answer_tokens[i * 2, pair_idx, 1] = neg_token
-            answer_tokens[i * 2 + 1, pair_idx, 0] = neg_token
-            answer_tokens[i * 2 + 1, pair_idx, 1] = pos_token
+            neut_token = model.to_single_token(neutral_answers[pair_idx])
+            tokens_dict = {
+                'positive': pos_token, 
+                'negative': neg_token, 
+                'neutral': neut_token,
+            }
+            answer_tokens[i * 2, pair_idx, 0] = tokens_dict[comparison[0]]
+            answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
+            answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
+            answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[1]]
     
-    prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(all_prompts, prepend_bos=True)
+    prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(
+        all_prompts, prepend_bos=True
+    )
     
     clean_tokens = prompts_tokens.to(device)
-    corrupted_tokens = model.to_tokens(all_prompts[1:] + [all_prompts[0]], prepend_bos=True).to(device)
+    corrupted_tokens = model.to_tokens(
+        all_prompts[1:] + [all_prompts[0]], prepend_bos=True
+    ).to(device)
     
     return (
         all_prompts, answer_tokens, clean_tokens, corrupted_tokens
