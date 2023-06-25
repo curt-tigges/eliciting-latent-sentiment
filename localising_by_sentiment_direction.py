@@ -10,7 +10,8 @@ import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, utils
 from utils.cache import (
-    residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
+    residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos,
+    residual_flip_dir_by_pos
 )
 #%%
 torch.set_grad_enabled(False)
@@ -161,5 +162,52 @@ fig.for_each_trace(lambda t: t.update(
     hovertemplate = t.hovertemplate.replace(t.name, example_prompt_dict[t.name])
 ))
 fig.write_html(f'data/sentiment_by_position_line{HTML_SUFFIX}.html')
+fig.show()
+# %%
+per_pos_flip_dirs: Float[
+    Tensor, "component pos d_model"
+] = residual_flip_dir_by_pos(
+    clean_cache, 
+    answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0],
+    seq_len=seq_len,
+)
+#%%
+per_pos_flip_norms: Float[
+    Tensor, "component pos"
+] = per_pos_flip_dirs.norm(dim=-1)
+fig = px.imshow(
+    per_pos_flip_norms.squeeze().cpu().detach().numpy(),
+    labels={'x': 'Position', 'y': 'Component'},
+    title='Size of positive/negative flip at each component/position',
+    color_continuous_scale="RdBu",
+    color_continuous_midpoint=0,
+    x=example_prompt,
+    y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
+    height = heads * layers * 20,
+)
+fig.write_html(f'data/flip_size_by_position{HTML_SUFFIX}.html')
+fig.show()
+#%%
+per_pos_flip_sent_projections: Float[
+    Tensor, "component pos"
+] = (einops.einsum(
+    per_pos_flip_dirs, 
+    sentiment_dir / sentiment_dir.norm(), 
+    'c s d, d -> c s',
+) / per_pos_flip_norms).where(
+    per_pos_flip_norms > 0, 
+    torch.tensor(0, device=device)
+)
+fig = px.imshow(
+    per_pos_flip_sent_projections.squeeze().cpu().detach().numpy(),
+    labels={'x': 'Position', 'y': 'Component'},
+    title='% of positive/negative flip explained by sentiment direction',
+    color_continuous_scale="RdBu",
+    color_continuous_midpoint=0,
+    x=example_prompt,
+    y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
+    height = heads * layers * 20,
+)
+fig.write_html(f'data/flip_percent_sentiment_by_position{HTML_SUFFIX}.html')
 fig.show()
 # %%
