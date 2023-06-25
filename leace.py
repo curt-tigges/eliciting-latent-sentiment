@@ -171,27 +171,6 @@ null_lr = LogisticRegression(max_iter=1000, tol=0.0).fit(
 )
 print('post-ablation accuracy', null_lr.score(X_ablated, Y_t))
 
-# %% # test LEACE / LR out-of-sample
-Y_rep = einops.repeat(Y_t, "b -> (b s)", s=seq_len)
-for layer in range(layers):
-    layer_cache: Float[Tensor, "batch pos d_model"] = clean_cache[
-        utils.get_act_name('resid_post', layer)
-    ]
-    layer_flat: Float[Tensor, "batch_pos d_model"] = einops.rearrange(
-        layer_cache, "b p d -> (b p) d"
-    )
-    layer_lr_pre = LogisticRegression(max_iter=1000, tol=0.0).fit(
-        layer_flat.cpu().detach().numpy(), Y_rep
-    )
-    layer_score_pre = layer_lr_pre.score(layer_flat, Y_rep)
-
-    layer_erased: Float[Tensor, "batch_pos d_model"] = eraser(layer_flat)
-    layer_lr_post = LogisticRegression(max_iter=1000, tol=0.0).fit(
-        layer_erased.cpu().detach().numpy(), Y_rep
-    )
-    layer_score_post = layer_lr_post.score(layer_erased, Y_rep)
-
-    print(f"Layer {layer} pre: {layer_score_pre:.1%}, post: {layer_score_post:.1%}")
 #%%
 X_c_ablated: Float[Tensor, "batch"] = einops.einsum(
     X_ablated, km_line_unit, "b d, d -> b"
