@@ -155,12 +155,39 @@ train_negative_adjectives = [
     'disappointing',
     'awful'
 ]
+train_neutral_adjectives = [
+    'okay',
+    'fine',
+    'average',
+    'ok',
+    'neutral',
+    'fair',
+    'adequate',
+    'alright',
+    'OK',
+    'reasonable',
+    'sufficient',
+    'acceptable',
+    'soso',
+    'satisfactory',
+    'passable',
+    'tolerable',
+    'middling',
+    'unremarkable',
+    'unobjectionable',
+    'unnoteworthy',
+    'unnotable',
+]
+
 train_adjectives = prepend_space(
-    train_positive_adjectives + train_negative_adjectives
+    train_positive_adjectives + 
+    train_neutral_adjectives + 
+    train_negative_adjectives
 )
 train_true_labels = (
     [1] * len(train_positive_adjectives) + 
-    [0] * len(train_negative_adjectives)
+    [0] * len(train_neutral_adjectives)
+    [-1] * len(train_negative_adjectives)
 )
 check_for_duplicates(train_adjectives)
 check_single_tokens(train_adjectives)
@@ -173,19 +200,31 @@ test_positive_adjectives = [
 ]
 
 test_negative_adjectives = [
-    'foul', 'vile', 'appalling', 'rotten', 'grim', 'dismal'
+    'foul', 'vile', 'appalling', 'rotten', 'grim', 'dismal',
+    'atrocious', 'repulsive', 'disgusting', 'repugnant', 'abhorrent',
+    'horrid', 'hideous', 'frightful', 'gruesome', 'ghastly', 'nasty',
+]
+test_neutral_adjectives = [
+    'decent', 'common', 'standard', 'fair', 'routine', 'functional',
+    'typical', 'ordinary', 'regular', 'usual', 'unexceptional', 'unremarkable',
+    'tolerable', 'serviceable'
 ]
 test_adjectives = prepend_space(
-    test_positive_adjectives + test_negative_adjectives
+    test_positive_adjectives + 
+    test_neutral_adjectives + 
+    test_negative_adjectives
 )
 test_true_labels = (
     [1] * len(test_positive_adjectives) +
-    [0] * len(test_negative_adjectives)
+    [0] * len(test_neutral_adjectives) +
+    [-1] * len(test_negative_adjectives)
 )
 check_overlap(train_positive_adjectives, test_positive_adjectives)
 check_overlap(train_negative_adjectives, test_negative_adjectives)
+check_overlap(train_neutral_adjectives, test_neutral_adjectives)
 check_single_tokens(test_positive_adjectives)
 check_single_tokens(test_negative_adjectives)
+check_single_tokens(test_neutral_adjectives)
 check_for_duplicates(test_adjectives)
 #%% # verb set
 positive_verbs = [
@@ -194,13 +233,18 @@ positive_verbs = [
 negative_verbs = [
     'hated', 'despised', 'disliked',
 ]
+neutral_verbs = [
+    'watched', 'saw', 'viewed', 'witnessed', 'experienced', 'observed', 'noticed',
+]
 all_verbs = prepend_space(positive_verbs + negative_verbs)
 verb_true_labels = (
     [1] * len(positive_verbs) +
+    [0] ( len(neutral_verbs)) + 
     [0] * len(negative_verbs)
 )
 check_for_duplicates(all_verbs)
 check_single_tokens(positive_verbs)
+check_single_tokens(neutral_verbs)
 check_single_tokens(negative_verbs)
 
 # %%
@@ -272,7 +316,7 @@ train_embeddings_centred: Float[Tensor, "batch d_model"] = ((
 #%%
 # ============================================================================ #
 # K-means
-kmeans = KMeans(n_clusters=2, n_init=10)
+kmeans = KMeans(n_clusters=3, n_init=10)
 kmeans.fit(train_embeddings)
 train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
 test_km_labels = kmeans.predict(test_embeddings)
@@ -283,56 +327,71 @@ km_centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
 def split_by_label(
     adjectives: List[str], labels: Int[np.ndarray, "batch"]
 ) -> Tuple[List[str], List[str]]:
-    first_cluster = [
-        adj[1:]
-        for i, adj in enumerate(adjectives) 
-        if labels[i] == 0
+    return [
+        [adj[1:] for i, adj in enumerate(adjectives) if labels[i] == label]
+        for label in set(labels)
     ]
-    second_cluster = [
-        adj[1:]
-        for i, adj in enumerate(adjectives) 
-        if labels[i] == 1
-    ]
-    return first_cluster, second_cluster
 #%%
-km_first_cluster, km_second_cluster = split_by_label(
+train_km_clusters = split_by_label(
     train_adjectives, train_km_labels
 )
-pos_first = (
-    len(set(km_first_cluster) & set(train_positive_adjectives)) >
-    len(set(km_second_cluster) & set(train_negative_adjectives))
+test_kn_clusters = split_by_label(
+    test_adjectives, test_km_labels
 )
-if pos_first:
-    train_positive_cluster = km_first_cluster
-    train_negative_cluster = km_second_cluster
-    km_positive_centroid = km_centroids[0, :]
-    km_negative_centroid = km_centroids[1, :]
-    test_positive_cluster, test_negative_cluster = split_by_label(
-        test_adjectives, test_km_labels
+verb_km_clusters = split_by_label(
+    all_verbs, verb_km_labels
+)
+#%%
+def get_cluster_and_centroid(
+    train_relevant_adjectives: List[str],
+    train_km_clusters: List[List[str]],
+):
+    if (
+        len(set(train_km_clusters[0]) & set(train_relevant_adjectives)) >
+        len(train_km_clusters[0]) * 0.5
+    ):
+        label = 0
+    elif (
+        len(set(train_km_clusters[1]) & set(train_relevant_adjectives)) >
+        len(train_km_clusters[1]) * 0.5
+    ):
+        label = 1
+    else:
+        label = 2
+    return (
+        train_km_clusters[label], km_centroids[label, :], label
     )
-    verb_positive_cluster, verb_negative_cluster = split_by_label(
-        all_verbs, verb_km_labels
-    )
-else:
-    train_positive_cluster = km_second_cluster
-    train_negative_cluster = km_first_cluster
-    km_positive_centroid = km_centroids[1, :]
-    km_negative_centroid = km_centroids[0, :]
-    test_negative_cluster, test_positive_cluster = split_by_label(
-        test_adjectives, test_km_labels
-    )
-    verb_negative_cluster, verb_positive_cluster = split_by_label(
-        all_verbs, verb_km_labels
-    )
-    train_km_labels = 1 - train_km_labels
-    test_km_labels = 1 - test_km_labels
-    verb_km_labels = 1 - verb_km_labels
-km_line: Float[np.ndarray, "d_model"] = (
+#%%
+train_positive_cluster, km_positive_centroid, km_positive_label = get_cluster_and_centroid(
+    train_positive_adjectives, train_km_clusters
+)
+train_negative_cluster, km_negative_centroid, km_negative_label = get_cluster_and_centroid(
+    train_negative_adjectives, train_km_clusters
+)
+train_neutral_cluster, km_neutral_centroid, km_neutral_label = get_cluster_and_centroid(
+    train_neutral_adjectives, train_km_clusters
+)
+km_label_dict = {
+    km_positive_label: 1,
+    km_negative_label: -1,
+    km_neutral_label: 0,
+}
+train_km_labels = [
+    label_dict[label] for label in train_km_labels
+]
+test_km_labels = [
+    label_dict[label] for label in test_km_labels
+]
+verb_km_labels = [
+    label_dict[label] for label in verb_km_labels
+]
+
+km_pos_neg: Float[np.ndarray, "d_model"] = (
     km_positive_centroid - km_negative_centroid
 )
-km_line_normalised: Float[
+km_pos_neg_normalised: Float[
     Tensor, "d_model"
-] = torch.tensor(km_line / np.linalg.norm(km_line), dtype=torch.float32)
+] = torch.tensor(km_pos_neg / np.linalg.norm(km_pos_neg), dtype=torch.float32)
 #%%
 print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
@@ -342,12 +401,14 @@ with open(f"data/km_positive_{embedding_type.value}.npy", "wb") as f:
     np.save(f, km_positive_centroid)
 with open(f"data/km_negative_{embedding_type.value}.npy", "wb") as f:
     np.save(f, km_negative_centroid)
-with open(f"data/km_line_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_line)
+with open(f"data/km_neutral_{embedding_type.value}.npy", "wb") as f:
+    np.save(f, km_neutral_centroid)
+with open(f"data/km_positive_negative_{embedding_type.value}.npy", "wb") as f:
+    np.save(f, km_pos_neg)
 #%%
 # project adjectives onto k-means line
 train_km_projected = einops.einsum(
-    train_embeddings, km_line_normalised, "b d, d->b"
+    train_embeddings, km_pos_neg_normalised, "b d, d->b"
 ).numpy()
 # sort adjectives by projection with k-means line
 train_km_projected_sorted = sorted(
@@ -373,51 +434,56 @@ test_pca_labels = kmeans.predict(test_pcs)
 verb_pca_labels = kmeans.predict(verb_pcs)
 pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
 #%%
-pca_first_cluster, pca_second_cluster = split_by_label(
+train_pca_clusters = split_by_label(
     train_adjectives, train_pca_labels
 )
-# %%
-pca_pos_first = (
-    len(set(pca_first_cluster) & set(train_positive_adjectives)) >
-    len(set(pca_second_cluster) & set(train_negative_adjectives))
+test_pca_clusters = split_by_label(
+    test_adjectives, test_pca_labels
 )
-if pca_pos_first:
-    # positive first
-    train_pca_positive_cluster = pca_first_cluster
-    train_pca_negative_cluster = pca_second_cluster
-    test_pca_positive_cluster, test_pca_negative_cluster = split_by_label(
-        test_adjectives, test_pca_labels
-    )
-    verb_pca_positive_cluster, verb_pca_negative_cluster = split_by_label(
-        all_verbs, verb_pca_labels
-    )
-    pca_positive_centroid = pca_centroids[0, :]
-    pca_negative_centroid = pca_centroids[1, :]
-else:
-    # negative first
-    train_pca_positive_cluster = pca_second_cluster
-    train_pca_negative_cluster = pca_first_cluster
-    test_pca_negative_cluster, test_pca_positive_cluster = split_by_label(
-        test_adjectives, test_pca_labels
-    )
-    verb_pca_negative_cluster, verb_pca_positive_cluster = split_by_label(
-        all_verbs, verb_pca_labels
-    )
-    pca_negative_centroid = pca_centroids[0, :]
-    pca_positive_centroid = pca_centroids[1, :]
-    train_pca_labels = 1 - train_pca_labels
-    test_pca_labels = 1 - test_pca_labels
-    verb_pca_labels = 1 - verb_pca_labels
-pca_line: Float[np.ndarray, "2"] = (
+verb_pca_clusters = split_by_label(
+    all_verbs, verb_pca_labels
+)
+#%%
+train_pca_positive_cluster, pca_positive_centroid, pca_positive_label = get_cluster_and_centroid(
+    train_positive_adjectives, train_pca_clusters
+)
+train_pca_negative_cluster, pca_negative_centroid, pca_negative_label = get_cluster_and_centroid(
+    train_negative_adjectives, train_pca_clusters
+)
+train_pca_neutral_cluster, pca_neutral_centroid, pca_neutral_label = get_cluster_and_centroid(
+    train_neutral_adjectives, train_pca_clusters
+)
+pca_label_dict = {
+    pca_positive_label: 1,
+    pca_negative_label: -1,
+    pca_neutral_label: 0,
+}
+train_pca_labels = [
+    pca_label_dict[label] for label in train_pca_labels
+]
+test_pca_labels = [
+    pca_label_dict[label] for label in test_pca_labels
+]
+verb_pca_labels = [
+    pca_label_dict[label] for label in verb_pca_labels
+]
+
+pca_pos_neg: Float[np.ndarray, "d_model"] = (
     pca_positive_centroid - pca_negative_centroid
 )
-pca_line_normalised: Float[
+pca_pos_neg_normalised: Float[
+    Tensor, "d_model"
+] = torch.tensor(pca_pos_neg / np.linalg.norm(pca_pos_neg), dtype=torch.float32)
+pca_pos_neg: Float[np.ndarray, "2"] = (
+    pca_positive_centroid - pca_negative_centroid
+)
+pca_pos_neg_normalised: Float[
     Tensor, "2"
-] = torch.tensor(pca_line / np.linalg.norm(pca_line), dtype=torch.float32)
+] = torch.tensor(pca_pos_neg / np.linalg.norm(pca_pos_neg), dtype=torch.float32)
 #%%
 # project adjectives onto PCA line
 train_pca_projected = einops.einsum(
-    train_pcs, pca_line_normalised, "b d, d->b"
+    train_pcs, pca_pos_neg_normalised, "b d, d->b"
 )
 # sort adjectives by projection with k-means line
 train_pca_projected_sorted = sorted(
@@ -431,16 +497,19 @@ train_pca_projected_sorted[:10]
 
 def print_accuracy(
     predicted_positive: Iterable[str],
+    predicted_neutral: Iterable[str],
     predicted_negative: Iterable[str],
     actual_positive: Iterable[str],
+    actual_neutral: Iterable[str],
     actual_negative: Iterable[str],
     label: str,
 ) -> None:
     correct = (
         len(set(predicted_positive) & set(actual_positive)) +
+        len(set(predicted_neutral) & set(actual_neutral)) +
         len(set(predicted_negative) & set(actual_negative))
     )
-    total = len(actual_positive) + len(actual_negative)
+    total = len(actual_positive) + len(actual_neutral) + len(actual_negative)
     accuracy = correct / total
     print(f"{label} accuracy: {correct}/{total} = {accuracy:.0%}")
 
@@ -449,6 +518,7 @@ def print_accuracy(
 
 print_accuracy(
     train_positive_cluster,
+    train_neutral_cluster
     train_negative_cluster,
     train_positive_adjectives,
     train_negative_adjectives,
@@ -456,6 +526,7 @@ print_accuracy(
 )
 print_accuracy(
     test_positive_cluster,
+    test_neutral_cluster,
     test_negative_cluster,
     test_positive_adjectives,
     test_negative_adjectives,
@@ -463,6 +534,7 @@ print_accuracy(
 )
 print_accuracy(
     verb_positive_cluster,
+    verb_neutral_cluster,
     verb_negative_cluster,
     positive_verbs,
     negative_verbs,
@@ -473,22 +545,28 @@ print_accuracy(
 
 print_accuracy(
     train_pca_positive_cluster,
+    train_pca_neutral_cluster,
     train_pca_negative_cluster,
     train_positive_adjectives,
+    train_neutral_adjectives
     train_negative_adjectives,
     "In-sample PCA",
 )
 print_accuracy(
     test_pca_positive_cluster,
+    test_pca_neutral_cluster,
     test_pca_negative_cluster,
     test_positive_adjectives,
+    test_neutral_adjectives
     test_negative_adjectives,
     "Out-of-sample PCA",
 )
 print_accuracy(
     verb_pca_positive_cluster,
+    verb_pca_neutral_cluster,
     verb_pca_negative_cluster,
     positive_verbs,
+    neutral_verbs,
     negative_verbs,
     "Out-of-sample PCA verbs",
 )
@@ -717,7 +795,7 @@ df.to_csv("data/negativity_scores.csv", index=False)
 fig = go.Figure()
 fig.add_trace(
     go.Histogram(
-        x=train_embeddings[:len(train_positive_adjectives)].numpy().dot(km_line),
+        x=train_embeddings[:len(train_positive_adjectives)].numpy().dot(km_pos_neg),
         marker=dict(
             color="red",
             opacity=0.5,
@@ -729,7 +807,7 @@ fig.add_trace(
 )
 fig.add_trace(
     go.Histogram(
-        x=train_embeddings[len(train_positive_adjectives):].numpy().dot(km_line),
+        x=train_embeddings[len(train_positive_adjectives):].numpy().dot(km_pos_neg),
         marker=dict(
             color="blue",
             opacity=0.5,
@@ -741,7 +819,7 @@ fig.add_trace(
 )
 fig.add_trace(
     go.Histogram(
-        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_pos_neg),
         marker=dict(
             color="darkred",
             opacity=0.5,
@@ -753,7 +831,7 @@ fig.add_trace(
 )
 fig.add_trace(
     go.Histogram(
-        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_pos_neg),
         marker=dict(
             color="darkblue",
             opacity=0.5,
@@ -765,7 +843,7 @@ fig.add_trace(
 )
 fig.add_trace(
     go.Histogram(
-        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_pos_neg),
         marker=dict(
             color="pink",
             opacity=0.5,
@@ -777,7 +855,7 @@ fig.add_trace(
 )
 fig.add_trace(
     go.Histogram(
-        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_pos_neg),
         marker=dict(
             color="teal",
             opacity=0.5,
@@ -803,7 +881,7 @@ for x in pile_loader:
     )
     batch_dots: Float[np.ndarray, "batch pos"] = einops.einsum(
         batch_embed, 
-        km_line_normalised,
+        km_pos_neg_normalised,
         "batch pos d_model, d_model -> batch pos",
     )
     flattened_dots = batch_dots.flatten()
