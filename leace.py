@@ -16,7 +16,7 @@ from transformer_lens.hook_points import (
 )  # Hooking utilities
 from utils.prompts import get_dataset, get_logit_diff, logit_diff_denoising
 import plotly.express as px
-from cache_utils import (
+from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
 )
 import warnings

@@ -9,7 +9,7 @@ from utils.prompts import get_dataset
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, utils
-from cache_utils import (
+from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
 )
 #%%
