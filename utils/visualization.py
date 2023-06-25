@@ -10,8 +10,7 @@ import yaml
 import einops
 from fancy_einsum import einsum
 
-from datasets import load_dataset
-from transformers import pipeline
+
 import plotly.io as pio
 import plotly.express as px
 
@@ -22,9 +21,7 @@ import plotly.graph_objs as go
 import ipywidgets as widgets
 from IPython.display import display
 
-import transformers
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
-import transformer_lens
+
 import transformer_lens.utils as utils
 import transformer_lens.patching as patching
 from transformer_lens.hook_points import (

@@ -1,6 +1,7 @@
 # ---
 # jupyter:
 #   jupytext:
+#     cell_metadata_filter: -all
 #     custom_cell_magics: kql
 #     text_representation:
 #       extension: .py
@@ -13,20 +14,23 @@
 #     name: python3
 # ---
 
-# %% [markdown] id="CbZUo-Tev4QM"
+# %% [markdown]
 # # Initial Exploratory Analysis
 
-# %% [markdown] id="5vLV3GuDd415"
+# %% [markdown]
 # ## Setup
 
 # %%
 # !ls
 
 # %%
+# !nvidia-smi
+
+# %%
 # %cd eliciting-latent-sentiment
 
 # %%
-# !source activate circuits/bin/activate
+# #!source activate circuits/bin/activate
 
 # %%
 # !pip install git+https://github.com/neelnanda-io/TransformerLens.git
@@ -43,7 +47,7 @@ ipython = get_ipython()
 ipython.run_line_magic("load_ext", "autoreload")
 ipython.run_line_magic("autoreload", "2")
 
-# %% id="8QQvkqmWcB2v"
+# %%
 import os
 import pathlib
 from typing import List, Optional, Union
@@ -55,13 +59,9 @@ import yaml
 import einops
 from fancy_einsum import einsum
 
-from datasets import load_dataset
-#from transformers import pipeline
 
-import transformers
 import circuitsvis as cv
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
-import transformer_lens
+
 import transformer_lens.utils as utils
 from transformer_lens.hook_points import (
     HookedRootModule,
@@ -87,7 +87,9 @@ from torchtyping import TensorType as TT
 
 from path_patching import Node, IterNode, path_patch, act_patch
 
-from visualization import get_attn_head_patterns
+from utils.visualization import get_attn_head_patterns
+from utils.prompts import get_dataset
+from utils.circuit_analysis import get_logit_diff, logit_diff_denoising, logit_diff_noising
 
 # %%
 torch.set_grad_enabled(False)
@@ -143,8 +145,7 @@ def hist_p(tensor, renderer=None, **kwargs):
             fig.data[i]["name"] = names[i // 2]
     fig.show(renderer)
 
-
-# %% id="0c0JbzPpI0-D"
+# %%
 def imshow(tensor, renderer=None, xaxis="", yaxis="", **kwargs):
     px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, color_continuous_scale="RdBu", labels={"x":xaxis, "y":yaxis}, **kwargs).show(renderer)
 
@@ -159,43 +160,19 @@ def scatter(x, y, xaxis="", yaxis="", caxis="", renderer=None, **kwargs):
     y = utils.to_numpy(y)
     px.scatter(y=y, x=x, labels={"x":xaxis, "y":yaxis, "color":caxis}, **kwargs).show(renderer)
 
-
-# %%
-def get_logit_diff(logits, answer_token_indices, per_prompt=False):
-    """Gets the difference between the logits of the provided tokens (e.g., the correct and incorrect tokens in IOI)
-
-    Args:
-        logits (torch.Tensor): Logits to use.
-        answer_token_indices (torch.Tensor): Indices of the tokens to compare.
-
-    Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
-    """
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits = logits[:, -1, :]
-    left_logits = logits.gather(1, answer_token_indices[:, 0].unsqueeze(1))
-    right_logits = logits.gather(1, answer_token_indices[:, 1].unsqueeze(1))
-    if per_prompt:
-        print(left_logits - right_logits)
-
-    return (left_logits - right_logits).mean()
-
-
-
-# %% [markdown] id="y5jV1EnY0dpf"
+# %% [markdown]
 # ## Exploratory Analysis
 #
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="bjeWvBNOn2VT" outputId="dff069ed-56d5-414d-d649-2c70f073b1fc"
+# %%
 #source_model = AutoModelForCausalLM.from_pretrained("lvwerra/gpt2-imdb")
 #rlhf_model = AutoModelForCausalLM.from_pretrained("curt-tigges/gpt2-negative-movie-reviews")
 
 #hooked_source_model = HookedTransformer.from_pretrained(model_name="gpt2", hf_model=source_model)
 #model = HookedTransformer.from_pretrained(model_name="EleutherAI/pythia-410m")
 model = HookedTransformer.from_pretrained(
-    "gpt2-medium",
-    #"EleutherAI/pythia-410m",
+    #"gpt2-small",
+    "EleutherAI/pythia-1.4b",
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
@@ -208,37 +185,15 @@ model = HookedTransformer.from_pretrained(
 
 # %%
 example_prompt = """Review Text: 'I thought this movie was amazing, I loved it.'
-                    Review Sentiment: Positive
-                    Review Text: 'I thought this movie was great, I loved it.'
-                    Review Sentiment:"""
-example_answer = " Positive"
-
-utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
-
-# %%
-example_prompt = """Review Text: 'I thought this movie was lousy, I hated it.'
-                    Review Sentiment: Negative
-                    Review Text: 'I thought this movie was amazing, I loved it.'
-                    Review Sentiment:"""
-example_answer = " Positive"
-
-utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
-
-# %%
-example_prompt = """Review Text: 'I thought this movie was amazing, I loved it.'
-                    Review Sentiment: Positive
-                    Review Text: 'I thought this movie was lousy, I hated it.'
                     Review Sentiment:"""
 example_answer = " Negative"
 
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
 
 # %%
-example_prompt = """Review Text: 'I thought this movie was terrible, I hated it.'
-                    Review Sentiment: Negative
-                    Review Text: 'I thought this movie was lousy, I hated it.'
+example_prompt = """Review Text: 'I thought this movie was horrible, I hated it.'
                     Review Sentiment:"""
-example_answer = " Negative"
+example_answer = " Positive"
 
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=5)
 
@@ -246,93 +201,22 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 # ### Dataset Construction
 
 # %%
-positive_adjectives = [
-    ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
-    ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
-    ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
-    ' beautiful',' joyful',' positive',' excellent'
-    ]
-
-negative_adjectives = [
-    ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
-    ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
-    ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
-    ]
-
-#negative_adjectives = [' lousy', ' dire', ' bad', ' nasty', ' miserable', ' wretched', ' disgusting', ' ugly', ' disastrous', ' tragic']
-
-len(positive_adjectives), len(negative_adjectives)
+pos_answers = [" Positive", " amazing", " good"]
+neg_answers = [" Negative", " terrible", " bad"]
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+    model, device, 3, "classification", #pos_answers, neg_answers
+)
 
 # %%
-if model.cfg.model_name=="pythia-410m":
-    new_positive_adj = []
-    for a in positive_adjectives:
-        tkn = model.to_str_tokens(a)
-        if len(tkn)==2:
-            new_positive_adj.append(a)
-
-    positive_adjectives = new_positive_adj
-
-    new_negative_adj = []
-    for a in negative_adjectives:
-        tkn = model.to_str_tokens(a)
-        if len(tkn)==2:
-            new_negative_adj.append(a)
-
-    negative_adjectives = new_negative_adj
-
-len(positive_adjectives), len(negative_adjectives)
-
+all_prompts = all_prompts[:27]
+answer_tokens = answer_tokens[:27]
+clean_tokens = clean_tokens[:27]
+corrupted_tokens = corrupted_tokens[:27]
 
 # %%
-def get_adjective(adjective_list, index):
-    return adjective_list[index % len(adjective_list)]
-
 
 # %%
-all_prompts = []
-
-pos_prompts = [
-    f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it.' \nReview Sentiment: Positive \nReview Text: 'I thought this movie was{get_adjective(positive_adjectives, i+1)}, I loved it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-pos_prompts_alt = [
-    f"Review Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it.' \nReview Sentiment: Negative \nReview Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-neg_prompts = [
-    f"Review Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it.' \nReview Sentiment: Negative \nReview Text: 'I thought this movie was{get_adjective(negative_adjectives, i+1)}, I hated it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-neg_prompts_alt = [
-    f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it.' \nReview Sentiment: Positive \nReview Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it.'\nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-]
-# List of the token (ie an integer) corresponding to each answer, in the format (correct_token, incorrect_token)
-answer_tokens = []
-neg_token = model.to_single_token(" Negative")
-pos_token = model.to_single_token(" Positive")
-for i in range(len(pos_prompts)-1):
-
-    all_prompts.append(pos_prompts[i])
-    all_prompts.append(neg_prompts[i])
-    all_prompts.append(pos_prompts_alt[i])
-    all_prompts.append(neg_prompts_alt[i])
-    
-    answer_tokens.append((pos_token, neg_token))
-    answer_tokens.append((neg_token, pos_token))
-    answer_tokens.append((pos_token, neg_token))
-    answer_tokens.append((neg_token, pos_token))
-
-answer_tokens = torch.tensor(answer_tokens).to(device)
-
-# reduce batch size if you run out of memory
-all_prompts = all_prompts[:50]
-answer_tokens = answer_tokens[:50]
-
-
-prompts_tokens = model.to_tokens(all_prompts, prepend_bos=True)
-clean_tokens = prompts_tokens.to(device)
-
-corrupted_tokens = model.to_tokens(all_prompts[1:] + [all_prompts[0]], prepend_bos=True)
-
-clean_tokens.shape
+len(all_prompts), answer_tokens.shape, clean_tokens.shape, corrupted_tokens.shape
 
 # %%
 for i in range(len(all_prompts)):
@@ -341,54 +225,60 @@ for i in range(len(all_prompts)):
     print(get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
 
 # %%
-clean_logits, clean_cache = model.run_with_cache(clean_tokens[:50])
-clean_logit_diff = get_logit_diff(clean_logits, answer_tokens[:50], per_prompt=False)
+pos_logits, pos_cache = model.run_with_cache(clean_tokens[::2,:])
+pos_logit_diff = get_logit_diff(pos_logits, answer_tokens[::2,:])
+pos_logit_diff
+
+# %%
+neg_logits, neg_cache = model.run_with_cache(clean_tokens[1::2,:])
+neg_logit_diff = get_logit_diff(neg_logits, answer_tokens[1::2,:])
+neg_logit_diff
+
+# %%
+clean_logits, clean_cache = model.run_with_cache(clean_tokens)
+clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
 clean_logit_diff
 
 # %%
-corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens[:50])
-corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens[:50], per_prompt=False)
+corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
+corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 corrupted_logit_diff
 
+# %%
+# logit_diff_denoising = partial(
+#     logit_diff_denoising, 
+#     answer_tokens=answer_tokens, 
+#     clean_logit_diff=clean_logit_diff, 
+#     flipped_logit_diff=corrupted_logit_diff
+# )
+
+# logit_diff_noising = partial(
+#     logit_diff_noising, 
+#     answer_tokens=answer_tokens, 
+#     clean_logit_diff=clean_logit_diff, 
+#     flipped_logit_diff=corrupted_logit_diff
+# )
+
+logit_diff_denoising_tensor = partial(logit_diff_denoising, return_tensor=True)
+logit_diff_noising_tensor = partial(logit_diff_noising, return_tensor=True)
 
 # %%
-def logit_diff_denoising(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    flipped_logit_diff: float = corrupted_logit_diff,
-    clean_logit_diff: float = clean_logit_diff,
-) -> Float[Tensor, ""]:
-    '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
-    same as on flipped input, and 1 when performance is same as on clean input.
-    '''
-    patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
+answer_tokens.shape
 
-def logit_diff_noising(
-        logits: Float[Tensor, "batch seq d_vocab"],
-        clean_logit_diff: float = clean_logit_diff,
-        corrupted_logit_diff: float = corrupted_logit_diff,
-        answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    ) -> float:
-        '''
-        We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
-        and -1 when performance has been destroyed (i.e. is same as ABC dataset).
-        '''
-        patched_logit_diff = get_logit_diff(logits, answer_tokens)
-        return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
-
-
-# %% [markdown] id="TfiWnZtelFMV"
+# %% [markdown]
 # ### Direct Logit Attribution
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="bt_jzrazlMAK" outputId="39683745-1153-4a0f-bdbf-5f3be977abe3"
+# %%
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
+
+# added for multi-answer support
+answer_residual_directions = answer_residual_directions.mean(dim=1)
+
 print("Answer residual directions shape:", answer_residual_directions.shape)
 logit_diff_directions = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
 print("Logit difference directions shape:", logit_diff_directions.shape)
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="LsDE7VUGIX8l" outputId="226c2ad4-fb5b-44f4-b872-1d06eee7cbd5"
+# %%
 # cache syntax - resid_post is the residual stream at the end of the layer, -1 gets the final layer. The general syntax is [activation_name, layer_index, sub_layer_type]. 
 final_residual_stream = clean_cache["resid_post", -1]
 print("Final residual stream shape:", final_residual_stream.shape)
@@ -401,30 +291,27 @@ average_logit_diff = einsum("batch d_model, batch d_model -> ", scaled_final_tok
 print("Calculated average logit diff:", average_logit_diff.item())
 print("Original logit difference:",clean_logit_diff.item())
 
-
-# %% [markdown] id="Nb2nC45lIohT"
+# %% [markdown]
 # #### Logit Lens
 
-# %% id="DvRDK2krIrid"
+# %%
 def residual_stack_to_logit_diff(residual_stack: TT["components", "batch", "d_model"], cache: ActivationCache) -> float:
     scaled_residual_stack = clean_cache.apply_ln_to_stack(residual_stack, layer = -1, pos_slice=-1)
     return einsum("... batch d_model, batch d_model -> ...", scaled_residual_stack, logit_diff_directions)/len(all_prompts)
 
-
-# %% colab={"base_uri": "https://localhost:8080/", "height": 542} id="7vxP1pNuPMhr" outputId="616ac0ef-ddd2-4b1e-bccd-8ee3a3ebce23"
-accumulated_residual, labels = clean_cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
+# %%
+accumulated_residual, labels = clean_cache.accumulated_resid(layer=-1, incl_mid=False, pos_slice=-1, return_labels=True)
 logit_lens_logit_diffs = residual_stack_to_logit_diff(accumulated_residual, clean_cache)
-line(logit_lens_logit_diffs, x=np.arange(model.cfg.n_layers*2+1)/2, hover_name=labels, title="Logit Difference From Accumulate Residual Stream")
+line(logit_lens_logit_diffs, x=np.arange(model.cfg.n_layers*1+1)/2, hover_name=labels, title="Logit Difference From Accumulated Residual Stream")
 
-# %% [markdown] id="s60emfYIbTuT"
+# %% [markdown]
 # #### Layer Attribution
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 542} id="yGgAVYgIJi9Z" outputId="2d6b1ffe-b701-419d-a786-24f0d24d2b54"
+# %%
 per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
 per_layer_logit_diffs = residual_stack_to_logit_diff(per_layer_residual, clean_cache)
 
 line(per_layer_logit_diffs, hover_name=labels, title="Logit Difference From Each Layer")
-
 
 # %% [markdown]
 # #### Head Attribution
@@ -436,7 +323,7 @@ def imshow(tensor, renderer=None, **kwargs):
 per_head_residual, labels = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
 per_head_logit_diffs = residual_stack_to_logit_diff(per_head_residual, clean_cache)
 per_head_logit_diffs = einops.rearrange(per_head_logit_diffs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
-per_head_logit_diffs_pct = per_head_logit_diffs/clean_logit_diff
+per_head_logit_diffs_pct = per_head_logit_diffs
 imshow(per_head_logit_diffs_pct, labels={"x":"Head", "y":"Layer"}, title="Logit Difference From Each Head")
 
 # %% [markdown]
@@ -547,7 +434,7 @@ results = path_patch(
     new_input=corrupted_tokens,
     sender_nodes=IterNode('z'), # This means iterate over all heads in all layers
     receiver_nodes=Node('resid_post', 23), # This is resid_post at layer 11
-    patching_metric=logit_diff_noising,
+    patching_metric=logit_diff_noising_tensor,
     verbose=True
 )
 
@@ -562,7 +449,7 @@ imshow_p(
 )
 
 # %%
-from visualization import (
+from visualization_utils import (
     plot_attention_heads,
     scatter_attention_and_contribution
 )
@@ -573,7 +460,7 @@ import circuitsvis as cv
 plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
 
 # %%
-from visualization import get_attn_head_patterns
+from visualization_utils import get_attn_head_patterns
 
 top_k = 4
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
@@ -582,7 +469,7 @@ tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
-from visualization import scatter_attention_and_contribution_sentiment
+from visualization_utils import scatter_attention_and_contribution_sentiment
 
 from plotly.subplots import make_subplots
 
@@ -614,7 +501,6 @@ for i in range(1, 3):
         fig.update_yaxes(title_text="Dot w Sentiment Output Embed", row=i, col=j)
 
 fig.show()
-
 
 # %% [markdown]
 # #### Direct Attribute Extraction Heads
@@ -740,6 +626,7 @@ for i in range(17, results["z"].shape[0]):
 
 # %%
 
+
 # %% [markdown]
 # #### Various Attention Patterns
 
@@ -755,3 +642,6 @@ attn = torch.stack(attn_list, dim=0).mean(dim=0)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
+
+
+

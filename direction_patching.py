@@ -3,7 +3,7 @@ import einops
 import numpy as np
 from jaxtyping import Float, Int
 import plotly.express as px
-from prompt_utils import get_dataset
+from utils.prompts import get_dataset
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils

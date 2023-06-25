@@ -5,7 +5,7 @@ from jaxtyping import Float
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from prompt_utils import get_dataset
+from utils.prompts import get_dataset
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, utils
