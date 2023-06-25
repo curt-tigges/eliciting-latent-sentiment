@@ -80,7 +80,7 @@ def get_prompts(
         ]
         neutral_prompts = [
             f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very" for i in range(len(neutral_adjectives))
-
+        ]
     elif prompt_type == "classification":
         pos_prompts = [
             f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
@@ -92,7 +92,7 @@ def get_prompts(
             f"Review Text: 'I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
         ]
     else:
-        raise ValueError(f"Invalid prompt type: {prompt_type}}")
+        raise ValueError(f"Invalid prompt type: {prompt_type}")
 
     return pos_prompts, neg_prompts, neutral_prompts
 
