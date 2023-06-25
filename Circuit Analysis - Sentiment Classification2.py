@@ -24,6 +24,9 @@
 # !ls
 
 # %%
+# !nvidia-smi
+
+# %%
 # %cd eliciting-latent-sentiment
 
 # %%
@@ -86,6 +89,7 @@ from path_patching import Node, IterNode, path_patch, act_patch
 
 from utils.visualization import get_attn_head_patterns
 from utils.prompts import get_dataset
+from utils.circuit_analysis import get_logit_diff, logit_diff_denoising, logit_diff_noising
 
 # %%
 torch.set_grad_enabled(False)
@@ -156,29 +160,6 @@ def scatter(x, y, xaxis="", yaxis="", caxis="", renderer=None, **kwargs):
     y = utils.to_numpy(y)
     px.scatter(y=y, x=x, labels={"x":xaxis, "y":yaxis, "color":caxis}, **kwargs).show(renderer)
 
-# %%
-def get_logit_diff(logits, answer_token_indices, per_prompt=False):
-    """Gets the difference between the logits of the provided tokens (e.g., the correct and incorrect tokens in IOI)
-
-    Args:
-        logits (torch.Tensor): Logits to use.
-        answer_token_indices (torch.Tensor): Indices of the tokens to compare.
-
-    Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
-    """
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits = logits[:, -1, :]
-    left_logits = logits.gather(1, answer_token_indices[:, 0].unsqueeze(1))
-    right_logits = logits.gather(1, answer_token_indices[:, 1].unsqueeze(1))
-    if per_prompt:
-        print(left_logits - right_logits)
-
-    return (left_logits - right_logits).mean()
-
-
-
 # %% [markdown]
 # ## Exploratory Analysis
 #
@@ -227,7 +208,17 @@ all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
 )
 
 # %%
-from utils.circuit_analysis import get_logit_diff_multi as get_logit_diff
+all_prompts = all_prompts[:27]
+answer_tokens = answer_tokens[:27]
+clean_tokens = clean_tokens[:27]
+corrupted_tokens = corrupted_tokens[:27]
+
+# %%
+
+# %%
+len(all_prompts), answer_tokens.shape, clean_tokens.shape, corrupted_tokens.shape
+
+# %%
 for i in range(len(all_prompts)):
     logits, _ = model.run_with_cache(all_prompts[i])
     print(all_prompts[i])
@@ -254,25 +245,35 @@ corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_promp
 corrupted_logit_diff
 
 # %%
-logit_diff_denoising = partial(
-    logit_diff_denoising, 
-    answer_tokens=answer_tokens, 
-    clean_logit_diff=clean_logit_diff, 
-    flipped_logit_diff=corrupted_logit_diff
-)
+# logit_diff_denoising = partial(
+#     logit_diff_denoising, 
+#     answer_tokens=answer_tokens, 
+#     clean_logit_diff=clean_logit_diff, 
+#     flipped_logit_diff=corrupted_logit_diff
+# )
 
-logit_diff_noising = partial(
-    logit_diff_noising, 
-    answer_tokens=answer_tokens, 
-    clean_logit_diff=clean_logit_diff, 
-    flipped_logit_diff=corrupted_logit_diff
-)
+# logit_diff_noising = partial(
+#     logit_diff_noising, 
+#     answer_tokens=answer_tokens, 
+#     clean_logit_diff=clean_logit_diff, 
+#     flipped_logit_diff=corrupted_logit_diff
+# )
+
+logit_diff_denoising_tensor = partial(logit_diff_denoising, return_tensor=True)
+logit_diff_noising_tensor = partial(logit_diff_noising, return_tensor=True)
+
+# %%
+answer_tokens.shape
 
 # %% [markdown]
 # ### Direct Logit Attribution
 
 # %%
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
+
+# added for multi-answer support
+answer_residual_directions = answer_residual_directions.mean(dim=1)
+
 print("Answer residual directions shape:", answer_residual_directions.shape)
 logit_diff_directions = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
 print("Logit difference directions shape:", logit_diff_directions.shape)
@@ -322,7 +323,7 @@ def imshow(tensor, renderer=None, **kwargs):
 per_head_residual, labels = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
 per_head_logit_diffs = residual_stack_to_logit_diff(per_head_residual, clean_cache)
 per_head_logit_diffs = einops.rearrange(per_head_logit_diffs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
-per_head_logit_diffs_pct = per_head_logit_diffs/clean_logit_diff
+per_head_logit_diffs_pct = per_head_logit_diffs
 imshow(per_head_logit_diffs_pct, labels={"x":"Head", "y":"Layer"}, title="Logit Difference From Each Head")
 
 # %% [markdown]
@@ -433,7 +434,7 @@ results = path_patch(
     new_input=corrupted_tokens,
     sender_nodes=IterNode('z'), # This means iterate over all heads in all layers
     receiver_nodes=Node('resid_post', 23), # This is resid_post at layer 11
-    patching_metric=logit_diff_noising,
+    patching_metric=logit_diff_noising_tensor,
     verbose=True
 )
 
