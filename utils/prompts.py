@@ -44,7 +44,7 @@ neutral_core_adj = [
 ]
 
 pos_tokens = [" great"," amazing", " awesome", " good", " perfect"]
-neg_tokens = [" awful", " bad", " terrible", " unpleasant", " horrendous"]
+neg_tokens = [" terrible", " awful", " bad", " horrible", " disgusting"]
 neutral_tokens = [
     " OK", " mediocre", "fine", "okay", "alright", "ok", "decent",
 ]
