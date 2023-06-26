@@ -20,10 +20,16 @@ pos_adj = [
     ' beautiful'
     ]
 
+# neg_adj = [
+#     ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
+#     ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
+#     ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
+#     ]
+
 neg_adj = [
-    ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
-    ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
-    ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
+    ' dreadful',' bad',' miserable',' horrific',' terrible',
+    ' disgusting',' disastrous',' horrendous',' offensive',' wretched',
+    ' awful',' unpleasant',' horrible',' mediocre',' disappointing'
     ]
 neutral_adj = [
     ' average',' normal',' standard',' typical',' common',' ordinary',
