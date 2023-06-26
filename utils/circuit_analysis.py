@@ -8,7 +8,6 @@ from jaxtyping import Float
 from typing import Tuple
 import einops
 
-import transformer_lens.patching as patching
 from fancy_einsum import einsum
 
 import plotly.graph_objs as go
@@ -119,16 +118,16 @@ def get_logit_diff(
     return (left_logits - right_logits).mean()
 
 def get_log_probs(
-        logits: Float[Tensor, "batch seq d_vocab"],
-        answer_tokens: Float[Tensor, "batch n_pairs"],
-        per_prompt: bool = False,
-        per_completion: bool = False,
-        ) -> Float[Tensor, "batch n_pairs"]:
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs"],
+    per_prompt: bool = False,
+) -> Float[Tensor, "batch n_pairs"]:
     
     n_pairs = answer_tokens.shape[1]
     if len(logits.shape) == 3:
         # Get final logits only
         logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
+    assert len(answer_tokens.shape) == 2
     
     # convert logits to log probabilities
     log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
@@ -149,11 +148,11 @@ def get_log_probs(
 
 
 def log_prob_diff_noising(
-        logits: Float[Tensor, "batch seq d_vocab"],
-        answer_tokens: Float[Tensor, "batch n_pairs"],
-        flipped_log_prob: float,
-        clean_log_prob: float,
-        return_tensor: bool = False,
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs"],
+    flipped_log_prob: float,
+    clean_log_prob: float,
+    return_tensor: bool = False,
 ) -> Float[Tensor, ""]:
     """
     """
