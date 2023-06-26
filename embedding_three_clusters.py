@@ -398,14 +398,14 @@ print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
 print(np.linalg.norm(train_embeddings[0, :]))
 #%% # write k means line to file
-with open(f"data/km_positive_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_positive_centroid)
-with open(f"data/km_negative_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_negative_centroid)
-with open(f"data/km_neutral_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_neutral_centroid)
-with open(f"data/km_positive_negative_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_pos_neg)
+# with open(f"data/km_positive_{embedding_type.value}.npy", "wb") as f:
+#     np.save(f, km_positive_centroid)
+# with open(f"data/km_negative_{embedding_type.value}.npy", "wb") as f:
+#     np.save(f, km_negative_centroid)
+# with open(f"data/km_neutral_{embedding_type.value}.npy", "wb") as f:
+#     np.save(f, km_neutral_centroid)
+# with open(f"data/km_positive_negative_{embedding_type.value}.npy", "wb") as f:
+#     np.save(f, km_pos_neg)
 #%%
 # project adjectives onto k-means line
 train_km_projected = einops.einsum(
@@ -812,9 +812,9 @@ df = pd.DataFrame({
     "adjective": train_pca_projected,
     "kmeans": train_km_projected,
     "pca": train_pcs[:, 0],
-    "binary_label": train_pca_labels,
+    "binary_label": train_true_labels,
 })
-df.to_csv("data/negativity_scores.csv", index=False)
+# df.to_csv("data/negativity_scores.csv", index=False)
 # %%
 # ============================================================================ #
 # Histogram of dot product of embeddings and km_line
@@ -933,7 +933,7 @@ fig = px.histogram(
     data_frame=dots_df, x='dot', hover_data=['token'], marginal="rug",
     title="Histogram of dot product of embeddings and KM line on pile",
 )
-fig.write_html("data/pile_embeddings.html")
+# fig.write_html("data/pile_embeddings.html")
 fig.show()
 
 # %%
