@@ -144,6 +144,9 @@ def get_dataset(
         neutral_adjectives = remove_pythia_double_token_words(
             model, neutral_adj
         )
+        pos_tokens = remove_pythia_double_token_words(model, pos_tokens)
+        neg_tokens = remove_pythia_double_token_words(model, neg_tokens)
+        neutral_tokens = remove_pythia_double_token_words(model, neutral_tokens)
     else:
         positive_adjectives = pos_adj
         negative_adjectives = neg_adj
