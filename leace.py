@@ -1,6 +1,6 @@
 #%%
 from functools import partial
-from typing import Iterable, Optional
+from typing import Callable, Iterable, List, Optional, Tuple
 from jaxtyping import Int, Float
 import numpy as np
 import pandas as pd
@@ -14,7 +14,8 @@ from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
 )  # Hooking utilities
-from utils.prompts import get_dataset, get_logit_diff, logit_diff_denoising
+from utils.prompts import get_dataset
+from utils.circuit_analysis import get_log_probs
 import plotly.express as px
 from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
@@ -41,7 +42,16 @@ km_line = np.load('data/km_line_embed_and_mlp0.npy')
 km_line = torch.from_numpy(km_line).to(device, torch.float32)
 km_line_unit = km_line / km_line.norm()
 #%%
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
+pc0 = np.load('data/pc_0.npy')
+pc0 = torch.from_numpy(pc0).to(device, torch.float32)
+pc1 = np.load('data/pc_1.npy')
+pc1 = torch.from_numpy(pc1).to(device, torch.float32)
+pc2 = np.load('data/pc_2.npy')
+pc2 = torch.from_numpy(pc2).to(device, torch.float32)
+#%%
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+    model, device
+)
 #%%
 batch_size = clean_tokens.shape[0]
 sentiment_repeated = einops.repeat(
@@ -89,20 +99,54 @@ def embed_and_mlp0(
     resid_post = resid_mid + mlp_out
     return block0.ln2(resid_post)
 #%%
-def mean_ablate_km_component(
+def compute_mean_projection(
+    direction: Float[Tensor, "d_model"], 
+    tokens: Iterable[int] = (adjective_token, verb_token),
+) -> Float[Tensor, ""]:
+    assert torch.isclose(direction.norm(), torch.tensor(1.0))
+    clean_projections: Float[Tensor, "batch"] = einops.einsum(
+        clean_embeddings, direction, "b s d, d -> b s"
+    )
+    return clean_projections[:, tokens].mean()
+#%%
+def mean_ablate_direction(
     input: Float[Tensor, "batch pos d_model"],
+    direction: Float[Tensor, "d_model"],
     tokens: Iterable[int] = (adjective_token, verb_token),
     multiplier: float = 1.0,
 ):
-    proj = einops.einsum(input, km_line_unit, "b p d, d -> b p")
+    assert torch.isclose(direction.norm(), torch.tensor(1.0))
+    proj = einops.einsum(input, direction, "b p d, d -> b p")
+    avg = compute_mean_projection(direction, tokens)
     avg_broadcast = einops.repeat(
-        average_km_component, " -> b p", 
+        avg, " -> b p", 
         b=input.shape[0], p=input.shape[1]
     )
     proj_diff: Float[Tensor, "batch pos 1"] = (
         avg_broadcast - proj
     )[:, tokens].unsqueeze(dim=-1)
-    input[:, tokens, :] += multiplier * proj_diff * km_line_unit
+    input[:, tokens, :] += multiplier * proj_diff * direction
+    return input
+#%%
+def mean_ablate_km_component(
+    input: Float[Tensor, "batch pos d_model"],
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
+):
+    return mean_ablate_direction(
+        input, km_line_unit, tokens, multiplier
+    )
+
+#%%
+def mean_ablate_pcs(
+    input: Float[Tensor, "batch pos d_model"],
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
+    n_components: int = 3,
+):
+    for i in range(n_components):
+        pc = globals()[f'pc{i}']
+        input = mean_ablate_direction(input, pc, tokens, multiplier)
     return input
 #%%
 # ============================================================================ #
@@ -137,9 +181,6 @@ px.histogram(
     nbins=100,
     title="Histogram of km_components before intervention",
 )
-#%%
-average_km_component: Float[Tensor, ""] = X_c.mean()
-print('Average km component', average_km_component)
 #%% # Before concept erasure
 real_lr = LogisticRegression(max_iter=1000).fit(X, Y)
 print('Accuracy', real_lr.score(X, Y))
@@ -233,23 +274,24 @@ utils.test_prompt(
     top_k=top_k,
 )
 #%%
-clean_logit_diff = get_logit_diff(clean_logits, answer_tokens)
-print('clean logit diff', clean_logit_diff)
-#%%
 def ablation_metric(
     logits: Float[Tensor, "batch pos vocab"],
-) -> float:
-    zero = torch.tensor(0.0, device=device)
-    logit_diffs: Float[Tensor, "batch"] = get_logit_diff(
-        logits, answer_tokens, per_prompt=True
-    ).squeeze(1)
-    return (
-        torch.max(logit_diffs, zero).mean() / 
-        clean_logit_diff
+    answer_tokens: Int[Tensor, "batch n_pairs 2"],
+) -> Tuple[float]:
+    pos_mask = torch.arange(batch_size, device=device) % 2 == 0
+    pos_log_probs = get_log_probs(
+        logits[pos_mask, ...], answer_tokens[pos_mask, :, 0]
     ).cpu().detach().numpy()
+    neg_log_probs = get_log_probs(
+        logits[~pos_mask, ...], answer_tokens[~pos_mask, :, 0]
+    ).cpu().detach().numpy()
+    return pos_log_probs, neg_log_probs
 #%%
-#%%
-results_dict = {'base': ablation_metric(clean_logits)}
+pos_results_dict = dict()
+neg_results_dict = dict()
+pos_results_dict['base'], neg_results_dict['base'] = ablation_metric(
+    clean_logits, answer_tokens
+)
 #%%
 # base_sentiment = extract_sentiment_layer_pos(
 #     base_cache,
@@ -307,13 +349,15 @@ def linear_hook_base(
     tokens: Iterable[int] = (adjective_token, verb_token),
     layer: Optional[int] = None,
     multiplier: float = 1.0,
+    ablation: Callable = mean_ablate_km_component,
 ):
     assert 'hook_resid_post' in hook.name
     if layer is not None and hook.layer() != layer:
         return input
-    return mean_ablate_km_component(
+    return ablation(
         input, tokens=tokens, multiplier=multiplier
     )
+
     
 
 #%%
@@ -389,36 +433,36 @@ experiments = dict(
     #     tokens=np.arange(len(example_prompt)),
     # ),
 
-    # layer_0_linear_0_2 = partial(
-    #     linear_hook_base,
-    #     layer=0,
-    #     tokens=np.arange(len(example_prompt)),
-    #     multiplier=0.2,
-    # ),
-    # layer_0_linear_0_4 = partial(
-    #     linear_hook_base,
-    #     layer=0,
-    #     tokens=np.arange(len(example_prompt)),
-    #     multiplier=0.4,
-    # ),
-    # layer_0_linear_0_6 = partial(
-    #     linear_hook_base,
-    #     layer=0,
-    #     tokens=np.arange(len(example_prompt)),
-    #     multiplier=0.6,
-    # ),
-    # layer_0_linear_0_8 = partial(
-    #     linear_hook_base,
-    #     layer=0,
-    #     tokens=np.arange(len(example_prompt)),
-    #     multiplier=0.8,
-    # ),
-    # layer_0_linear_1_0 = partial(
-    #     linear_hook_base,
-    #     layer=0,
-    #     tokens=np.arange(len(example_prompt)),
-    #     multiplier=1.0,
-    # ),
+    layer_0_linear_0_2 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=0.2,
+    ),
+    layer_0_linear_0_4 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=0.4,
+    ),
+    layer_0_linear_0_6 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=0.6,
+    ),
+    layer_0_linear_0_8 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=0.8,
+    ),
+    layer_0_linear_1_0 = partial(
+        linear_hook_base,
+        layer=0,
+        tokens=np.arange(len(example_prompt)),
+        multiplier=1.0,
+    ),
     # layer_0_linear_1_2 = partial(
     #     linear_hook_base,
     #     layer=0,
@@ -463,13 +507,13 @@ for experiment_name, experiment_hook in experiments.items():
         names_filter=lambda name: name.endswith('resid_post'),
     )
     test_cache.to(device)
-    test_logit_diffs = get_logit_diff(
-        test_logits, answer_tokens, per_prompt=True
-    )
-    test_metric = ablation_metric(test_logits)
-    results_dict[experiment_name] = test_metric
+    test_metric = ablation_metric(test_logits, answer_tokens)
+    (
+        pos_results_dict[experiment_name], 
+        neg_results_dict[experiment_name]
+    ) = test_metric
     print(experiment_name, test_metric)
-    if experiment_name == 'all_layer_linear':
+    if experiment_name == 'layer_0_linear_1_0':
         utils.test_prompt(
             example_string, example_answer, model, 
             prepend_space_to_answer=False,
@@ -496,13 +540,22 @@ for experiment_name, experiment_hook in experiments.items():
     # fig.show()
 
 #%%
+results_df = pd.Series(pos_results_dict).rename('log_prob').reset_index()
+results_df['pos_neg'] = 'positive'
+results_df = results_df.append(
+    pd.Series(neg_results_dict).rename('log_prob').reset_index()
+)
+results_df['pos_neg'] = results_df['pos_neg'].fillna('negative')
+results_df.rename(columns={'index': 'experiment'}, inplace=True)
+results_df
+#%%
 px.bar(
-    pd.Series(results_dict).reset_index().rename(
-        columns={'index': 'experiment', 0: 'metric'}
-    ),
+    results_df,
     x='experiment',
-    y='metric',
-    title='Logit difference metric by experiment'
+    y='log_prob',
+    color='pos_neg',
+    title='Log prob metric by experiment',
+    barmode='group',
 )
 #%%
 
