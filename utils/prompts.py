@@ -24,6 +24,10 @@ neutral_adj = [
     ' adequate', ' alright',
 
 ]
+neutral_core_adj = [
+    ' ok', ' okay', ' OK', ' alright', ' fine', ' neutral', ' acceptable', ' fair', 
+    ' standard', ' reasonable', ' average'
+]
 
 pos_tokens = [" amazing", " good", " pleasant", " wonderful", " great"]
 neg_tokens = [" terrible", " bad", " unpleasant", " horrendous", " awful"]
@@ -182,6 +186,71 @@ def get_dataset(
     return (
         all_prompts, answer_tokens, clean_tokens, corrupted_tokens
     )
+
+def get_onesided_datasets(
+    model: HookedTransformer, 
+    device: torch.device,
+    n_answers: int = 1,
+    prompt_type: str = "simple",
+    dataset_sentiments: list = ["positive", "negative"],
+    answer_sentiment: str = "positive",
+    answers: list = None,
+):
+    '''
+    answer_tokens:
+        list of the token (ie an integer) corresponding to each answer, 
+        in the format (correct_token, incorrect_token)
+    '''
+    assert n_answers <= len(pos_tokens)
+    assert prompt_type in ["simple", "completion", "classification"]
+    
+    if "pythia" in model.cfg.model_name:
+        positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
+        negative_adjectives = remove_pythia_double_token_words(model, neg_adj)
+        neutral_adjectives = remove_pythia_double_token_words(
+            model, neutral_core_adj
+        )
+    else:
+        positive_adjectives = pos_adj
+        negative_adjectives = neg_adj
+        neutral_adjectives = neutral_core_adj
+
+    pos_prompts, neg_prompts, neutral_prompts = get_prompts(
+        prompt_type, positive_adjectives, negative_adjectives, neutral_adjectives
+    )
+    prompts_dict = {
+        "positive": model.to_tokens(pos_prompts, prepend_bos=True),
+        "negative": model.to_tokens(neg_prompts, prepend_bos=True),
+        "neutral": model.to_tokens(neutral_prompts, prepend_bos=True)
+    }
+    
+    n_prompts = min([prompts_dict[s].shape[0] for s in dataset_sentiments])
+    print(n_prompts)
+    prompt_return_dict = {
+        s:prompts_dict[s][:n_prompts] for s in dataset_sentiments
+    }
+
+    answers_dict = {
+        'positive': pos_tokens, 
+        'negative': neg_tokens, 
+        'neutral': neutral_tokens,
+    }
+
+    answers = answers or answers_dict[answer_sentiment]
+    assert len(answers) >= n_answers
+    answers = torch.tensor([int(model.to_single_token(a)) for a in answers[:n_answers]])
+    answer_list = [answers for _ in range(n_prompts)]
+    answer_tokens = torch.stack(answer_list, dim=0).to(device)
+
+    return (
+        prompt_return_dict, 
+        answer_tokens
+    )
+
+
+
+    
+    
 
 def get_logit_diff(
     logits: Float[Tensor, "batch pos vocab"],
