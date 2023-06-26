@@ -45,6 +45,8 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache
+from neel_plotly import imshow as imshow_n
+from transformer_lens.patching import get_act_patch_attn_head_out_by_pos
 
 from torch import Tensor
 from tqdm.notebook import tqdm
@@ -65,7 +67,10 @@ from torchtyping import TensorType as TT
 from path_patching import Node, IterNode, path_patch, act_patch
 from neel_plotly import imshow as imshow_n
 
-from utils.visualization import get_attn_head_patterns
+from utils.visualization import get_attn_head_patterns, plot_attention_heads, scatter_attention_and_contribution_simple
+
+
+import circuitsvis as cv
 from utils.prompts import get_dataset
 from utils.circuit_analysis import get_logit_diff, logit_diff_denoising, logit_diff_noising
 
@@ -140,11 +145,7 @@ def scatter(x, y, xaxis="", yaxis="", caxis="", renderer=None, **kwargs):
     px.scatter(y=y, x=x, labels={"x":xaxis, "y":yaxis, "color":caxis}, **kwargs).show(renderer)
 
 
-# %% [markdown] id="y5jV1EnY0dpf"
-# ## Exploratory Analysis
-#
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="bjeWvBNOn2VT" outputId="dff069ed-56d5-414d-d649-2c70f073b1fc"
+# %%
 #source_model = AutoModelForCausalLM.from_pretrained("lvwerra/gpt2-imdb")
 #rlhf_model = AutoModelForCausalLM.from_pretrained("curt-tigges/gpt2-negative-movie-reviews")
 
@@ -158,6 +159,10 @@ model = HookedTransformer.from_pretrained(
     refactor_factored_attn_matrices=True,
 )
 
+# %% [markdown] id="y5jV1EnY0dpf"
+# ## Positive Sentiment Analysis
+#
+
 # %% [markdown]
 # ### Initial Examination
 
@@ -170,6 +175,7 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 
 # %%
 example_prompt = "I thought this movie was passable, I watched it. \nConclusion: This movie is"
+example_prompt = model.to_string(pos_prompts[0][1:])
 example_answer = " average"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
@@ -178,37 +184,72 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 
 # %%
 from utils.prompts import get_onesided_datasets
-prompts, answer_tokens, answer_list = get_onesided_datasets(
+prompt_tokens, answer_tokens = get_onesided_datasets(
     model,
     device=device,
-    n_answers=5,
+    n_answers=1,
     prompt_type="simple",
-    dataset_sentiments=["positive", "neutral"],
+    dataset_sentiments=["positive", "neutral", "negative"],
     answer_sentiment="positive"
 )
 
 # %%
-print("Prompts:")
-print(prompts["positive"].shape)
-print(prompts["neutral"].shape)
-print(answer_tokens.shape)
+pos_prompts = prompt_tokens["positive"]
+neut_prompts = prompt_tokens["neutral"]
+neg_prompts = prompt_tokens["negative"]
+
+control_prompts = prompt_tokens["neutral"]
+sentiment_prompts = prompt_tokens["positive"]
 
 
 # %%
-answer_tokens
+#from utils.circuit_analysis import get_log_probs
+sentiment_logits, sentiment_cache = model.run_with_cache(pos_prompts)
+sentiment_log_probs = get_log_probs(sentiment_logits, answer_tokens)
+sentiment_log_probs
 
 # %%
-#pos_answers = [" Positive", " amazing", " good"]
-#neg_answers = [" Negative", " terrible", " bad"]
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
-    model, device, 1, comparison=("positive", "neutral")
-)
+control_logits, control_cache = model.run_with_cache(neut_prompts)
+control_log_probs = get_log_probs(control_logits, answer_tokens)
+control_log_probs
 
 # %%
-len(all_prompts), answer_tokens.shape, clean_tokens.shape, corrupted_tokens.shape
+from utils.circuit_analysis import get_log_probs
 
-# %%
-answer_tokens
+def log_prob_denoising(
+        logits: Float[Tensor, "batch seq d_vocab"],
+        answer_tokens: Float[Tensor, "batch n_pairs"] = answer_tokens,
+        flipped_log_prob: float = control_log_probs,
+        clean_log_prob: float = sentiment_log_probs,
+        return_tensor: bool = False,
+) -> Float[Tensor, ""]:
+    """
+    """
+    log_prob = get_log_probs(logits, answer_tokens)
+    ld = ((log_prob - flipped_log_prob) / (clean_log_prob  - flipped_log_prob))
+    if return_tensor:
+        return ld
+    else:
+        return ld.item()
+    
+def log_prob_noising(
+        logits: Float[Tensor, "batch seq d_vocab"],
+        answer_tokens: Float[Tensor, "batch n_pairs"] = answer_tokens,
+        flipped_log_prob: float = control_log_probs,
+        clean_log_prob: float = sentiment_log_probs,
+        return_tensor: bool = False,
+) -> Float[Tensor, ""]:
+    """
+    """
+    log_prob = get_log_probs(logits, answer_tokens)
+    ld = ((log_prob - clean_log_prob) / (clean_log_prob  - flipped_log_prob))
+    if return_tensor:
+        return ld
+    else:
+        return ld.item()
+    
+log_prob_denoising_tensor = partial(log_prob_denoising, return_tensor=True)
+log_prob_noising_tensor = partial(log_prob_noising, return_tensor=True)
 
 # %%
 for i in range(len(all_prompts)):
@@ -216,53 +257,14 @@ for i in range(len(all_prompts)):
     print(all_prompts[i])
     print(get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
 
-# %%
-clean_logits, clean_cache = model.run_with_cache(clean_tokens)
-clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
-clean_logit_diff
-
-# %%
-corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
-corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
-corrupted_logit_diff
-
-
-# %%
-def logit_diff_denoising(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    flipped_logit_diff: float = corrupted_logit_diff,
-    clean_logit_diff: float = clean_logit_diff,
-) -> Float[Tensor, ""]:
-    '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
-    same as on flipped input, and 1 when performance is same as on clean input.
-    '''
-    patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
-
-def logit_diff_noising(
-        logits: Float[Tensor, "batch seq d_vocab"],
-        clean_logit_diff: float = clean_logit_diff,
-        corrupted_logit_diff: float = corrupted_logit_diff,
-        answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    ) -> float:
-        '''
-        We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
-        and -1 when performance has been destroyed (i.e. is same as ABC dataset).
-        '''
-        patched_logit_diff = get_logit_diff(logits, answer_tokens)
-        return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
-
-
 # %% [markdown] id="TfiWnZtelFMV"
 # ### Direct Logit Attribution
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="bt_jzrazlMAK" outputId="39683745-1153-4a0f-bdbf-5f3be977abe3"
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
 print("Answer residual directions shape:", answer_residual_directions.shape)
-logit_diff_directions = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
-print("Logit difference directions shape:", logit_diff_directions.shape)
+#logit_diff_directions = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
+#print("Logit difference directions shape:", logit_diff_directions.shape)
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="LsDE7VUGIX8l" outputId="226c2ad4-fb5b-44f4-b872-1d06eee7cbd5"
 # cache syntax - resid_post is the residual stream at the end of the layer, -1 gets the final layer. The general syntax is [activation_name, layer_index, sub_layer_type]. 
@@ -324,10 +326,10 @@ imshow(per_head_logit_diffs_pct, labels={"x":"Head", "y":"Layer"}, title="Logit 
 # %%
 results = act_patch(
     model=model,
-    orig_input=corrupted_tokens,
-    new_cache=clean_cache,
+    orig_input=neut_prompts,
+    new_cache=sentiment_cache,
     patching_nodes=IterNode("z"), # iterating over all heads' output in all layers
-    patching_metric=logit_diff_denoising,
+    patching_metric=log_prob_denoising,
     verbose=True,
 )
 
@@ -350,10 +352,10 @@ imshow_p(
 
 results = act_patch(
     model=model,
-    orig_input=corrupted_tokens,
-    new_cache=clean_cache,
+    orig_input=neut_prompts,
+    new_cache=sentiment_cache,
     patching_nodes=IterNode(["z", "q", "k", "v", "pattern"]),
-    patching_metric=logit_diff_denoising,
+    patching_metric=log_prob_denoising,
     verbose=True,
 )
 
@@ -381,16 +383,16 @@ imshow_p(
 
 results = act_patch(
     model=model,
-    orig_input=corrupted_tokens,
-    new_cache=clean_cache,
+    orig_input=control_prompts,
+    new_cache=sentiment_cache,
     patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
-    patching_metric=logit_diff_denoising,
+    patching_metric=log_prob_denoising,
     verbose=True,
 )
 
 # %%
 assert results.keys() == {"resid_pre", "attn_out", "mlp_out"}
-labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
+labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(pos_prompts[0]))]
 imshow_p(
     torch.stack([r.T for r in results.values()]) * 100, # we transpose so layer is on the y-axis
     facet_col=0,
@@ -402,10 +404,33 @@ imshow_p(
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=1300,
-    zmin=-50,
-    zmax=50,
     margin={"r": 100, "l": 100}
 )
+
+# %%
+results = act_patch(
+    model=model,
+    orig_input=control_prompts,
+    new_cache=sentiment_cache,
+    patching_nodes=IterNode("z", seq_pos="each"),
+    patching_metric=log_prob_denoising,
+    verbose=True,
+)
+
+# %%
+results["z"].shape
+
+# %%
+ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
+attn_head_out_act_patch_results = einops.rearrange(results["z"], "pos layer head -> (layer head) pos")
+imshow_n(attn_head_out_act_patch_results, 
+        yaxis="Head Label", 
+        xaxis="Pos", 
+        x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(pos_prompts[0]))],
+        y=ALL_HEAD_LABELS,
+        height=800,
+        width=800,
+        title="attn_head_out Activation Patching By Pos")
 
 # %% [markdown]
 # ### Circuit Analysis With Patch Patching & Attn Visualization
@@ -413,60 +438,47 @@ imshow_p(
 # %% [markdown]
 # #### Heads Influencing Logit Diff
 
-# %% [markdown]
-#
-
 # %%
 results = path_patch(
     model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
+    orig_input=sentiment_prompts,
+    new_input=control_prompts,
     sender_nodes=IterNode('z'), # This means iterate over all heads in all layers
     receiver_nodes=Node('resid_post', 11), # This is resid_post at layer 11
-    patching_metric=logit_diff_noising,
+    patching_metric=log_prob_noising,
     verbose=True
 )
 
 # %%
 imshow_p(
-    results['z'],
+    results['z'] * 100,
     title="Direct effect on logit diff (patch from head output -> final resid)",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+    coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=600,
     margin={"r": 100, "l": 100}
 )
 
 # %%
-from visualization import (
-    plot_attention_heads,
-    scatter_attention_and_contribution
-)
-
-import circuitsvis as cv
-
-# %%
 plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
 
 # %%
-from visualization import get_attn_head_patterns
-
 top_k = 5
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
 heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
-tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
+tokens, attn, names = get_attn_head_patterns(model, sentiment_prompts[0], heads)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
-from visualization import scatter_attention_and_contribution_sentiment
 
 from plotly.subplots import make_subplots
 
 # Get the figures
-fig1 = scatter_attention_and_contribution_sentiment(model, (7, 1), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig2 = scatter_attention_and_contribution_sentiment(model, (9, 2), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig3 = scatter_attention_and_contribution_sentiment(model, (10, 1), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig4 = scatter_attention_and_contribution_sentiment(model, (10, 4), all_prompts, [6 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
+fig1 = scatter_attention_and_contribution_simple(model, (7, 1), sentiment_prompts, [6 for _ in range(len(sentiment_prompts))], answer_residual_directions, return_fig=True)
+fig2 = scatter_attention_and_contribution_simple(model, (9, 2), sentiment_prompts, [6 for _ in range(len(sentiment_prompts))], answer_residual_directions, return_fig=True)
+fig3 = scatter_attention_and_contribution_simple(model, (10, 1), sentiment_prompts, [6 for _ in range(len(sentiment_prompts))], answer_residual_directions, return_fig=True)
+fig4 = scatter_attention_and_contribution_simple(model, (10, 4), sentiment_prompts, [6 for _ in range(len(sentiment_prompts))], answer_residual_directions, return_fig=True)
 
 # Create subplot
 fig = make_subplots(rows=2, cols=2, subplot_titles=("Head 7.1", "Head 9.2", "Head 10.1", "Head 10.4"))
@@ -499,22 +511,22 @@ fig.show()
 # ##### Overall
 
 # %%
-DAE_HEADS = [(7, 1), (10, 1), (10, 4), (11, 9)]
+DAE_HEADS = [(7, 1), (9, 2), (9, 1), (10, 4), (11, 9), (10, 11)]
 
 results = path_patch(
     model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
+    orig_input=sentiment_prompts,
+    new_input=control_prompts,
     sender_nodes=IterNode("z"),
     receiver_nodes=[Node("v", layer, head=head) for layer, head in DAE_HEADS],
-    patching_metric=logit_diff_noising,
+    patching_metric=log_prob_noising,
     verbose=True,
 )
 
 # %%
 imshow_p(
         results["z"][:10] * 100,
-        title=f"Direct effect on Sentiment Attenders' values)",
+        title=f"Direct effect on DAE Heads' values)",
         labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
         border=True,
@@ -528,25 +540,27 @@ imshow_p(
 # %%
 results = path_patch(
     model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
+    orig_input=sentiment_prompts,
+    new_input=control_prompts,
     sender_nodes=IterNode("z", seq_pos="each"),
     receiver_nodes=[Node("v", layer, head=head) for layer, head in DAE_HEADS],
-    patching_metric=logit_diff_noising,
+    patching_metric=log_prob_noising,
     verbose=True,
 )
 
 # %%
-for i in range(10, results["z"].shape[0]):
-    imshow_p(
-        results["z"][i][:10] * 100,
-        title=f"Direct effect on Sentiment Attenders' values from position {i} ({tokens[i]})",
-        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        border=True,
-        width=700,
-        margin={"r": 100, "l": 100}
-    )
+attn_head_pos_results = einops.rearrange(results['z'], "pos layer head -> (layer head) pos")
+ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
+imshow_n(attn_head_pos_results, 
+        yaxis="Head Label", 
+        xaxis="Pos", 
+        x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(sentiment_prompts[0]))],
+        y=ALL_HEAD_LABELS,
+        height=800,
+        width=800,
+        #zmin=-0.1,
+        #zmax=0.1,
+        title="attn_head_out Path Patching for DAE Heads By Pos")
 
 # %%
 plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.1])
@@ -565,15 +579,15 @@ cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names
 # ##### Overall
 
 # %%
-IAE_HEADS = [(8, 5), (9, 2), (9, 10)]
+IAE_HEADS = [(9, 2)]
 
 results = path_patch(
     model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
+    orig_input=sentiment_prompts,
+    new_input=control_prompts,
     sender_nodes=IterNode("z", seq_pos=17),
     receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
-    patching_metric=logit_diff_noising,
+    patching_metric=log_prob_noising,
     verbose=True,
 )
 
@@ -588,33 +602,43 @@ imshow_p(
         margin={"r": 100, "l": 100}
     )
 
+# %%
+plot_attention_heads(-results['z'].cuda(), top_n=5, range_x=[0, 0.1])
+
+# %%
+top_k = 2
+top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
+heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
+tokens, attn, names = get_attn_head_patterns(model, sentiment_prompts[0], heads)
+cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
+
 # %% [markdown]
 # ##### By Position
 
 # %%
 results = path_patch(
     model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
+    orig_input=sentiment_prompts,
+    new_input=control_prompts,
     sender_nodes=IterNode("z", seq_pos="each"),
     receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
-    patching_metric=logit_diff_noising,
+    patching_metric=log_prob_noising,
     verbose=True,
 )
 
 # %%
-for i in range(17, results["z"].shape[0]):
-    imshow_p(
-        results["z"][i][:10] * 100,
-        title=f"Direct effect on Intermediate AE Heads' values from position {i} ({tokens[i]})",
-        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        border=True,
-        width=700,
-        margin={"r": 100, "l": 100}
-    )
-
-# %%
+attn_head_pos_results = einops.rearrange(results['z'], "pos layer head -> (layer head) pos")
+ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
+imshow_n(attn_head_pos_results * 100, 
+        yaxis="Head Label", 
+        xaxis="Pos", 
+        x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(sentiment_prompts[0]))],
+        y=ALL_HEAD_LABELS,
+        height=800,
+        width=800,
+        #zmin=-0.1,
+        #zmax=0.1,
+        title="attn_head_out Path Patching for IAE Heads By Pos")
 
 # %% [markdown]
 # #### Various Attention Patterns
