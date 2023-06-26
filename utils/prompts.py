@@ -5,11 +5,19 @@ from jaxtyping import Float
 from typing import Tuple
 import einops
 
+# deprecated for now--those with the weakest positive response are eliminated
+# pos_adj = [
+#     ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
+#     ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
+#     ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
+#     ' beautiful',' joyful',' positive',#' excellent'
+#     ]
+
 pos_adj = [
-    ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
+    ' perfect', ' fantastic',' marvelous',' good',' remarkable',' wonderful',
     ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
-    ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
-    ' beautiful',' joyful',' positive',#' excellent'
+    ' amazing',' lovely',' brilliant',' terrific',' superb',' spectacular',' great',
+    ' beautiful'
     ]
 
 neg_adj = [
@@ -29,8 +37,8 @@ neutral_core_adj = [
     ' standard', ' reasonable', ' average'
 ]
 
-pos_tokens = [" amazing", " good", " pleasant", " wonderful", " great"]
-neg_tokens = [" terrible", " bad", " unpleasant", " horrendous", " awful"]
+pos_tokens = [" great"," amazing", " awesome", " good", " perfect"]
+neg_tokens = [" awful", " bad", " terrible", " unpleasant", " horrendous"]
 neutral_tokens = [
     " OK", " mediocre", "fine", "okay", "alright", "ok", "decent",
 ]
