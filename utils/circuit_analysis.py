@@ -146,15 +146,6 @@ def get_log_probs(
         return answer_log_probs
     else:
         return answer_log_probs.mean()
-    
-def get_percent_change_in_log_probs(
-        original_log_prob: Float[Tensor],
-        patched_log_prob: Float[Tensor],
-        ) -> Float[Tensor]:
-    """
-    Gets the percent change in log probabilities between the original and patched log probabilities.
-    """
-    return (patched_log_prob - original_log_prob) / original_log_prob
 
 
 def log_prob_diff_noising(
