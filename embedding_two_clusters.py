@@ -372,6 +372,23 @@ train_pca_labels: Int[np.ndarray, "batch"] = kmeans.labels_
 test_pca_labels = kmeans.predict(test_pcs)
 verb_pca_labels = kmeans.predict(verb_pcs)
 pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
+#%% # bar of % variance explained by each component
+fig = px.bar(
+    pca.explained_variance_ratio_, 
+    title="% variance explained by PCA", 
+    labels={'index': 'component', 'value': '% variance'},
+)
+fig.update_layout(showlegend=False, title_x=0.5)
+fig.show()
+#%% # similarity of PCs and k-means line
+for comp in range(pca.n_components_):
+    # PCA components should already be normalised, but just in case
+    comp_unit = pca.components_[comp, :] / np.linalg.norm(pca.components_[comp, :])
+    with open(f'data/pc_{comp}.npy', 'wb') as f:
+        np.save(f, comp_unit)
+    print(
+        f"Component {comp}: {np.dot(comp_unit, km_line_normalised)}"
+    )
 #%%
 pca_first_cluster, pca_second_cluster = split_by_label(
     train_adjectives, train_pca_labels
