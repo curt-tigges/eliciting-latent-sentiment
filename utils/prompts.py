@@ -239,7 +239,6 @@ def get_onesided_datasets(
     }
     
     n_prompts = min([prompts_dict[s].shape[0] for s in dataset_sentiments])
-    print(n_prompts)
     prompt_return_dict = {
         s:prompts_dict[s][:n_prompts] for s in dataset_sentiments
     }
