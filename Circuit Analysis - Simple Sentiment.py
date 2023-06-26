@@ -13,7 +13,7 @@
 # ---
 
 # %% [markdown] id="CbZUo-Tev4QM"
-# # Initial Exploratory Analysis
+# # Sentiment Analysis for GPT-2
 
 # %% [markdown] id="5vLV3GuDd415"
 # ## Setup
@@ -36,13 +36,9 @@ import yaml
 import einops
 from fancy_einsum import einsum
 
-from datasets import load_dataset
-#from transformers import pipeline
 
-import transformers
 import circuitsvis as cv
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
-import transformer_lens
+
 import transformer_lens.utils as utils
 from transformer_lens.hook_points import (
     HookedRootModule,
@@ -67,8 +63,11 @@ from functools import partial
 from torchtyping import TensorType as TT
 
 from path_patching import Node, IterNode, path_patch, act_patch
+from neel_plotly import imshow as imshow_n
 
-from visualization import get_attn_head_patterns
+from utils.visualization import get_attn_head_patterns
+from utils.prompts import get_dataset
+from utils.circuit_analysis import get_logit_diff, logit_diff_denoising, logit_diff_noising
 
 # %%
 torch.set_grad_enabled(False)
@@ -141,29 +140,6 @@ def scatter(x, y, xaxis="", yaxis="", caxis="", renderer=None, **kwargs):
     px.scatter(y=y, x=x, labels={"x":xaxis, "y":yaxis, "color":caxis}, **kwargs).show(renderer)
 
 
-# %%
-def get_logit_diff(logits, answer_token_indices, per_prompt=False):
-    """Gets the difference between the logits of the provided tokens (e.g., the correct and incorrect tokens in IOI)
-
-    Args:
-        logits (torch.Tensor): Logits to use.
-        answer_token_indices (torch.Tensor): Indices of the tokens to compare.
-
-    Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
-    """
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits = logits[:, -1, :]
-    left_logits = logits.gather(1, answer_token_indices[:, 0].unsqueeze(1))
-    right_logits = logits.gather(1, answer_token_indices[:, 1].unsqueeze(1))
-    if per_prompt:
-        print(left_logits - right_logits)
-
-    return (left_logits - right_logits).mean()
-
-
-
 # %% [markdown] id="y5jV1EnY0dpf"
 # ## Exploratory Analysis
 #
@@ -193,68 +169,46 @@ example_answer = " terrible"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %%
-example_prompt = "I thought this movie was amazing, I loved it. \nConclusion: This movie is"
-example_answer = " amazing"
+example_prompt = "I thought this movie was passable, I watched it. \nConclusion: This movie is"
+example_answer = " average"
 utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=10)
 
 # %% [markdown]
 # ### Dataset Construction
 
 # %%
-positive_adjectives = [
-    ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
-    ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
-    ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
-    ' beautiful',' joyful',' positive',' excellent'
-    ]
+from utils.prompts import get_onesided_datasets
+prompts, answer_tokens, answer_list = get_onesided_datasets(
+    model,
+    device=device,
+    n_answers=5,
+    prompt_type="simple",
+    dataset_sentiments=["positive", "neutral"],
+    answer_sentiment="positive"
+)
 
-negative_adjectives = [
-    ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
-    ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
-    ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
-    ]
-
-#negative_adjectives = [' lousy', ' dire', ' bad', ' nasty', ' miserable', ' wretched', ' disgusting', ' ugly', ' disastrous', ' tragic']
-
-len(positive_adjectives), len(negative_adjectives)
+# %%
+print("Prompts:")
+print(prompts["positive"].shape)
+print(prompts["neutral"].shape)
+print(answer_tokens.shape)
 
 
 # %%
-all_prompts = []
+answer_tokens
 
-pos_prompts = [
-    f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives)-1)
-]
-neg_prompts = [
-    f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives)-1)
-]
-# List of the token (ie an integer) corresponding to each answer, in the format (correct_token, incorrect_token)
-answer_tokens = []
-for i in range(len(pos_prompts)-1):
+# %%
+#pos_answers = [" Positive", " amazing", " good"]
+#neg_answers = [" Negative", " terrible", " bad"]
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+    model, device, 1, comparison=("positive", "neutral")
+)
 
-    all_prompts.append(pos_prompts[i])
-    all_prompts.append(neg_prompts[i])
-    
-    answer_tokens.append(
-        (
-            model.to_single_token(" amazing"),
-            model.to_single_token(" terrible"),
-        )
-    )
+# %%
+len(all_prompts), answer_tokens.shape, clean_tokens.shape, corrupted_tokens.shape
 
-    answer_tokens.append(
-        (
-            model.to_single_token(" terrible"),
-            model.to_single_token(" amazing"),
-        )
-    )
-
-answer_tokens = torch.tensor(answer_tokens).to(device)
-
-prompts_tokens = model.to_tokens(all_prompts, prepend_bos=True)
-clean_tokens = prompts_tokens.to(device)
-
-corrupted_tokens = model.to_tokens(all_prompts[1:] + [all_prompts[0]], prepend_bos=True)
+# %%
+answer_tokens
 
 # %%
 for i in range(len(all_prompts)):
