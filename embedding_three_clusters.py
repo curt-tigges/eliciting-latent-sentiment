@@ -32,17 +32,20 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
+from utils.store import store_array
 # ============================================================================ #
 # model loading
 
 #%%
+MODEL_NAME = 'gpt2-small'
 model = HookedTransformer.from_pretrained(
-    "gpt2-small",
+    MODEL_NAME,
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
     # refactor_factored_attn_matrices=True,
 )
+model.name = MODEL_NAME
 #%%
 # ============================================================================ #
 # Data loading
@@ -397,15 +400,11 @@ km_pos_neg_normalised: Float[
 print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
 print(np.linalg.norm(train_embeddings[0, :]))
-#%% # write k means line to file
-# with open(f"data/km_positive_{embedding_type.value}.npy", "wb") as f:
-#     np.save(f, km_positive_centroid)
-# with open(f"data/km_negative_{embedding_type.value}.npy", "wb") as f:
-#     np.save(f, km_negative_centroid)
-# with open(f"data/km_neutral_{embedding_type.value}.npy", "wb") as f:
-#     np.save(f, km_neutral_centroid)
-# with open(f"data/km_positive_negative_{embedding_type.value}.npy", "wb") as f:
-#     np.save(f, km_pos_neg)
+#%%
+store_array(km_positive_centroid, f"km_3c_positive_centroid_{embedding_type.value}.npy", model)
+store_array(km_negative_centroid, f"km_3c_negative_centroid_{embedding_type.value}.npy", model)
+store_array(km_neutral_centroid, f"km_3c_neutral_centroid_{embedding_type.value}.npy", model)
+store_array(km_pos_neg, f"km_3c_pos_neg_{embedding_type.value}.npy", model)
 #%%
 # project adjectives onto k-means line
 train_km_projected = einops.einsum(
