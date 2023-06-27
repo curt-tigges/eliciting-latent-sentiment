@@ -77,7 +77,7 @@ def get_prompts(
     negative_adjectives: list = neg_adj,
     neutral_adjectives: list = neutral_adj,
 ) -> Tuple[list, list]:
-    assert prompt_type in ["simple", "completion", "classification"]
+    assert prompt_type in ["simple", "completion", "completion_2", "classification"]
     if prompt_type == "simple":
         pos_prompts = [
             f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives))
@@ -146,7 +146,6 @@ def get_dataset(
         in the format (correct_token, incorrect_token)
     '''
     assert n_pairs <= len(pos_tokens)
-    assert prompt_type in ["simple", "completion", "completion_2", "classification"]
     
     if "pythia" in model.cfg.model_name:
         positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
