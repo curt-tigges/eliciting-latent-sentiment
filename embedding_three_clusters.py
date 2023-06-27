@@ -32,7 +32,7 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import store_array
+from utils.store import save_array
 # ============================================================================ #
 # model loading
 
@@ -401,10 +401,10 @@ print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
 print(np.linalg.norm(train_embeddings[0, :]))
 #%%
-store_array(km_positive_centroid, f"km_3c_positive_centroid_{embedding_type.value}.npy", model)
-store_array(km_negative_centroid, f"km_3c_negative_centroid_{embedding_type.value}.npy", model)
-store_array(km_neutral_centroid, f"km_3c_neutral_centroid_{embedding_type.value}.npy", model)
-store_array(km_pos_neg, f"km_3c_pos_neg_{embedding_type.value}.npy", model)
+save_array(km_positive_centroid, f"km_3c_positive_centroid_{embedding_type.value}.npy", model)
+save_array(km_negative_centroid, f"km_3c_negative_centroid_{embedding_type.value}.npy", model)
+save_array(km_neutral_centroid, f"km_3c_neutral_centroid_{embedding_type.value}.npy", model)
+save_array(km_pos_neg, f"km_3c_pos_neg_{embedding_type.value}.npy", model)
 #%%
 # project adjectives onto k-means line
 train_km_projected = einops.einsum(
