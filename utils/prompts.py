@@ -34,7 +34,7 @@ neg_adj = [
 neutral_adj = [
     ' average',' normal',' standard',' typical',' common',' ordinary',
     ' regular',' usual',' familiar',' generic',' conventional',
-    ' fine', ' okay', ' ok', ' decent', ' passable', ' fair', ' satisfactory', 
+    ' fine', ' okay', ' ok', ' decent', ' fair', ' satisfactory', 
     ' adequate', ' alright',
 
 ]
@@ -209,6 +209,9 @@ def get_onesided_datasets(
     dataset_sentiments: list = ["positive", "negative"],
     answer_sentiment: str = "positive",
     answers: list = None,
+    positive_adjectives: list = pos_adj, 
+    negative_adjectives: list = neg_adj,
+    neutral_adjectives: list = neutral_core_adj,
 ):
     '''
     answer_tokens:
@@ -219,15 +222,15 @@ def get_onesided_datasets(
     assert prompt_type in ["simple", "completion", "classification"]
     
     if "pythia" in model.cfg.model_name:
-        positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
-        negative_adjectives = remove_pythia_double_token_words(model, neg_adj)
+        positive_adjectives = remove_pythia_double_token_words(
+            model, positive_adjectives
+        )
+        negative_adjectives = remove_pythia_double_token_words(
+            model, negative_adjectives
+        )
         neutral_adjectives = remove_pythia_double_token_words(
             model, neutral_core_adj
         )
-    else:
-        positive_adjectives = pos_adj
-        negative_adjectives = neg_adj
-        neutral_adjectives = neutral_core_adj
 
     pos_prompts, neg_prompts, neutral_prompts = get_prompts(
         prompt_type, positive_adjectives, negative_adjectives, neutral_adjectives
@@ -237,6 +240,8 @@ def get_onesided_datasets(
         "negative": model.to_tokens(neg_prompts, prepend_bos=True),
         "neutral": model.to_tokens(neutral_prompts, prepend_bos=True)
     }
+    for _, prompt_v in prompts_dict.items():
+        assert prompt_v.shape == prompts_dict["positive"].shape
     
     n_prompts = min([prompts_dict[s].shape[0] for s in dataset_sentiments])
     prompt_return_dict = {

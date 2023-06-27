@@ -49,6 +49,10 @@ pc1 = torch.from_numpy(pc1).to(device, torch.float32)
 pc2 = np.load('data/pc_2.npy')
 pc2 = torch.from_numpy(pc2).to(device, torch.float32)
 #%%
+neg_log_prob_grad = np.load('data/derivative_log_prob.npy')
+neg_log_prob_grad = torch.from_numpy(neg_log_prob_grad).to(device, torch.float32)
+grad_unit = neg_log_prob_grad / neg_log_prob_grad.norm()
+#%%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
     model, device
 )
@@ -148,6 +152,16 @@ def mean_ablate_pcs(
         pc = globals()[f'pc{i}']
         input = mean_ablate_direction(input, pc, tokens, multiplier)
     return input
+#%%
+#%%
+def mean_ablate_gradient_direction(
+    input: Float[Tensor, "batch pos d_model"],
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
+):
+    return mean_ablate_direction(
+        input, grad_unit, tokens, multiplier
+    )
 #%%
 # ============================================================================ #
 # Fit LEACE
@@ -349,7 +363,7 @@ def linear_hook_base(
     tokens: Iterable[int] = (adjective_token, verb_token),
     layer: Optional[int] = None,
     multiplier: float = 1.0,
-    ablation: Callable = mean_ablate_km_component,
+    ablation: Callable = mean_ablate_gradient_direction,
 ):
     assert 'hook_resid_post' in hook.name
     if layer is not None and hook.layer() != layer:

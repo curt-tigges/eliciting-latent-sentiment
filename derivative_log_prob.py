@@ -27,12 +27,66 @@ model = HookedTransformer.from_pretrained(
 )
 model.requires_grad_ = False
 #%%
+pos_adj = [
+    ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
+    ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
+    ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
+    ' beautiful',' joyful',' positive',' excellent',
+    ' breathtaking', ' stunning', ' impressive', ' admirable', ' phenomenal', 
+    ' radiant', ' sublime', ' glorious', ' magical', ' sensational', ' pleasing', ' movie',
+     
+]
+neg_adj = [
+    ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
+    ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
+    ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate',
+    ' foul', ' vile', ' appalling', ' rotten', ' grim', ' dismal',
+    ' deficient',
+    ' disastrous',
+    ' dismal',
+    ' dreadful',
+    ' hateful',
+    ' hideous',
+    ' inadequate',
+    ' inferior',
+    ' insufficient',
+    ' lousy',
+    ' miserable',
+    ' poor',
+    ' shameful',
+    ' sorry',
+    ' tragic',
+    ' troublesome',
+    ' unbearable',
+    ' uncomfortable',
+    ' unfavorable',
+    ' unfortunate',
+    ' unlucky',
+    ' unpleasant',
+    ' unworthy',
+    ' wretched'
+    
+]
+neutral_adj = [
+    ' average',' normal',' standard',' typical',' common',' ordinary',
+    ' regular',' usual',' familiar',' generic',' conventional',
+    ' fine', ' okay', ' ok', ' decent', ' fair', ' satisfactory', 
+    ' adequate', ' alright',
+
+]
+
+for adj in pos_adj + neg_adj + neutral_adj:
+    model.to_single_token(adj)
+#%%
 prompt_return_dict, answer_tokens = get_onesided_datasets(
     model, 
     device, 
     answer_sentiment='negative',
     dataset_sentiments=['positive', 'negative', 'neutral'],
     n_answers=5,
+    positive_adjectives=pos_adj,
+    negative_adjectives=neg_adj,
+    neutral_adjectives=neutral_adj,
 )
 orig_tokens = prompt_return_dict['positive']
 neutral_tokens = prompt_return_dict['neutral']
