@@ -13,6 +13,7 @@ from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos,
     residual_flip_dir_by_pos
 )
+from utils.store import load_array
 #%%
 torch.set_grad_enabled(False)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -25,20 +26,20 @@ model = HookedTransformer.from_pretrained(
 )
 model.cfg.use_attn_results = True
 # %%
-sentiment_dir: Float[np.ndarray, "d_model"] = np.load(
-    'data/km_line_embed_and_mlp0.npy'
+sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
+    'km_line_embed_and_mlp0'
 )
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
     device, dtype=torch.float32
 )
-positive_dir: Float[np.ndarray, "d_model"] = np.load(
-    'data/km_positive_embed_and_mlp0.npy'
+positive_dir: Float[np.ndarray, "d_model"] = load_array(
+    'km_positive_embed_and_mlp0'
 )
 positive_dir: Float[Tensor, "d_model"] = torch.tensor(positive_dir).to(
     device, dtype=torch.float32
 )
-negative_dir: Float[np.ndarray, "d_model"] = np.load(
-    'data/km_negative_embed_and_mlp0.npy'
+negative_dir: Float[np.ndarray, "d_model"] = load_array(
+    'km_negative_embed_and_mlp0'
 )
 negative_dir: Float[Tensor, "d_model"] = torch.tensor(negative_dir).to(
     device, dtype=torch.float32

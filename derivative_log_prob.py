@@ -16,7 +16,7 @@ from typing import Tuple, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
 from tqdm import tqdm
-from utils.store import store_array
+from utils.store import save_array, load_array
 #%% # Model loading
 device = torch.device('cpu')
 MODEL_NAME = "gpt2-small"
@@ -137,7 +137,7 @@ gradient = einops.reduce(
 gradient.shape
 # %%
 km_line = torch.tensor(
-    np.load('data/km_line_embed_and_mlp0.npy'), 
+    load_array('km_line_embed_and_mlp0'), 
     device=device,
     dtype=torch.float32,
 )
@@ -149,5 +149,5 @@ cosine_sim = einops.einsum(
 )
 cosine_sim
 # %%
-store_array(gradient, 'derivative_log_prob', model)
+save_array(gradient, 'derivative_log_prob', model)
 # %%

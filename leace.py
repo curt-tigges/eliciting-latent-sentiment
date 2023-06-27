@@ -20,6 +20,7 @@ import plotly.express as px
 from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
 )
+from utils.store import load_array
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -38,22 +39,22 @@ model.cfg.use_attn_result = True
 heads = model.cfg.n_heads
 layers = model.cfg.n_layers
 #%%
-km_line = np.load('data/km_line_embed_and_mlp0.npy')
+km_line = load_array('km_line_embed_and_mlp0')
 km_line = torch.from_numpy(km_line).to(device, torch.float32)
 km_line_unit = km_line / km_line.norm()
 #%%
-pc0 = np.load('data/pc_0.npy')
+pc0 = load_array('pc_0')
 pc0 = torch.from_numpy(pc0).to(device, torch.float32)
-pc1 = np.load('data/pc_1.npy')
+pc1 = load_array('pc_1')
 pc1 = torch.from_numpy(pc1).to(device, torch.float32)
-pc2 = np.load('data/pc_2.npy')
+pc2 = load_array('pc_2')
 pc2 = torch.from_numpy(pc2).to(device, torch.float32)
 #%%
-neg_log_prob_grad = np.load('data/derivative_log_prob.npy')
+neg_log_prob_grad = load_array('derivative_log_prob')
 neg_log_prob_grad = torch.from_numpy(neg_log_prob_grad).to(device, torch.float32)
 grad_unit = neg_log_prob_grad / neg_log_prob_grad.norm()
 #%%
-rotation_direction = np.load('data/rotation_direction.npy')
+rotation_direction = load_array('rotation_direction')
 rotation_direction = torch.from_numpy(rotation_direction).to(device, torch.float32)
 torch.testing.assert_close(rotation_direction.norm(), torch.tensor(1.0))
 #%%

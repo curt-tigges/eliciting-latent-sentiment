@@ -17,7 +17,7 @@ from functools import partial
 from collections import defaultdict
 from tqdm import tqdm
 import wandb
-from utils.store import store_array
+from utils.store import save_array, load_array
 #%% # Model loading
 device = torch.device('cpu')
 MODEL_NAME = "gpt2-small"
@@ -30,6 +30,9 @@ model = HookedTransformer.from_pretrained(
 )
 model.name = MODEL_NAME
 model = model.requires_grad_(False)
+#%%
+km_line = load_array('km_2c_line_embed_and_mlp0', model)
+km_line = torch.from_numpy(km_line).to(device, torch.float32)
 
 #%%
 prompt_return_dict, answer_tokens = get_onesided_datasets(
@@ -232,6 +235,10 @@ def train_rotation(**config_dict):
             models.append(rotation_module.state_dict())
             step += 1
         direction = rotation_module.rotate_layer.weight[0, :]
+        print(
+            "Cosine similarity with KM: ",
+            torch.cosine_similarity(direction, km_line, dim=0).item()
+        )
         directions.append(direction)
 
     # log the cosine similarity between the directions
@@ -240,7 +247,10 @@ def train_rotation(**config_dict):
             similarity = torch.cosine_similarity(
                 directions[i], directions[j], dim=0
             )
-            print({f"Cosine Similarity {i} and {j}": similarity.item()})
+            print(
+                f"Cosine Similarity {i} and {j}", 
+                similarity.item()
+            )
     best_model_idx = min(range(len(losses)), key=losses.__getitem__)
 
     # Log the best model's loss and save the model
@@ -254,9 +264,9 @@ def train_rotation(**config_dict):
     return rotation_module
 
 #%%
-rotation_module = train_rotation(num_seeds=1, num_epochs=50)
+rotation_module = train_rotation(num_seeds=5, num_epochs=50)
 
 #%%
 # direction found by fitted rotation module
-store_array(rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy(), "rotation_direction0", model)
+save_array(rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy(), "rotation_direction0", model)
 #%%

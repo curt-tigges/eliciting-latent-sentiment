@@ -32,7 +32,7 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import store_array
+from utils.store import save_array
 # ============================================================================ #
 # model loading
 
@@ -342,9 +342,9 @@ print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
 print(np.linalg.norm(train_embeddings[0, :]))
 #%% # write k means line to file
-store_array(km_positive_centroid, f"km_2c_positive_{embedding_type.value}", model)
-store_array(km_negative_centroid, f"km_2c_negative_{embedding_type.value}", model)
-store_array(km_line, f"km_2c_line_{embedding_type.value}", model)
+save_array(km_positive_centroid, f"km_2c_positive_{embedding_type.value}", model)
+save_array(km_negative_centroid, f"km_2c_negative_{embedding_type.value}", model)
+save_array(km_line, f"km_2c_line_{embedding_type.value}", model)
 #%%
 # project adjectives onto k-means line
 train_km_projected = einops.einsum(
@@ -386,7 +386,7 @@ for comp in range(pca.n_components_):
     # PCA components should already be normalised, but just in case
     comp_unit = pca.components_[comp, :] / np.linalg.norm(pca.components_[comp, :])
 
-    store_array(comp_unit, f"pca_{comp}_{embedding_type.value}", model)
+    save_array(comp_unit, f"pca_{comp}_{embedding_type.value}", model)
     print(
         f"Component {comp}: {np.dot(comp_unit, km_line_normalised)}"
     )
