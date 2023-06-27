@@ -146,7 +146,7 @@ def get_dataset(
         in the format (correct_token, incorrect_token)
     '''
     assert n_pairs <= len(pos_tokens)
-    assert prompt_type in ["simple", "completion", "classification"]
+    assert prompt_type in ["simple", "completion", "completion_2", "classification"]
     
     if "pythia" in model.cfg.model_name:
         positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
