@@ -53,6 +53,10 @@ neg_log_prob_grad = np.load('data/derivative_log_prob.npy')
 neg_log_prob_grad = torch.from_numpy(neg_log_prob_grad).to(device, torch.float32)
 grad_unit = neg_log_prob_grad / neg_log_prob_grad.norm()
 #%%
+rotation_direction = np.load('data/rotation_direction.npy')
+rotation_direction = torch.from_numpy(rotation_direction).to(device, torch.float32)
+torch.testing.assert_close(rotation_direction.norm(), torch.tensor(1.0))
+#%%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
     model, device
 )
@@ -161,6 +165,16 @@ def mean_ablate_gradient_direction(
 ):
     return mean_ablate_direction(
         input, grad_unit, tokens, multiplier
+    )
+
+#%%
+def mean_ablate_rotation_direction(
+    input: Float[Tensor, "batch pos d_model"],
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
+):
+    return mean_ablate_direction(
+        input, rotation_direction, tokens, multiplier
     )
 #%%
 # ============================================================================ #
@@ -363,7 +377,7 @@ def linear_hook_base(
     tokens: Iterable[int] = (adjective_token, verb_token),
     layer: Optional[int] = None,
     multiplier: float = 1.0,
-    ablation: Callable = mean_ablate_gradient_direction,
+    ablation: Callable = mean_ablate_rotation_direction,
 ):
     assert 'hook_resid_post' in hook.name
     if layer is not None and hook.layer() != layer:

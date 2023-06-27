@@ -16,6 +16,7 @@ from typing import Tuple, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
 from tqdm import tqdm
+import wandb
 #%% # Model loading
 device = torch.device('cpu')
 model = HookedTransformer.from_pretrained(
@@ -184,30 +185,76 @@ class RotationModule(torch.nn.Module):
         )
         return results
 #%%
-torch.manual_seed(0)
-rotation_module = RotationModule(
-    model,
-    orig_hook_z=orig_cache['blocks.0.attn.hook_z'],
-    orig_tokens=orig_tokens,
-    n_directions=1,
-)
-# #%%
-# from torchview import draw_graph
-# model_graph = draw_graph(
-#     rotation_module, input_data=(orig_cache[ACT_NAME], new_cache[ACT_NAME]),
-#     device=device,
-# )
-# model_graph.visual_graph
+def train_rotation(**config_dict):
+    # Initialize wandb
+    config_dict = {
+        "num_seeds": config_dict.get("num_seeds", 5),
+        "lr": config_dict.get("lr", 1e-3),
+        "n_epochs": config_dict.get("n_epochs", 50),
+        "n_directions": config_dict.get("n_directions", 1),
+    }
+    wandb.init(project='train_rotation', config=config_dict)
+    config = wandb.config
+
+    # Create a list to store the losses and models
+    losses = []
+    models = []
+    directions = []
+    random_seeds = np.arange(config.num_seeds)
+    step = 0
+    for seed in random_seeds:
+        wandb.log({"Seed": seed})
+        torch.manual_seed(seed)
+        
+        # Create the rotation module
+        rotation_module = RotationModule(
+            model,
+            orig_hook_z=orig_cache['blocks.0.attn.hook_z'],
+            orig_tokens=orig_tokens,
+            n_directions=config.n_directions,
+        )
+
+        # Define the optimizer
+        optimizer = torch.optim.Adam(rotation_module.parameters(), lr=config.lr)
+
+        for epoch in range(config.n_epochs):
+            optimizer.zero_grad()
+            loss = rotation_module(orig_cache[ACT_NAME], new_cache[ACT_NAME])
+            loss.backward()
+            optimizer.step()
+            wandb.log({"Loss": loss.item()}, step=step)
+
+            # Store the loss and model for this seed
+            losses.append(loss.item())
+            models.append(rotation_module.state_dict())
+            step += 1
+        direction = rotation_module.rotate_layer.weight[0, :]
+        directions.append(direction)
+
+    # log the cosine similarity between the directions
+    for i in range(len(directions)):
+        for j in range(i+1, len(directions)):
+            similarity = torch.cosine_similarity(
+                directions[i], directions[j], dim=0
+            )
+            print({f"Cosine Similarity {i} and {j}": similarity.item()})
+    best_model_idx = min(range(len(losses)), key=losses.__getitem__)
+
+    # Log the best model's loss and save the model
+    wandb.log({"Best Loss": losses[best_model_idx]})
+    wandb.save("best_rotation.pt")
+    wandb.finish()
+
+    # Load the best model
+    best_model_state_dict = models[best_model_idx]
+    rotation_module.load_state_dict(best_model_state_dict)
+    return rotation_module
+
 #%%
-n_epochs = 100
-optimizer = torch.optim.Adam(rotation_module.parameters(), lr=1e-3)
-for epoch in range(n_epochs):
-    optimizer.zero_grad()
-    loss = rotation_module(orig_cache[ACT_NAME], new_cache[ACT_NAME])
-    loss.backward()
-    optimizer.step()
-    print(f"epoch {epoch}: {loss.detach().item()}")
+rotation_module = train_rotation()
+
 #%%
 # direction found by fitted rotation module
-rotation_module.rotate_layer.weight[0, :].shape
+with open("data/rotation_direction.npy", "wb") as f:
+    np.save(f, rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy())
 #%%
