@@ -25,7 +25,7 @@ model = HookedTransformer.from_pretrained(
     fold_ln=True,
     device=device,
 )
-model.requires_grad_ = False
+model = model.requires_grad_(False)
 
 #%%
 prompt_return_dict, answer_tokens = get_onesided_datasets(
@@ -120,7 +120,6 @@ def act_patch_simple(
     logits = model.run_with_hooks(
         orig_input, fwd_hooks=[(ACT_NAME, hook_fn)]
     )
-    logits = model(orig_input)
     return patching_metric(logits)
 #%%
 class RotationModule(torch.nn.Module):
@@ -200,11 +199,11 @@ rotation_module = RotationModule(
 # )
 # model_graph.visual_graph
 #%%
-n_epochs = 2
+n_epochs = 100
 optimizer = torch.optim.Adam(rotation_module.parameters(), lr=1e-3)
 for epoch in range(n_epochs):
-    loss = rotation_module(orig_cache[ACT_NAME], new_cache[ACT_NAME])
     optimizer.zero_grad()
+    loss = rotation_module(orig_cache[ACT_NAME], new_cache[ACT_NAME])
     loss.backward()
     optimizer.step()
     print(f"epoch {epoch}: {loss.detach().item()}")
