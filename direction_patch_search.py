@@ -8,11 +8,14 @@ from utils.circuit_analysis import get_log_probs
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
+from transformer_lens.hook_points import (
+    HookedRootModule,
+    HookPoint,
+)  # Hooking utilities
 from typing import Tuple, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
 from tqdm import tqdm
-from path_patching import act_patch, Node, IterNode
 #%% # Model loading
 device = torch.device('cpu')
 model = HookedTransformer.from_pretrained(
@@ -90,88 +93,121 @@ class RotateLayer(torch.nn.Module):
         # you can also study this if you want, but it is our focus.
         if init_orth:
             torch.nn.init.orthogonal_(weight)
-        self.weight = torch.nn.Parameter(weight, requires_grad=True)
+        self.weight = torch.nn.Parameter(
+            weight, requires_grad=True,
+        ).to(device)
         
     def forward(self, x):
         return torch.matmul(x, self.weight)
 #%%
+def hook_fn_base(
+    input: Float[Tensor, "batch pos d_model"], 
+    hook: HookPoint, 
+    new_value: Float[Tensor, "batch pos d_model"]
+):
+    if hook.name == ACT_NAME:
+        return new_value
+    return input
+#%%
+def act_patch_simple(
+    model: HookedTransformer,
+    orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
+    patching_metric: Callable,
+    new_value: Float[Tensor, "batch pos d_model"],
+) -> Float[Tensor, ""]:
+    model.reset_hooks()
+    hook_fn = partial(hook_fn_base, new_value=new_value)
+    logits = model.run_with_hooks(
+        orig_input, fwd_hooks=[(ACT_NAME, hook_fn)]
+    )
+    logits = model(orig_input)
+    return patching_metric(logits)
+#%%
 class RotationModule(torch.nn.Module):
-    def __init__(self, d_model: int, n_directions: int = 1):
+    def __init__(
+        self, 
+        model: HookedTransformer, 
+        orig_hook_z: Float[Tensor, "batch pos head d_head"],
+        orig_tokens: Int[Tensor, "batch pos"],
+        n_directions: int = 1,
+    ):
         super().__init__()
-        self.d_model = d_model
+        self.model = model
+        self.register_buffer('orig_hook_z', orig_hook_z.to(device))
+        self.register_buffer('orig_tokens', orig_tokens.to(device))
+        self.d_model = model.cfg.d_model
         self.n_directions = n_directions
-        rotate_layer = RotateLayer(d_model)
+        rotate_layer = RotateLayer(model.cfg.d_model)
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(
             rotate_layer, use_trivialization=False
         )
         self.inverse_rotate_layer = InverseRotateLayer(self.rotate_layer)
 
-#%%
-def apply_rotation_to_cache(
-    orig_cache: ActivationCache,
-    new_cache: ActivationCache,
-    rotation: RotationModule,
-) -> ActivationCache:
-    orig_act: Float[Tensor, "batch pos d_model"] = orig_cache[ACT_NAME]
-    new_act: Float[Tensor, "batch pos d_model"] = new_cache[ACT_NAME]
-    rotated_orig_act: Float[
-        Tensor, "batch pos d_model"
-    ] = rotation.rotate_layer(orig_act)
-    rotated_new_act: Float[
-        Tensor, "batch pos d_model"
-    ] = rotation.rotate_layer(new_act)
-    d_model_index = einops.repeat(
-        torch.arange(model.cfg.d_model, device=device),
-        "d -> batch pos d",
-        batch=orig_act.shape[0],
-        pos=orig_act.shape[1],
-    )
-    rotated_patch_act = torch.where(
-        d_model_index < rotation.n_directions,
-        rotated_new_act,
-        rotated_orig_act,
-    )
-    patch_act = rotation.inverse_rotate_layer(rotated_patch_act)
-    cache_dict = {
-        name: act for name, act in orig_cache.items() if name != ACT_NAME
-    }
-    cache_dict[ACT_NAME] = patch_act
-    return ActivationCache(cache_dict, orig_cache.model)
-#%%
-def patching_metric_for_module(
-    rotation: RotationModule,
-    orig_cache: ActivationCache,
-    new_cache: ActivationCache,
-)-> Float[Tensor, ""]:
-    patching_cache: ActivationCache = apply_rotation_to_cache(
-        orig_cache=orig_cache,
-        new_cache=new_cache,
-        rotation=rotation,
-    )
-    results: Float[Tensor, ""] = act_patch(
-        model=model,
-        orig_input=orig_tokens,
-        new_cache=patching_cache,
-        patching_nodes=Node(ACT_NAME),
-        patching_metric=patching_metric,
-        verbose=True,
-    )
-    return results
+    def apply_rotation(
+        self,
+        orig_resid_post: Float[Tensor, "batch pos d_model"],
+        new_resid_post: Float[Tensor, "batch pos d_model"],
+    ) -> Float[Tensor, "batch pos d_model"]:
+        rotated_orig_act: Float[
+            Tensor, "batch pos d_model"
+        ] = self.rotate_layer(orig_resid_post)
+        rotated_new_act: Float[
+            Tensor, "batch pos d_model"
+        ] = self.rotate_layer(new_resid_post)
+        d_model_index = einops.repeat(
+            torch.arange(model.cfg.d_model, device=device),
+            "d -> batch pos d",
+            batch=orig_resid_post.shape[0],
+            pos=orig_resid_post.shape[1],
+        )
+        rotated_patch_act = torch.where(
+            d_model_index < self.n_directions,
+            rotated_new_act,
+            rotated_orig_act,
+        )
+        patch_act = self.inverse_rotate_layer(rotated_patch_act)
+        return patch_act
+
+    def forward(
+        self, 
+        orig_resid_post: Float[Tensor, "batch pos d_model"],
+        new_resid_post: Float[Tensor, "batch pos d_model"],
+    ) -> Float[Tensor, ""]:
+        patching_tensor: ActivationCache = self.apply_rotation(
+            orig_resid_post=orig_resid_post,
+            new_resid_post=new_resid_post,
+        )
+        results: Float[Tensor, ""] = act_patch_simple(
+            model=self.model,
+            orig_input=orig_tokens,
+            new_value=patching_tensor,
+            patching_metric=patching_metric,
+        )
+        return results
 #%%
 torch.manual_seed(0)
-rotation_module = RotationModule(model.cfg.d_model, n_directions=1)
-n_epochs = 10
+rotation_module = RotationModule(
+    model,
+    orig_hook_z=orig_cache['blocks.0.attn.hook_z'],
+    orig_tokens=orig_tokens,
+    n_directions=1,
+)
+# #%%
+# from torchview import draw_graph
+# model_graph = draw_graph(
+#     rotation_module, input_data=(orig_cache[ACT_NAME], new_cache[ACT_NAME]),
+#     device=device,
+# )
+# model_graph.visual_graph
+#%%
+n_epochs = 2
 optimizer = torch.optim.Adam(rotation_module.parameters(), lr=1e-3)
 for epoch in range(n_epochs):
+    loss = rotation_module(orig_cache[ACT_NAME], new_cache[ACT_NAME])
     optimizer.zero_grad()
-    loss = patching_metric_for_module(
-        rotation=rotation_module,
-        orig_cache=orig_cache,
-        new_cache=new_cache,
-    )
     loss.backward()
-    print(f"epoch {epoch}: {loss.item()}")
     optimizer.step()
+    print(f"epoch {epoch}: {loss.detach().item()}")
 #%%
 # direction found by fitted rotation module
 rotation_module.rotate_layer.weight[0, :].shape
