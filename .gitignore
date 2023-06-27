@@ -3,3 +3,4 @@ __pycache__/
 concept-erasure
 *.ipynb
 *.egg-info
+wandb
