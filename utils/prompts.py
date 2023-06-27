@@ -240,8 +240,11 @@ def get_onesided_datasets(
         "negative": model.to_tokens(neg_prompts, prepend_bos=True),
         "neutral": model.to_tokens(neutral_prompts, prepend_bos=True)
     }
-    for _, prompt_v in prompts_dict.items():
-        assert prompt_v.shape == prompts_dict["positive"].shape
+    for prompt_k, prompt_v in prompts_dict.items():
+        assert prompt_v.shape[1] == prompts_dict["positive"].shape[1], (
+            f"{prompt_k} prompt has seq len {prompt_v.shape[1]} "
+            f"while positive has seq len {prompts_dict['positive'].shape[1]}"
+        )
     
     n_prompts = min([prompts_dict[s].shape[0] for s in dataset_sentiments])
     prompt_return_dict = {
