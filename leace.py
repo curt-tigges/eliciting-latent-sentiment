@@ -529,43 +529,31 @@ for experiment_name, experiment_hook in experiments.items():
         hook_name_filter,
         experiment_hook
     )
-    test_logits, test_cache = model.run_with_cache(
+    test_logits = model(
         clean_tokens, 
         prepend_bos=False,
-        names_filter=lambda name: name.endswith('resid_post'),
     )
-    test_cache.to(device)
     test_metric = ablation_metric(test_logits, answer_tokens)
     (
         pos_results_dict[experiment_name], 
         neg_results_dict[experiment_name]
     ) = test_metric
     print(experiment_name, test_metric)
+    
+#%%
+for experiment_name, experiment_hook in experiments.items():
     if experiment_name == 'layer_0_linear_1_0':
+        model.reset_hooks()
+        model.add_hook(
+            hook_name_filter,
+            experiment_hook
+        )
         utils.test_prompt(
             example_string, example_answer, model, 
             prepend_space_to_answer=False,
             prepend_bos=False,
             top_k=top_k,
         )
-        # fig = px.histogram(
-        #     x=test_logit_diffs.squeeze().cpu().detach().numpy(),
-        #     title=f'Logit difference distribution for {experiment_name}',
-        #     nbins=len(clean_tokens),
-        #     color=answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0],
-        #     labels={'x': 'Logit difference', 'color': 'Positive sentiment?'},
-        # )
-        # fig.show()
-    # test_sentiment = extract_sentiment_layer_pos(test_cache)
-    # fig = px.imshow(
-    #     test_sentiment.cpu().detach().numpy(),
-    #     labels={'x': 'Position', 'y': 'Layer'},
-    #     x=example_prompt_indexed,
-    #     title=f'Sentiment on {experiment_name}',
-    #     color_continuous_scale="RdBu",
-    #     color_continuous_midpoint=0,
-    # )
-    # fig.show()
 
 #%%
 results_df = pd.Series(pos_results_dict).rename('log_prob').reset_index()
