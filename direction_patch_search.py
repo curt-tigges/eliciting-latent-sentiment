@@ -17,15 +17,18 @@ from functools import partial
 from collections import defaultdict
 from tqdm import tqdm
 import wandb
+from utils.store import store_array
 #%% # Model loading
 device = torch.device('cpu')
+MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
-    "gpt2-small",
+    MODEL_NAME,
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
     device=device,
 )
+model.name = MODEL_NAME
 model = model.requires_grad_(False)
 
 #%%
@@ -251,10 +254,9 @@ def train_rotation(**config_dict):
     return rotation_module
 
 #%%
-rotation_module = train_rotation()
+rotation_module = train_rotation(num_seeds=1, num_epochs=50)
 
 #%%
 # direction found by fitted rotation module
-with open("data/rotation_direction.npy", "wb") as f:
-    np.save(f, rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy())
+store_array(rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy(), "rotation_direction0", model)
 #%%
