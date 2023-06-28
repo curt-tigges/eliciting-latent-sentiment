@@ -349,9 +349,13 @@ def get_task_contrast_dataset(
             # answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
             # answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
             answer_tokens[i * 4, pair_idx, 0] = task_1_pos_token
-            answer_tokens[i * 4, pair_idx, 1] = task_1_neg_token
-            answer_tokens[i * 4 + 1, pair_idx, 0] = task_2_pos_token
-            answer_tokens[i * 4 + 1, pair_idx, 1] = task_2_neg_token
+            answer_tokens[i * 4, pair_idx, 1] = task_2_pos_token
+            answer_tokens[i * 4 + 1, pair_idx, 0] = task_2_neg_token
+            answer_tokens[i * 4 + 1, pair_idx, 1] = task_1_neg_token
+            answer_tokens[i * 4 + 2, pair_idx, 0] = task_1_pos_token
+            answer_tokens[i * 4 + 2, pair_idx, 1] = task_2_neg_token
+            answer_tokens[i * 4 + 3, pair_idx, 0] = task_2_neg_token
+            answer_tokens[i * 4 + 3, pair_idx, 1] = task_1_pos_token
     
     prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(
         all_prompts, prepend_bos=True
