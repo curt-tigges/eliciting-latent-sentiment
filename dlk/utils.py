@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torchtyping import TensorType as TT
 
 # make sure to install promptsource, transformers, and datasets!
-from promptsource.templates import DatasetTemplates
+# from promptsource.templates import DatasetTemplates
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForMaskedLM, AutoModelForCausalLM
 from datasets import load_dataset
 
@@ -372,16 +372,16 @@ class ContrastDataset(Dataset):
         return neg_ids, pos_ids, neg_prompt, pos_prompt, true_answer, truncated
     
 
-def get_templates(dataset_name: str) -> DatasetTemplates:
-    all_prompts = DatasetTemplates(dataset_name)
-    if len(all_prompts) == 0:
-        yaml_path = os.path.join('templates', dataset_name, 'templates.yaml')
-        with open(yaml_path, 'r') as yaml_file:
-            yaml_dict = yaml.load(yaml_file, Loader=yaml.FullLoader)
-        all_prompts.templates = yaml_dict[all_prompts.TEMPLATES_KEY]
-        all_prompts.sync_mapping()
-    assert len(all_prompts) > 0
-    return all_prompts
+# def get_templates(dataset_name: str) -> DatasetTemplates:
+#     all_prompts = DatasetTemplates(dataset_name)
+#     if len(all_prompts) == 0:
+#         yaml_path = os.path.join('templates', dataset_name, 'templates.yaml')
+#         with open(yaml_path, 'r') as yaml_file:
+#             yaml_dict = yaml.load(yaml_file, Loader=yaml.FullLoader)
+#         all_prompts.templates = yaml_dict[all_prompts.TEMPLATES_KEY]
+#         all_prompts.sync_mapping()
+#     assert len(all_prompts) > 0
+#     return all_prompts
 
     
 def get_dataloader(
