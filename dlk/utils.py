@@ -473,13 +473,16 @@ def get_individual_hidden_states(
     encoder-decoder models, but it is not necessary for 
     encoder-only or decoder-only models.
     """
+    batch_ids = batch_ids.to(model.device)
+    if isinstance(batch_ids, torch.Tensor):
+        batch_ids = {"input_ids": batch_ids, "attention_mask": torch.ones_like(batch_ids)}
+
     batch_size, seq_len = batch_ids['input_ids'].shape
     if use_decoder:
         assert "decoder" in model_type
         
     # forward pass
     with torch.no_grad():
-        batch_ids = batch_ids.to(model.device)
         output = model(**batch_ids, output_hidden_states=True)
 
     # get all the corresponding hidden states (which is a tuple of length num_layers)

@@ -7,10 +7,12 @@ from utils.prompts import get_dataset
 from torch.utils.data import Dataset, DataLoader
 from jaxtyping import Float, Int, Bool
 from dlk.utils import get_all_hidden_states, save_generations, get_parser
+from transformers import AutoModelForCausalLM
 #%%
 loader_batch_size = 1
 device = torch.device('cuda')
 MODEL_NAME = "gpt2-small" # FIXME: "EleutherAI/pythia-1.4b"
+HF_NAME = "gpt2"
 model_type = "decoder"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -20,6 +22,7 @@ model = HookedTransformer.from_pretrained(
     refactor_factored_attn_matrices=False,
     device=device,
 )
+model.device = model.cfg.device
 #%%
 pos_answers = [" Positive"] #, " amazing", " good"]
 neg_answers = [" Negative"] #, " terrible", " bad"]
@@ -43,7 +46,7 @@ neg_tokens: Float[Tensor, "batch q_and_a"] = torch.cat(
     (clean_tokens, possible_answers_repeated[:, -1:]), dim=1
 )
 gt_labels: Int[Tensor, "batch"] = (
-    pos_tokens[:, 0] == answer_tokens[:, 0]
+    pos_tokens[:, -1] == answer_tokens[:, 0]
 ).to(torch.int64)
 truncated: Bool[Tensor, "batch"] = torch.zeros(
     gt_labels.shape[0], device=device, dtype=torch.bool
@@ -60,15 +63,19 @@ neg_prompts = [
 ]
 assert len(pos_prompts) == len(pos_tokens)
 #%%
+print(clean_tokens[0])
+print(pos_tokens[0])
+print(gt_labels[:5])
+#%%
 # create a Dataloader
 class PromptDataset(Dataset):
     def __init__(self, neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, truncated):
-        self.neg_tokens = neg_tokens
-        self.pos_tokens = pos_tokens
+        self.neg_tokens = neg_tokens.detach()
+        self.pos_tokens = pos_tokens.detach()
         self.neg_prompts = neg_prompts
         self.pos_prompts = pos_prompts
-        self.gt_labels = gt_labels
-        self.truncated = truncated
+        self.gt_labels = gt_labels.detach().cpu()
+        self.truncated = truncated.detach()
 
     def __len__(self):
         return len(self.neg_tokens)
@@ -89,6 +96,8 @@ dataset = PromptDataset(
 dataloader = DataLoader(
     dataset, batch_size=loader_batch_size, shuffle=False
 )
+#%%
+model = AutoModelForCausalLM.from_pretrained(HF_NAME, cache_dir=None).to(device)
 #%%
 parser = get_parser()
 args = parser.parse_args([
