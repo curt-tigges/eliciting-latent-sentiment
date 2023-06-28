@@ -254,6 +254,34 @@ def get_dataset(
     )
 
 
+def get_contrastive_prompts(
+    prompt_type: str = "contrastive_tasks", 
+    positive_adjectives: list = pos_adj, 
+    negative_adjectives: list = neg_adj,
+    neutral_adjectives: list = neutral_adj,
+) -> Tuple[list, list, list, list]:
+    assert prompt_type in ["contrastive_tasks"]
+    if prompt_type == "contrastive_tasks":
+        task_1_pos_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall it was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        task_1_neg_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall it was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        task_2_pos_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall it was just very good. This film was really" for i in range(len(positive_adjectives))
+        ]
+        task_2_neg_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall it was just very bad. This film was really" for i in range(len(positive_adjectives))
+        ]
+    else:
+        raise ValueError(f"Invalid prompt type: {prompt_type}")
+
+    return (
+        task_1_pos_prompts, task_1_neg_prompts, task_2_pos_prompts, task_2_neg_prompts
+    )
+
+
 def get_task_contrast_dataset(
     model: HookedTransformer, 
     device: torch.device,
@@ -274,27 +302,26 @@ def get_task_contrast_dataset(
         neutral_adjectives = remove_pythia_double_token_words(
             model, neutral_adj
         )
-        pos_answers = remove_pythia_double_token_words(model, pos_answers)
-        neg_answers = remove_pythia_double_token_words(model, neg_answers)
-        neutral_answers = remove_pythia_double_token_words(model, neutral_answers)
+        answers_dict["task_1_positive"] = remove_pythia_double_token_words(model, answers_dict["task_1_positive"])
+        answers_dict["task_1_negative"] = remove_pythia_double_token_words(model, answers_dict["task_1_negative"])
+        answers_dict["task_2_positive"] = remove_pythia_double_token_words(model, answers_dict["task_2_positive"])
+        answers_dict["task_2_negative"] = remove_pythia_double_token_words(model, answers_dict["task_2_negative"])
     else:
         positive_adjectives = pos_adj
         negative_adjectives = neg_adj
         neutral_adjectives = neutral_adj
 
-    pos_prompts, neg_prompts, neutral_prompts = get_prompts(
+    task_1_pos_prompts, task_1_neg_prompts, task_2_pos_prompts, task_2_neg_prompts = get_contrastive_prompts(
         prompt_type, positive_adjectives, negative_adjectives, neutral_adjectives
     )
-    prompts_dict = {
-        "positive": pos_prompts,
-        "negative": neg_prompts,
-        "neutral": neutral_prompts,
-    }
+    
     n_prompts = min(
-        len(prompts_dict[comparison[0]]), 
-        len(prompts_dict[comparison[1]]), 
-        )
-    batch_size = n_prompts * 2
+        len(task_1_pos_prompts), 
+        len(task_1_neg_prompts),
+        len(task_2_pos_prompts),
+        len(task_2_neg_prompts), 
+    )
+    batch_size = n_prompts * 4
     all_prompts = []
     answer_tokens = torch.empty(
         (batch_size, n_pairs, 2), 
@@ -304,22 +331,27 @@ def get_task_contrast_dataset(
     
     for i in range(n_prompts):
 
-        all_prompts.append(prompts_dict[comparison[0]][i])
-        all_prompts.append(prompts_dict[comparison[1]][i])
+        all_prompts.append(task_1_pos_prompts[i])
+        all_prompts.append(task_2_pos_prompts[i])
+        all_prompts.append(task_1_neg_prompts[i])
+        all_prompts.append(task_2_neg_prompts[i])
+
         
         for pair_idx in range(n_pairs):
-            pos_token = model.to_single_token(pos_answers[pair_idx])
-            neg_token = model.to_single_token(neg_answers[pair_idx])
-            neut_token = model.to_single_token(neutral_answers[pair_idx])
-            tokens_dict = {
-                'positive': pos_token, 
-                'negative': neg_token, 
-                'neutral': neut_token,
-            }
-            answer_tokens[i * 2, pair_idx, 0] = tokens_dict[comparison[0]]
-            answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
-            answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
-            answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
+            task_1_pos_token = model.to_single_token(answers_dict["task_1_positive"][pair_idx])
+            task_1_neg_token = model.to_single_token(answers_dict["task_1_negative"][pair_idx])
+            task_2_pos_token = model.to_single_token(answers_dict["task_2_positive"][pair_idx])
+            task_2_neg_token = model.to_single_token(answers_dict["task_2_negative"][pair_idx])
+     
+            # replace this with code that assigns the correct tokens to the answer_tokens tensor
+            # answer_tokens[i * 2, pair_idx, 0] = tokens_dict[comparison[0]]
+            # answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
+            # answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
+            # answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
+            answer_tokens[i * 4, pair_idx, 0] = task_1_pos_token
+            answer_tokens[i * 4, pair_idx, 1] = task_1_neg_token
+            answer_tokens[i * 4 + 1, pair_idx, 0] = task_2_pos_token
+            answer_tokens[i * 4 + 1, pair_idx, 1] = task_2_neg_token
     
     prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(
         all_prompts, prepend_bos=True
@@ -327,7 +359,7 @@ def get_task_contrast_dataset(
     
     clean_tokens = prompts_tokens.to(device)
     corrupted_tokens = model.to_tokens(
-        all_prompts[1:] + [all_prompts[0]], prepend_bos=True
+        all_prompts[2:] + all_prompts[0:2], prepend_bos=True
     ).to(device)
     
     return (
