@@ -289,7 +289,7 @@ def get_task_contrast_dataset(
     prompt_type: str = "contrastive_tasks",
     answers_dict: dict = {},
 ) -> Tuple[
-    Float[Tensor, "batch pos"],
+    list,
     Float[Tensor, "batch n_pairs 2"],
     Float[Tensor, "batch pos"],
     Float[Tensor, "batch pos"],
@@ -321,8 +321,9 @@ def get_task_contrast_dataset(
         len(task_2_pos_prompts),
         len(task_2_neg_prompts), 
     )
-    batch_size = n_prompts * 4
-    all_prompts = []
+    batch_size = n_prompts * 2
+    task_1_prompts = []
+    task_2_prompts = []
     answer_tokens = torch.empty(
         (batch_size, n_pairs, 2), 
         device=device, 
@@ -331,10 +332,11 @@ def get_task_contrast_dataset(
     
     for i in range(n_prompts):
 
-        all_prompts.append(task_1_pos_prompts[i])
-        all_prompts.append(task_2_pos_prompts[i])
-        all_prompts.append(task_1_neg_prompts[i])
-        all_prompts.append(task_2_neg_prompts[i])
+        task_1_prompts.append(task_1_pos_prompts[i])
+        task_1_prompts.append(task_1_neg_prompts[i])
+        task_2_prompts.append(task_2_pos_prompts[i])
+        task_2_prompts.append(task_2_neg_prompts[i])
+        
 
         
         for pair_idx in range(n_pairs):
@@ -348,23 +350,20 @@ def get_task_contrast_dataset(
             # answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
             # answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
             # answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
-            answer_tokens[i * 4, pair_idx, 0] = task_1_pos_token
-            answer_tokens[i * 4, pair_idx, 1] = task_2_pos_token
-            answer_tokens[i * 4 + 1, pair_idx, 0] = task_2_neg_token
-            answer_tokens[i * 4 + 1, pair_idx, 1] = task_1_neg_token
-            answer_tokens[i * 4 + 2, pair_idx, 0] = task_1_pos_token
-            answer_tokens[i * 4 + 2, pair_idx, 1] = task_2_neg_token
-            answer_tokens[i * 4 + 3, pair_idx, 0] = task_2_neg_token
-            answer_tokens[i * 4 + 3, pair_idx, 1] = task_1_pos_token
+            answer_tokens[i * 2, pair_idx, 0] = task_1_pos_token
+            answer_tokens[i * 2, pair_idx, 1] = task_2_pos_token
+            answer_tokens[i * 2 + 1, pair_idx, 0] = task_1_neg_token
+            answer_tokens[i * 2 + 1, pair_idx, 1] = task_2_neg_token
     
-    prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(
-        all_prompts, prepend_bos=True
-    )
-    
-    clean_tokens = prompts_tokens.to(device)
-    corrupted_tokens = model.to_tokens(
-        all_prompts[2:] + all_prompts[0:2], prepend_bos=True
+    clean_tokens = model.to_tokens(
+        task_1_prompts, prepend_bos=True
     ).to(device)
+
+    corrupted_tokens = model.to_tokens(
+        task_2_prompts, prepend_bos=True
+    ).to(device)
+
+    all_prompts = task_1_prompts+task_2_prompts
     
     return (
         all_prompts, answer_tokens, clean_tokens, corrupted_tokens
