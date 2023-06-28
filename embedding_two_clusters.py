@@ -33,12 +33,13 @@ from transformer_lens.hook_points import (
 )  # Hooking utilities
 import wandb
 from utils.store import save_array
+from utils.prompts import remove_pythia_double_token_words
 # ============================================================================ #
 # model loading
 
 #%%
 device = torch.device('cpu')
-MODEL_NAME = 'gpt2-small'
+MODEL_NAME = 'EleutherAI/pythia-1.4b'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -70,7 +71,7 @@ def check_single_tokens(
         try:
             transformer.to_single_token(check_token)
             good_tokens.append(token)
-        except AssertionError:
+        except AssertionError as e:
             error = True
             continue
     if error:
@@ -100,7 +101,7 @@ train_positive_adjectives = [
     'fantastic',
     'delightful',
     'cheerful',
-    'marvelous',
+    # 'marvelous',
     'good',
     'remarkable',
     'satisfactory',
@@ -125,7 +126,7 @@ train_positive_adjectives = [
     'great',
     'splendid',
     'beautiful',
-    'joyful',
+    # 'joyful',
     'positive',
     'excellent',
     'pleasant'
@@ -133,7 +134,7 @@ train_positive_adjectives = [
 train_negative_adjectives = [
     'dreadful',
     'bad',
-    'lousy',
+    # 'lousy',
     'dull',
     'depressing',
     'miserable',
@@ -145,7 +146,7 @@ train_negative_adjectives = [
     'ugly',
     'disgusting',
     'disastrous',
-    'horrendous',
+    # 'horrendous',
     'annoying',
     'boring',
     'offensive',
@@ -155,7 +156,7 @@ train_negative_adjectives = [
     'dire',
     'unpleasant',
     'horrible',
-    'mediocre',
+    # 'mediocre',
     'disappointing',
     'awful'
 ]
@@ -172,12 +173,20 @@ check_single_tokens(train_adjectives)
 # ============================================================================ #
 # Testing set
 test_positive_adjectives = [
-    'breathtaking', 'stunning', 'impressive', 'admirable', 'phenomenal', 
-    'radiant', 'sublime', 'glorious', 'magical', 'sensational', 'pleasing', 'movie'
+    # 'breathtaking', 
+    'stunning', 'impressive', 'admirable', 'phenomenal', 
+    'radiant', 
+    # 'sublime', 
+    'glorious', 'magical', 
+    # 'sensational', 
+    'pleasing', 'movie'
 ]
 
 test_negative_adjectives = [
-    'foul', 'vile', 'appalling', 'rotten', 'grim', 'dismal'
+    'foul', 
+    # 'vile', 'appalling', 
+    'rotten', 'grim', 
+    # 'dismal'
 ]
 test_adjectives = prepend_space(
     test_positive_adjectives + test_negative_adjectives
@@ -193,10 +202,12 @@ check_single_tokens(test_negative_adjectives)
 check_for_duplicates(test_adjectives)
 #%% # verb set
 positive_verbs = [
-    'enjoyed', 'loved', 'liked', 'appreciated', 'admired', 'cherished'
+    'enjoyed', 'loved', 'liked', 'appreciated', 'admired', 
+    # 'cherished'
 ]
 negative_verbs = [
-    'hated', 'despised', 'disliked',
+    'hated', 
+    # 'despised', 'disliked',
 ]
 all_verbs = prepend_space(positive_verbs + negative_verbs)
 verb_true_labels = (
@@ -304,7 +315,7 @@ km_first_cluster, km_second_cluster = split_by_label(
 )
 pos_first = (
     len(set(km_first_cluster) & set(train_positive_adjectives)) >
-    len(set(km_second_cluster) & set(train_negative_adjectives))
+    len(set(km_second_cluster) & set(train_positive_adjectives))
 )
 if pos_first:
     train_positive_cluster = km_first_cluster
@@ -397,7 +408,7 @@ pca_first_cluster, pca_second_cluster = split_by_label(
 # %%
 pca_pos_first = (
     len(set(pca_first_cluster) & set(train_positive_adjectives)) >
-    len(set(pca_second_cluster) & set(train_negative_adjectives))
+    len(set(pca_second_cluster) & set(train_positive_adjectives))
 )
 if pca_pos_first:
     # positive first
@@ -608,7 +619,7 @@ def plot_pca_2d():
             text=train_adjectives,
             mode="markers",
             marker=dict(
-                color=train_pca_labels,
+                color=train_true_labels,
                 colorscale="RdBu",
                 opacity=0.8,
             ),
@@ -622,10 +633,10 @@ def plot_pca_2d():
             text=test_adjectives,
             mode="markers",
             marker=dict(
-                color=test_pca_labels,
+                color=test_true_labels,
                 colorscale="RdBu",
                 opacity=0.8,
-                symbol="arrow",
+                symbol="square",
             ),
             name="PCA out-of-sample",
         )
@@ -637,7 +648,7 @@ def plot_pca_2d():
             text=all_verbs,
             mode="markers",
             marker=dict(
-                color=verb_pca_labels,
+                color=verb_true_labels,
                 colorscale="RdBu",
                 opacity=0.8,
                 symbol="star",
@@ -645,34 +656,34 @@ def plot_pca_2d():
             name="PCA verbs",
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=train_pcs[np.argsort(positive_distances)[:5], 0],
-            y=train_pcs[np.argsort(positive_distances)[:5], 1],
-            text=positive_closest,
-            mode="markers",
-            marker=dict(
-                color="red",
-                opacity=0.8,
-                symbol="square",
-            ),
-            name="Positive centroid nearest adjectives",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=train_pcs[np.argsort(negative_distances)[:5], 0],
-            y=train_pcs[np.argsort(negative_distances)[:5], 1],
-            text=negative_closest,
-            mode="markers",
-            marker=dict(
-                color="blue",
-                opacity=0.8,
-                symbol="square",
-            ),
-            name="Negative centroid nearest adjectives",
-        )
-    )
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=train_pcs[np.argsort(positive_distances)[:5], 0],
+    #         y=train_pcs[np.argsort(positive_distances)[:5], 1],
+    #         text=positive_closest,
+    #         mode="markers",
+    #         marker=dict(
+    #             color="red",
+    #             opacity=0.8,
+    #             symbol="square",
+    #         ),
+    #         name="Positive centroid nearest adjectives",
+    #     )
+    # )
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=train_pcs[np.argsort(negative_distances)[:5], 0],
+    #         y=train_pcs[np.argsort(negative_distances)[:5], 1],
+    #         text=negative_closest,
+    #         mode="markers",
+    #         marker=dict(
+    #             color="blue",
+    #             opacity=0.8,
+    #             symbol="square",
+    #         ),
+    #         name="Negative centroid nearest adjectives",
+    #     )
+    # )
     fig.add_trace(
         go.Scatter(
             x=pca_centroids[:, 0],
@@ -736,6 +747,7 @@ fig = go.Figure()
 fig.add_trace(
     go.Histogram(
         x=train_embeddings[:len(train_positive_adjectives)].numpy().dot(km_line),
+        hovertext=train_positive_adjectives,
         marker=dict(
             color="red",
             opacity=0.5,
@@ -748,6 +760,7 @@ fig.add_trace(
 fig.add_trace(
     go.Histogram(
         x=train_embeddings[len(train_positive_adjectives):].numpy().dot(km_line),
+        hovertext=train_negative_adjectives,
         marker=dict(
             color="blue",
             opacity=0.5,
@@ -760,6 +773,7 @@ fig.add_trace(
 fig.add_trace(
     go.Histogram(
         x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+        hovertext=test_positive_adjectives,
         marker=dict(
             color="darkred",
             opacity=0.5,
@@ -772,6 +786,7 @@ fig.add_trace(
 fig.add_trace(
     go.Histogram(
         x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+        hovertext=test_negative_adjectives,
         marker=dict(
             color="darkblue",
             opacity=0.5,
@@ -784,6 +799,7 @@ fig.add_trace(
 fig.add_trace(
     go.Histogram(
         x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+        hovertext=positive_verbs,
         marker=dict(
             color="pink",
             opacity=0.5,
@@ -796,6 +812,7 @@ fig.add_trace(
 fig.add_trace(
     go.Histogram(
         x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+        hovertext=negative_verbs,
         marker=dict(
             color="teal",
             opacity=0.5,

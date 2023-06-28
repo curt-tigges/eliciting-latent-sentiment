@@ -21,8 +21,8 @@ from utils.store import save_array, load_array
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 #%% # Model loading
-device = torch.device('cpu')
-MODEL_NAME = "gpt2-small"
+device = torch.device('cuda')
+MODEL_NAME = "EleutherAI/pythia-1.4b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -252,7 +252,7 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     return rotation_module, directions
 
 #%%
-rotation_module, directions = train_rotation(num_seeds=10, num_epochs=50)
+rotation_module, directions = train_rotation(num_seeds=5, num_epochs=50)
 #%%
 # cosine similarity between the directions, and with K-means
 for i in range(len(directions)):
@@ -269,7 +269,7 @@ for i in range(len(directions)):
             f"Cosine Similarity {i} and {j}: {similarity.item():.1%}"
         )
 #%% # fit PCA to the directions
-pca = PCA(n_components=3)
+pca = PCA(n_components=10)
 pca.fit(torch.stack(directions).cpu().detach().numpy())
 #%%
 #%% # bar of % variance explained by each component
@@ -281,9 +281,16 @@ fig = px.bar(
 fig.update_layout(showlegend=False, title_x=0.5)
 fig.show()
 #%%
+np.cumsum(pca.explained_variance_ratio_)
+#%%
 # direction found by fitted rotation module
 save_array(
     rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy(), 
     "rotation_direction0", model
 )
 #%%
+save_array(
+    pca.components_[0, :], 
+    "rotation_pc0", model
+)
+# %%
