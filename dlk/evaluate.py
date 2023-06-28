@@ -373,7 +373,7 @@ def fit_ccs(
     if ccs.linear:
         ccs_fi = (ccs.best_probe[0].weight * ccs.pos_hs_train.std()).squeeze()
         plot_feature_importance(ccs_fi, 'CCS', args)
-    with open(f'learned_weights/{args.model_name}_ccs.npy', 'wb') as f:
+    with open(f'data/{args.model_name}/ccs.npy', 'wb') as f:
         np.save(f, ccs.best_probe[0].weight.detach().cpu().numpy())
     return ccs_train_acc, ccs_test_acc
 
