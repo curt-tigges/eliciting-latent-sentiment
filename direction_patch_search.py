@@ -18,6 +18,8 @@ from collections import defaultdict
 from tqdm import tqdm
 import wandb
 from utils.store import save_array, load_array
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 #%% # Model loading
 device = torch.device('cpu')
 MODEL_NAME = "gpt2-small"
@@ -191,7 +193,7 @@ class RotationModule(torch.nn.Module):
         )
         return results
 #%%
-def train_rotation(**config_dict):
+def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     # Initialize wandb
     config_dict = {
         "num_seeds": config_dict.get("num_seeds", 5),
@@ -235,22 +237,8 @@ def train_rotation(**config_dict):
             models.append(rotation_module.state_dict())
             step += 1
         direction = rotation_module.rotate_layer.weight[0, :]
-        print(
-            "Cosine similarity with KM: ",
-            torch.cosine_similarity(direction, km_line, dim=0).item()
-        )
         directions.append(direction)
 
-    # log the cosine similarity between the directions
-    for i in range(len(directions)):
-        for j in range(i+1, len(directions)):
-            similarity = torch.cosine_similarity(
-                directions[i], directions[j], dim=0
-            )
-            print(
-                f"Cosine Similarity {i} and {j}", 
-                similarity.item()
-            )
     best_model_idx = min(range(len(losses)), key=losses.__getitem__)
 
     # Log the best model's loss and save the model
@@ -261,12 +249,41 @@ def train_rotation(**config_dict):
     # Load the best model
     best_model_state_dict = models[best_model_idx]
     rotation_module.load_state_dict(best_model_state_dict)
-    return rotation_module
+    return rotation_module, directions
 
 #%%
-rotation_module = train_rotation(num_seeds=5, num_epochs=50)
-
+rotation_module, directions = train_rotation(num_seeds=10, num_epochs=50)
+#%%
+# cosine similarity between the directions, and with K-means
+for i in range(len(directions)):
+    print(
+        "Cosine similarity with KM: {:.1%}".format(
+            torch.cosine_similarity(directions[i], km_line, dim=0).item()
+        )
+    )
+    for j in range(i+1, len(directions)):
+        similarity = torch.cosine_similarity(
+            directions[i], directions[j], dim=0
+        )
+        print(
+            f"Cosine Similarity {i} and {j}: {similarity.item():.1%}"
+        )
+#%% # fit PCA to the directions
+pca = PCA(n_components=3)
+pca.fit(torch.stack(directions).cpu().detach().numpy())
+#%%
+#%% # bar of % variance explained by each component
+fig = px.bar(
+    pca.explained_variance_ratio_, 
+    title="% variance explained by PCA", 
+    labels={'index': 'component', 'value': '% variance'},
+)
+fig.update_layout(showlegend=False, title_x=0.5)
+fig.show()
 #%%
 # direction found by fitted rotation module
-save_array(rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy(), "rotation_direction0", model)
+save_array(
+    rotation_module.rotate_layer.weight[0, :].cpu().detach().numpy(), 
+    "rotation_direction0", model
+)
 #%%

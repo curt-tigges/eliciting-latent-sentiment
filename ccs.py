@@ -187,10 +187,17 @@ ccs_line = load_array('ccs', MODEL_NAME).squeeze(0)
 ccs_line.shape
 # %%
 km_line = load_array('km_2c_line_embed_and_mlp0', MODEL_NAME)
+rotation_direction = load_array('rotation_direction0', MODEL_NAME)
 # %%
 # compute cosine similarity of ccs_line and km_line
 ccs_line = ccs_line / np.linalg.norm(ccs_line)
 km_line = km_line / np.linalg.norm(km_line)
 ccs_km_sim = np.dot(ccs_line, km_line)
+ccs_km_sim
+# %%
+# compute cosine similarity of ccs_line and rotation_direction
+ccs_line = ccs_line / np.linalg.norm(ccs_line)
+rotation_direction = rotation_direction / np.linalg.norm(rotation_direction)
+ccs_km_sim = np.dot(ccs_line, rotation_direction)
 ccs_km_sim
 # %%
