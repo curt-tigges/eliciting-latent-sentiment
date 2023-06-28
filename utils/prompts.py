@@ -77,7 +77,7 @@ def get_prompts(
     negative_adjectives: list = neg_adj,
     neutral_adjectives: list = neutral_adj,
 ) -> Tuple[list, list]:
-    assert prompt_type in ["simple", "completion", "classification"]
+    assert prompt_type in ["simple", "completion", "completion_2", "classification", "classification_2", "classification_3", "classification_4"]
     if prompt_type == "simple":
         pos_prompts = [
             f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives))
@@ -99,6 +99,16 @@ def get_prompts(
         neutral_prompts = [
             f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very" for i in range(len(neutral_adjectives))
         ]
+    elif prompt_type == "completion_2":
+        pos_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall it was just very good. I felt it was" for i in range(len(positive_adjectives))
+        ]
+        neg_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall it was just very bad. I felt it was" for i in range(len(positive_adjectives))
+        ]
+        neutral_prompts = [
+            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall it was just very average. I felt it was" for i in range(len(positive_adjectives))
+        ]
     elif prompt_type == "classification":
         pos_prompts = [
             f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
@@ -108,6 +118,36 @@ def get_prompts(
         ]
         neutral_prompts = [
             f"Review Text: 'I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+    elif prompt_type == "classification_2":
+        pos_prompts = [
+            f"Review Text: I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"Review Text: I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = [
+            f"Review Text: I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+    elif prompt_type == "classification_3":
+        pos_prompts = [
+            f"Review Text: I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"Review Text: I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = [
+            f"Review Text: I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+    elif prompt_type == "classification_4":
+        pos_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = [
+            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. Review Sentiment:" for i in range(len(positive_adjectives)-1)
         ]
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
@@ -136,7 +176,6 @@ def get_dataset(
         in the format (correct_token, incorrect_token)
     '''
     assert n_pairs <= len(pos_tokens)
-    assert prompt_type in ["simple", "completion", "classification"]
     
     if "pythia" in model.cfg.model_name:
         positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
@@ -144,6 +183,9 @@ def get_dataset(
         neutral_adjectives = remove_pythia_double_token_words(
             model, neutral_adj
         )
+        pos_answers = remove_pythia_double_token_words(model, pos_answers)
+        neg_answers = remove_pythia_double_token_words(model, neg_answers)
+        neutral_answers = remove_pythia_double_token_words(model, neutral_answers)
     else:
         positive_adjectives = pos_adj
         negative_adjectives = neg_adj
