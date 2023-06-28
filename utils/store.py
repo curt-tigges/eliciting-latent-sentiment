@@ -16,6 +16,7 @@ def get_model_name(model: Union[HookedTransformer, str]) -> str:
     if isinstance(model, HookedTransformer):
         assert len(model.name) > 0, "Model must have a name"
         model = model.name
+    model = model.replace('EleutherAI/', '')
     return model
 
 
