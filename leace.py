@@ -20,6 +20,7 @@ import plotly.express as px
 from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
 )
+from utils.store import load_array
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -38,16 +39,24 @@ model.cfg.use_attn_result = True
 heads = model.cfg.n_heads
 layers = model.cfg.n_layers
 #%%
-km_line = np.load('data/km_line_embed_and_mlp0.npy')
+km_line = load_array('km_line_embed_and_mlp0')
 km_line = torch.from_numpy(km_line).to(device, torch.float32)
 km_line_unit = km_line / km_line.norm()
 #%%
-pc0 = np.load('data/pc_0.npy')
+pc0 = load_array('pc_0')
 pc0 = torch.from_numpy(pc0).to(device, torch.float32)
-pc1 = np.load('data/pc_1.npy')
+pc1 = load_array('pc_1')
 pc1 = torch.from_numpy(pc1).to(device, torch.float32)
-pc2 = np.load('data/pc_2.npy')
+pc2 = load_array('pc_2')
 pc2 = torch.from_numpy(pc2).to(device, torch.float32)
+#%%
+neg_log_prob_grad = load_array('derivative_log_prob')
+neg_log_prob_grad = torch.from_numpy(neg_log_prob_grad).to(device, torch.float32)
+grad_unit = neg_log_prob_grad / neg_log_prob_grad.norm()
+#%%
+rotation_direction = load_array('rotation_direction')
+rotation_direction = torch.from_numpy(rotation_direction).to(device, torch.float32)
+torch.testing.assert_close(rotation_direction.norm(), torch.tensor(1.0))
 #%%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
     model, device
@@ -148,6 +157,26 @@ def mean_ablate_pcs(
         pc = globals()[f'pc{i}']
         input = mean_ablate_direction(input, pc, tokens, multiplier)
     return input
+#%%
+#%%
+def mean_ablate_gradient_direction(
+    input: Float[Tensor, "batch pos d_model"],
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
+):
+    return mean_ablate_direction(
+        input, grad_unit, tokens, multiplier
+    )
+
+#%%
+def mean_ablate_rotation_direction(
+    input: Float[Tensor, "batch pos d_model"],
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
+):
+    return mean_ablate_direction(
+        input, rotation_direction, tokens, multiplier
+    )
 #%%
 # ============================================================================ #
 # Fit LEACE
@@ -349,7 +378,7 @@ def linear_hook_base(
     tokens: Iterable[int] = (adjective_token, verb_token),
     layer: Optional[int] = None,
     multiplier: float = 1.0,
-    ablation: Callable = mean_ablate_km_component,
+    ablation: Callable = mean_ablate_rotation_direction,
 ):
     assert 'hook_resid_post' in hook.name
     if layer is not None and hook.layer() != layer:
@@ -501,43 +530,31 @@ for experiment_name, experiment_hook in experiments.items():
         hook_name_filter,
         experiment_hook
     )
-    test_logits, test_cache = model.run_with_cache(
+    test_logits = model(
         clean_tokens, 
         prepend_bos=False,
-        names_filter=lambda name: name.endswith('resid_post'),
     )
-    test_cache.to(device)
     test_metric = ablation_metric(test_logits, answer_tokens)
     (
         pos_results_dict[experiment_name], 
         neg_results_dict[experiment_name]
     ) = test_metric
     print(experiment_name, test_metric)
+    
+#%%
+for experiment_name, experiment_hook in experiments.items():
     if experiment_name == 'layer_0_linear_1_0':
+        model.reset_hooks()
+        model.add_hook(
+            hook_name_filter,
+            experiment_hook
+        )
         utils.test_prompt(
             example_string, example_answer, model, 
             prepend_space_to_answer=False,
             prepend_bos=False,
             top_k=top_k,
         )
-        # fig = px.histogram(
-        #     x=test_logit_diffs.squeeze().cpu().detach().numpy(),
-        #     title=f'Logit difference distribution for {experiment_name}',
-        #     nbins=len(clean_tokens),
-        #     color=answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0],
-        #     labels={'x': 'Logit difference', 'color': 'Positive sentiment?'},
-        # )
-        # fig.show()
-    # test_sentiment = extract_sentiment_layer_pos(test_cache)
-    # fig = px.imshow(
-    #     test_sentiment.cpu().detach().numpy(),
-    #     labels={'x': 'Position', 'y': 'Layer'},
-    #     x=example_prompt_indexed,
-    #     title=f'Sentiment on {experiment_name}',
-    #     color_continuous_scale="RdBu",
-    #     color_continuous_midpoint=0,
-    # )
-    # fig.show()
 
 #%%
 results_df = pd.Series(pos_results_dict).rename('log_prob').reset_index()

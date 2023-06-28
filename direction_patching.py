@@ -13,6 +13,7 @@ from functools import partial
 from collections import defaultdict
 from tqdm import tqdm
 from path_patching import act_patch, Node, IterNode
+from utils.store import save_array, load_array
 #%% # Model loading
 device = 'cpu' # torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 model = HookedTransformer.from_pretrained(
@@ -24,8 +25,8 @@ model = HookedTransformer.from_pretrained(
 )
 model.cfg.use_attn_result = True
 #%% # Direction loading
-sentiment_dir: Float[np.ndarray, "d_model"] = np.load(
-    'data/km_line_embed_and_mlp0.npy'
+sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
+    'km_line_embed_and_mlp0'
 )
 sentiment_dir /= np.linalg.norm(sentiment_dir)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(

@@ -32,17 +32,21 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
+from utils.store import save_array
 # ============================================================================ #
 # model loading
 
 #%%
+device = torch.device('cpu')
+MODEL_NAME = 'gpt2-small'
 model = HookedTransformer.from_pretrained(
-    "gpt2-small",
+    MODEL_NAME,
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
-    # refactor_factored_attn_matrices=True,
+    device=device,
 )
+model.name = MODEL_NAME
 #%%
 # ============================================================================ #
 # Data loading
@@ -338,12 +342,9 @@ print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
 print(np.linalg.norm(train_embeddings[0, :]))
 #%% # write k means line to file
-with open(f"data/km_positive_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_positive_centroid)
-with open(f"data/km_negative_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_negative_centroid)
-with open(f"data/km_line_{embedding_type.value}.npy", "wb") as f:
-    np.save(f, km_line)
+save_array(km_positive_centroid, f"km_2c_positive_{embedding_type.value}", model)
+save_array(km_negative_centroid, f"km_2c_negative_{embedding_type.value}", model)
+save_array(km_line, f"km_2c_line_{embedding_type.value}", model)
 #%%
 # project adjectives onto k-means line
 train_km_projected = einops.einsum(
@@ -384,8 +385,8 @@ fig.show()
 for comp in range(pca.n_components_):
     # PCA components should already be normalised, but just in case
     comp_unit = pca.components_[comp, :] / np.linalg.norm(pca.components_[comp, :])
-    with open(f'data/pc_{comp}.npy', 'wb') as f:
-        np.save(f, comp_unit)
+
+    save_array(comp_unit, f"pca_{comp}_{embedding_type.value}", model)
     print(
         f"Component {comp}: {np.dot(comp_unit, km_line_normalised)}"
     )
@@ -830,7 +831,7 @@ for x in pile_loader:
         for s in model.to_str_tokens(x['tokens'][i]) 
     ]
     dot_df = pd.DataFrame({
-        "dot": flattened_dots,
+        "dot": flattened_dots.detach().cpu().numpy(),
         "token": list_of_str_tokens,
     })
     dot_data.append(dot_df)

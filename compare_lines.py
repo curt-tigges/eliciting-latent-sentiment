@@ -3,10 +3,12 @@ import einops
 import numpy as np
 from jaxtyping import Float
 import plotly.express as px
+from utils.store import load_array
 # %%
-embed_only = np.load('data/km_line_embed_only.npy')
-embed_and_mlp = np.load('data/km_line_embed_and_mlp0.npy')
-unembed_transpose = np.load('data/km_line_unembed_transpose.npy')
+MODEL_NAME = "gpt2-small"
+embed_only = load_array('km_line_embed_only', MODEL_NAME)
+embed_and_mlp = load_array('km_line_embed_and_mlp0', MODEL_NAME)
+unembed_transpose = load_array('km_line_unembed_transpose', MODEL_NAME)
 # %%
 px.line(embed_and_mlp, title='Components of sentiment direction')
 #%%
