@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore", category=ConvergenceWarning)
 #%%
 torch.set_grad_enabled(False)
 device = torch.device("cpu")
-MODEL_NAME = "gpt2-small"
+MODEL_NAME = "EleutherAI/pythia-1.4b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -56,12 +56,17 @@ km_line_unit = km_line / km_line.norm()
 rotation_direction = load_array('rotation_direction0', model)
 rotation_direction = torch.from_numpy(rotation_direction).to(device, torch.float32)
 torch.testing.assert_close(
-    rotation_direction.norm(), torch.tensor(1.0, device=device)
+    rotation_direction.norm(), torch.tensor(1.0, device=device),
+    rtol=0, atol=.001
 )
 #%%
-ov_direction = load_array('mean_ov_direction_10_4', model)
-ov_direction = torch.from_numpy(ov_direction).to(device, torch.float32)
-ov_direction = ov_direction / ov_direction.norm()
+# ov_direction = load_array('mean_ov_direction_10_4', model)
+# ov_direction = torch.from_numpy(ov_direction).to(device, torch.float32)
+# ov_direction = ov_direction / ov_direction.norm()
+#%%
+ccs_direction = load_array('ccs', model).squeeze(0)
+ccs_direction = torch.from_numpy(ccs_direction).to(device, torch.float32)
+ccs_direction = ccs_direction / ccs_direction.norm()
 #%%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
     model, device
@@ -164,14 +169,14 @@ def mean_ablate_pcs(
     return input
 #%%
 #%%
-def mean_ablate_gradient_direction(
-    input: Float[Tensor, "batch pos d_model"],
-    tokens: Iterable[int] = (adjective_token, verb_token),
-    multiplier: float = 1.0,
-):
-    return mean_ablate_direction(
-        input, grad_unit, tokens, multiplier
-    )
+# def mean_ablate_gradient_direction(
+#     input: Float[Tensor, "batch pos d_model"],
+#     tokens: Iterable[int] = (adjective_token, verb_token),
+#     multiplier: float = 1.0,
+# ):
+#     return mean_ablate_direction(
+#         input, grad_unit, tokens, multiplier
+#     )
 
 #%%
 def mean_ablate_rotation_direction(
@@ -183,13 +188,22 @@ def mean_ablate_rotation_direction(
         input, rotation_direction, tokens, multiplier
     )
 #%%
-def mean_ablate_ov_direction(
+# def mean_ablate_ov_direction(
+#     input: Float[Tensor, "batch pos d_model"],
+#     tokens: Iterable[int] = (adjective_token, verb_token),
+#     multiplier: float = 1.0,
+# ):
+#     return mean_ablate_direction(
+#         input, ov_direction, tokens, multiplier
+#     )
+#%%
+def mean_ablate_ccs_direction(
     input: Float[Tensor, "batch pos d_model"],
     tokens: Iterable[int] = (adjective_token, verb_token),
     multiplier: float = 1.0,
 ):
     return mean_ablate_direction(
-        input, ov_direction, tokens, multiplier
+        input, ccs_direction, tokens, multiplier
     )
 #%%
 # ============================================================================ #
@@ -360,7 +374,7 @@ pos_results_dict['base'], neg_results_dict['base'] = ablation_metric(
 #     top_k=top_k,
 # )
 # %%
-ABLATION = mean_ablate_ov_direction
+ABLATION = mean_ablate_ccs_direction
 
 
 def linear_hook_base(
