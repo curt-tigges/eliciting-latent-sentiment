@@ -66,7 +66,7 @@ from path_patching import Node, IterNode, path_patch, act_patch
 from neel_plotly import imshow as imshow_n
 
 from utils.visualization import get_attn_head_patterns
-from utils.prompts import get_dataset
+from utils.prompts import get_dataset, get_task_contrast_dataset
 from utils.circuit_analysis import get_logit_diff, logit_diff_denoising, logit_diff_noising
 
 # %%
@@ -177,8 +177,34 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 # ### Dataset Construction
 
 # %%
+answers_dict = {
+    "task_1_positive": [" Positive"],
+    "task_1_negative": [" Negative"],
+    "task_2_positive": [" good", " great"],
+    "task_2_negative": [" bad", " terrible"]
+}
+assert set(answers_dict.keys()) == set(["task_1_positive", "task_1_negative", "task_2_positive", "task_2_negative"])
+all_prompts, flipped_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_task_contrast_dataset(
+    model,
+    device=device,
+    n_pairs=1,
+    prompt_type="contrastive_tasks",
+    answers_dict=answers_dict,
+)
+
+# %%
+for i in range(len(all_prompts)//2):
+    print(f"Regular Prompt: {all_prompts[i]}\n")
+    logits, _ = model.run_with_cache(all_prompts[i])
+    print(f"Flipped Prompt: {flipped_prompts[i]}\n")
+    print(f"Logit diff: {get_logit_diff(logits, answer_tokens[i].unsqueeze(0))}")
+
+# %%
+model.to_string(answer_tokens[0,:,1])
+
+# %%
 from utils.prompts import get_onesided_datasets
-prompts, answer_tokens, answer_list = get_onesided_datasets(
+answer_tokens, answer_list = get_onesided_datasets(
     model,
     device=device,
     n_answers=5,
@@ -195,7 +221,7 @@ print(answer_tokens.shape)
 
 
 # %%
-answer_tokens
+answer_tokens['positive'].shape
 
 # %%
 #pos_answers = [" Positive", " amazing", " good"]
