@@ -28,7 +28,7 @@ model = HookedTransformer.from_pretrained(
 model.name = MODEL_NAME
 model.cfg.use_attn_results = True
 # %%
-SENTIMENT_DIR = 'ccs'
+SENTIMENT_DIR = 'km_2c_line_embed_and_mlp0'
 sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
     SENTIMENT_DIR, model
 ).squeeze()
@@ -179,7 +179,7 @@ fig = px.imshow(
     height = heads * layers * 20,
 )
 save_html(fig, f"flip_size_by_position{HTML_SUFFIX}", model)
-fig.show()
+# fig.show()
 #%%
 per_pos_flip_sent_projections: Float[
     Tensor, "component pos"
@@ -202,5 +202,5 @@ fig = px.imshow(
     height = heads * layers * 20,
 )
 save_html(fig, f"flip_percent_sentiment_by_position{HTML_SUFFIX}", model)
-fig.show()
+# fig.show()
 # %%
