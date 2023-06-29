@@ -36,9 +36,9 @@ print(model.cfg.d_model)
 pos_answers = [" Positive"] #, " amazing", " good"]
 neg_answers = [" Negative"] #, " terrible", " bad"]
 all_prompts, answer_tokens, clean_tokens, _ = get_dataset(
-    model, device, n_pairs=1, prompt_type="classification", 
+    model, device, n_pairs=1, prompt_type="classification_4", 
     pos_answers=pos_answers, neg_answers=neg_answers,
-) # FIXME: change to classification_4
+)
 answer_tokens: Int[Tensor, "batch 2"] = answer_tokens.squeeze(1)
 clean_tokens.shape
 #%%
