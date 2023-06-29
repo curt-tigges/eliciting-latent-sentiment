@@ -326,6 +326,7 @@ def get_task_contrast_dataset(
     #task_1_prompts = []
     #task_2_prompts = []
     all_prompts = []
+    flipped_prompts = []
     answer_tokens = torch.empty(
         (batch_size, n_pairs, 2), 
         device=device, 
@@ -347,6 +348,11 @@ def get_task_contrast_dataset(
         all_prompts.append(task_2_neg_prompts[i])
         #task1pos
         all_prompts.append(task_1_pos_prompts[i])
+
+        flipped_prompts.append(task_2_neg_prompts[i])
+        flipped_prompts.append(task_1_pos_prompts[i])
+        flipped_prompts.append(task_1_neg_prompts[i])
+        flipped_prompts.append(task_2_pos_prompts[i])
 
         
         for pair_idx in range(n_pairs):
@@ -373,7 +379,6 @@ def get_task_contrast_dataset(
         all_prompts, prepend_bos=True
     ).to(device)
 
-    flipped_prompts = all_prompts[-2:] + all_prompts[:-2]
     corrupted_tokens = model.to_tokens(
         flipped_prompts, prepend_bos=True
     ).to(device)
