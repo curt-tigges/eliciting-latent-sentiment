@@ -387,6 +387,95 @@ def get_task_contrast_dataset(
         all_prompts, flipped_prompts, answer_tokens, clean_tokens, corrupted_tokens
     )
 
+def get_split_task_contrast_dataset(
+    model: HookedTransformer, 
+    device: torch.device,
+    n_pairs: int = 1,
+    prompt_type: str = "contrastive_tasks",
+    answers_dict: dict = {},
+) -> Tuple[
+    list,
+    Float[Tensor, "batch n_pairs 2"],
+    Float[Tensor, "batch pos"],
+    Float[Tensor, "batch pos"],
+]:
+    assert set(answers_dict.keys()) == set(["task_1_positive", "task_1_negative", "task_2_positive", "task_2_negative"])
+    
+    if "pythia" in model.cfg.model_name:
+        positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
+        negative_adjectives = remove_pythia_double_token_words(model, neg_adj)
+        neutral_adjectives = remove_pythia_double_token_words(
+            model, neutral_adj
+        )
+        answers_dict["task_1_positive"] = remove_pythia_double_token_words(model, answers_dict["task_1_positive"])
+        answers_dict["task_1_negative"] = remove_pythia_double_token_words(model, answers_dict["task_1_negative"])
+        answers_dict["task_2_positive"] = remove_pythia_double_token_words(model, answers_dict["task_2_positive"])
+        answers_dict["task_2_negative"] = remove_pythia_double_token_words(model, answers_dict["task_2_negative"])
+    else:
+        positive_adjectives = pos_adj
+        negative_adjectives = neg_adj
+        neutral_adjectives = neutral_adj
+
+    task_1_pos_prompts, task_1_neg_prompts, task_2_pos_prompts, task_2_neg_prompts = get_contrastive_prompts(
+        prompt_type, positive_adjectives, negative_adjectives, neutral_adjectives
+    )
+    
+    n_prompts = min(
+        len(task_1_pos_prompts), 
+        len(task_1_neg_prompts),
+        len(task_2_pos_prompts),
+        len(task_2_neg_prompts), 
+    )
+    batch_size = n_prompts * 2
+    task_1_prompts = []
+    task_2_prompts = []
+    all_prompts = []
+    flipped_prompts = []
+    answer_tokens = torch.empty(
+        (batch_size, n_pairs, 2), 
+        device=device, 
+        dtype=torch.long
+    )
+    
+    for i in range(n_prompts):
+
+        task_1_prompts.append(task_1_pos_prompts[i])
+        task_1_prompts.append(task_1_neg_prompts[i])
+        task_2_prompts.append(task_2_pos_prompts[i])
+        task_2_prompts.append(task_2_neg_prompts[i])
+
+        
+        for pair_idx in range(n_pairs):
+            task_1_pos_token = model.to_single_token(answers_dict["task_1_positive"][pair_idx])
+            task_1_neg_token = model.to_single_token(answers_dict["task_1_negative"][pair_idx])
+            task_2_pos_token = model.to_single_token(answers_dict["task_2_positive"][pair_idx])
+            task_2_neg_token = model.to_single_token(answers_dict["task_2_negative"][pair_idx])
+     
+            # replace this with code that assigns the correct tokens to the answer_tokens tensor
+            # answer_tokens[i * 2, pair_idx, 0] = tokens_dict[comparison[0]]
+            # answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
+            # answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
+            # answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
+            answer_tokens[i * 2, pair_idx, 0] = task_1_pos_token
+            answer_tokens[i * 2 + 1, pair_idx, 0] = task_1_neg_token
+            
+            answer_tokens[i * 2, pair_idx, 1] = task_2_pos_token
+            answer_tokens[i * 2 + 1, pair_idx, 1] = task_2_neg_token
+    
+    clean_tokens = model.to_tokens(
+        task_1_prompts, prepend_bos=True
+    ).to(device)
+
+    corrupted_tokens = model.to_tokens(
+        task_2_prompts, prepend_bos=True
+    ).to(device)
+
+    all_prompts = task_1_prompts+task_2_prompts
+    
+    return (
+        all_prompts, answer_tokens, clean_tokens, corrupted_tokens
+    )
+
 def get_onesided_datasets(
     model: HookedTransformer, 
     device: torch.device,
