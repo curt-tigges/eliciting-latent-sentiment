@@ -25,8 +25,8 @@ from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 #%%
 torch.set_grad_enabled(False)
-device = torch.device("cuda")
-MODEL_NAME = "EleutherAI/pythia-1.4b"
+device = torch.device("cpu")
+MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -43,21 +43,25 @@ layers = model.cfg.n_layers
 km_line = load_array('km_2c_line_embed_and_mlp0', model)
 km_line = torch.from_numpy(km_line).to(device, torch.float32)
 km_line_unit = km_line / km_line.norm()
-#%%
-pc0 = load_array('pca_0_embed_and_mlp0', model)
-pc0 = torch.from_numpy(pc0).to(device, torch.float32)
-pc1 = load_array('pca_1_embed_and_mlp0', model)
-pc1 = torch.from_numpy(pc1).to(device, torch.float32)
 # #%%
+# pc0 = load_array('pca_0_embed_and_mlp0', model)
+# pc0 = torch.from_numpy(pc0).to(device, torch.float32)
+# pc1 = load_array('pca_1_embed_and_mlp0', model)
+# pc1 = torch.from_numpy(pc1).to(device, torch.float32)
+#%%
 # neg_log_prob_grad = load_array('derivative_log_prob', model)
 # neg_log_prob_grad = torch.from_numpy(neg_log_prob_grad).to(device, torch.float32)
 # grad_unit = neg_log_prob_grad / neg_log_prob_grad.norm()
 #%%
-rotation_direction = load_array('rotation_pc0', model)
+rotation_direction = load_array('rotation_direction0', model)
 rotation_direction = torch.from_numpy(rotation_direction).to(device, torch.float32)
 torch.testing.assert_close(
     rotation_direction.norm(), torch.tensor(1.0, device=device)
 )
+#%%
+ov_direction = load_array('mean_ov_direction_10_4', model)
+ov_direction = torch.from_numpy(ov_direction).to(device, torch.float32)
+ov_direction = ov_direction / ov_direction.norm()
 #%%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
     model, device
@@ -177,6 +181,15 @@ def mean_ablate_rotation_direction(
 ):
     return mean_ablate_direction(
         input, rotation_direction, tokens, multiplier
+    )
+#%%
+def mean_ablate_ov_direction(
+    input: Float[Tensor, "batch pos d_model"],
+    tokens: Iterable[int] = (adjective_token, verb_token),
+    multiplier: float = 1.0,
+):
+    return mean_ablate_direction(
+        input, ov_direction, tokens, multiplier
     )
 #%%
 # ============================================================================ #
@@ -347,7 +360,7 @@ pos_results_dict['base'], neg_results_dict['base'] = ablation_metric(
 #     top_k=top_k,
 # )
 # %%
-ABLATION = mean_ablate_km_component
+ABLATION = mean_ablate_ov_direction
 
 
 def linear_hook_base(
