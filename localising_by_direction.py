@@ -16,7 +16,7 @@ from utils.cache import (
 from utils.store import load_array, save_html
 #%%
 torch.set_grad_enabled(False)
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device('cpu') # torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODEL_NAME = "EleutherAI/pythia-1.4b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -28,12 +28,15 @@ model = HookedTransformer.from_pretrained(
 model.name = MODEL_NAME
 model.cfg.use_attn_results = True
 # %%
+SENTIMENT_DIR = 'ccs'
 sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
-    'ccs', model
-)
+    SENTIMENT_DIR, model
+).squeeze()
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
     device, dtype=torch.float32
 )
+sentiment_dir = sentiment_dir / sentiment_dir.norm()
+sentiment_dir.shape
 # %%
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
     model, device
@@ -70,11 +73,10 @@ sentiment_directions: Float[Tensor, "batch d_model"] = torch.where(
     -sentiment_repeated,
 ).to(device)
 #%%
-del model
-#%%
 NORMALISE_RESIDUALS = False
 CENTRE_RESIDUALS = True
 HTML_SUFFIX = (
+    (f'_{SENTIMENT_DIR}') +
     ('_normalised' if NORMALISE_RESIDUALS else '') + 
     ('_centred' if CENTRE_RESIDUALS else '')
 )
@@ -105,7 +107,7 @@ fig = px.imshow(
     color_continuous_scale="RdBu",
     color_continuous_midpoint=0,
 )
-save_html(fig, "sentiment_by_head{HTML_SUFFIX}", model)
+save_html(fig, f"sentiment_by_head{HTML_SUFFIX}", model)
 fig.show()
 #%%
 # ============================================================================ #
@@ -137,8 +139,8 @@ fig = px.imshow(
     y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
     height = heads * layers * 20,
 )
-save_html(fig, "sentiment_by_position{HTML_SUFFIX}", model)
-fig.show()
+save_html(fig, f"sentiment_by_position{HTML_SUFFIX}", model)
+# fig.show()
 # %%
 fig = px.line(
     per_pos_sentiment.squeeze().cpu().detach().numpy(),
@@ -152,7 +154,7 @@ fig.for_each_trace(lambda t: t.update(
     legendgroup = example_prompt_dict[t.name],
     hovertemplate = t.hovertemplate.replace(t.name, example_prompt_dict[t.name])
 ))
-save_html(fig, "sentiment_by_position_line{HTML_SUFFIX}", model)
+save_html(fig, f"sentiment_by_position_line{HTML_SUFFIX}", model)
 fig.show()
 # %%
 per_pos_flip_dirs: Float[
@@ -176,7 +178,7 @@ fig = px.imshow(
     y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
     height = heads * layers * 20,
 )
-save_html(fig, "flip_size_by_position{HTML_SUFFIX}", model)
+save_html(fig, f"flip_size_by_position{HTML_SUFFIX}", model)
 fig.show()
 #%%
 per_pos_flip_sent_projections: Float[
@@ -199,7 +201,6 @@ fig = px.imshow(
     y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
     height = heads * layers * 20,
 )
-fig.write_html(f'data/flip_percent_sentiment_by_position{HTML_SUFFIX}.html')
-save_html(fig, "flip_percent_sentiment_by_position{HTML_SUFFIX}", model)
+save_html(fig, f"flip_percent_sentiment_by_position{HTML_SUFFIX}", model)
 fig.show()
 # %%
