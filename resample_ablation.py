@@ -68,6 +68,21 @@ def logit_diff_denoising(
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
     return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
 #%%
+def logit_flips_denoising(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
+    flipped_logit_diff: float = corrupted_logit_diff,
+    clean_logit_diff: float = clean_logit_diff,
+) -> Float[Tensor, ""]:
+    '''
+    % of clean logit diffs that are in the same direction as the patched logit diff
+    0 when performance issame as on flipped input, and 
+    1 when performance is same as on clean input.
+    '''
+    patched_logit_diffs = get_logit_diff(logits, answer_tokens, per_prompt=True)
+    return torch.where(patched_logit_diffs * clean_logit_diff > 0, 1.0, 0.0).mean().item()
+
+#%%
 # ============================================================================ #
 # Head resample ablation
 
@@ -115,7 +130,7 @@ non_circuit_results = act_patch(
     verbose=True,
 )
 print(
-    f'logit diff from patching non-circuit nodes: {non_circuit_results:.0%}'
+    f'logit diff from patching non-circuit nodes: {non_circuit_results:.1%}'
     )
 # %%
 circuit_results = act_patch(
@@ -127,13 +142,49 @@ circuit_results = act_patch(
     verbose=True,
 )
 print(
-    f'logit diff from patching circuit nodes: {circuit_results:.0%}')
+    f'logit diff from patching circuit nodes: {circuit_results:.1%}')
 
 # %%
 print(
     "fully patched logit diff",
     logit_diff_denoising(logits=clean_logits)
 )
+
+#%% # start of flip metric
+print(
+    "unpatched logit flips",
+    logit_flips_denoising(logits=corrupted_logits)
+)
+# %%
+non_circuit_results = act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=clean_cache,
+    patching_nodes=non_circuit_nodes,
+    patching_metric=logit_flips_denoising,
+    verbose=True,
+)
+print(
+    f'logit flips from patching non-circuit nodes: {non_circuit_results:.1%}'
+    )
+# %%
+circuit_results = act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=clean_cache,
+    patching_nodes=circuit_nodes,
+    patching_metric=logit_flips_denoising,
+    verbose=True,
+)
+print(
+    f'logit flips from patching circuit nodes: {circuit_results:.1%}')
+
+# %%
+print(
+    "fully patched logit flips",
+    logit_flips_denoising(logits=clean_logits)
+)
+# end of flip metric
 
 # %%
 # ============================================================================ #
@@ -190,7 +241,7 @@ non_circuit_results = act_patch(
     verbose=True,
 )
 print(
-    f'logit diff from patching non-circuit positions/nodes: {non_circuit_results:.0%}'
+    f'logit diff from patching non-circuit positions/nodes: {non_circuit_results:.1%}'
     )
 # %%
 circuit_results = act_patch(
@@ -202,13 +253,48 @@ circuit_results = act_patch(
     verbose=True,
 )
 print(
-    f'logit diff from patching circuit positions/nodes: {circuit_results:.0%}')
+    f'logit diff from patching circuit positions/nodes: {circuit_results:.1%}')
 
 # %%
 print(
     "fully patched logit diff",
     logit_diff_denoising(logits=clean_logits)
 )
+#%% # start of flip metric
+print(
+    "unpatched logit flips",
+    logit_flips_denoising(logits=corrupted_logits)
+)
+# %%
+non_circuit_results = act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=clean_cache,
+    patching_nodes=non_circuit_nodes,
+    patching_metric=logit_flips_denoising,
+    verbose=True,
+)
+print(
+    f'logit flips from patching non-circuit positions/nodes: {non_circuit_results:.1%}'
+    )
+# %%
+circuit_results = act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=clean_cache,
+    patching_nodes=circuit_nodes,
+    patching_metric=logit_flips_denoising,
+    verbose=True,
+)
+print(
+    f'logit flips from patching circuit positions/nodes: {circuit_results:.1%}')
+
+# %%
+print(
+    "fully patched logit flips",
+    logit_flips_denoising(logits=clean_logits)
+)
+# end of flip metric
 #%%
 # ============================================================================ #
 # Directional resample ablation
@@ -333,4 +419,51 @@ print(
     "fully patched logit diff",
     logit_diff_denoising(logits=clean_logits)
 )
+#%% # start of flips metric
+print(
+    "unpatched logit flips",
+    logit_flips_denoising(logits=corrupted_logits)
+)
+# %%
+non_circuit_results = act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=direction_cache,
+    patching_nodes=non_circuit_nodes,
+    patching_metric=logit_flips_denoising,
+    verbose=True,
+)
+print(
+    f'logit flips from patching non-circuit directions/nodes: {non_circuit_results:.1%}'
+    )
+# %%
+circuit_results = act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=direction_cache,
+    patching_nodes=circuit_nodes,
+    patching_metric=logit_flips_denoising,
+    verbose=True,
+)
+print(
+    f'logit flips from patching circuit directions/nodes: {circuit_results:.1%}')
 #%%
+full_direction_results = act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=direction_cache,
+    patching_nodes=circuit_nodes + non_circuit_nodes,
+    patching_metric=logit_flips_denoising,
+    verbose=True,
+)
+print(
+    f'logit flips from patching direction at all nodes: {full_direction_results:.1%}'
+)
+# %%
+print(
+    "fully patched logit flips",
+    logit_flips_denoising(logits=clean_logits)
+)
+# end of flips metric
+
+# %%

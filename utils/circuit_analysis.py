@@ -113,7 +113,7 @@ def get_logit_diff(
     left_logits: Float[Tensor, "batch"] = left_logits.mean(dim=1)
     right_logits: Float[Tensor, "batch"] = right_logits.mean(dim=1)
     if per_prompt:
-        print(left_logits - right_logits)
+        return left_logits - right_logits
 
     return (left_logits - right_logits).mean()
 
