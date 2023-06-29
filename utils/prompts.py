@@ -340,19 +340,16 @@ def get_task_contrast_dataset(
         # task_2_prompts.append(task_2_pos_prompts[i])
         # task_2_prompts.append(task_2_neg_prompts[i])
         
-        #task1neg
-        all_prompts.append(task_1_neg_prompts[i]) 
-        #task2pos
-        all_prompts.append(task_2_pos_prompts[i])
-        #task2neg
-        all_prompts.append(task_2_neg_prompts[i])
-        #task1pos
         all_prompts.append(task_1_pos_prompts[i])
+        all_prompts.append(task_1_neg_prompts[i]) 
+        all_prompts.append(task_2_pos_prompts[i])
+        all_prompts.append(task_2_neg_prompts[i])
+        
 
+        flipped_prompts.append(task_2_pos_prompts[i])
         flipped_prompts.append(task_2_neg_prompts[i])
         flipped_prompts.append(task_1_pos_prompts[i])
         flipped_prompts.append(task_1_neg_prompts[i])
-        flipped_prompts.append(task_2_pos_prompts[i])
 
         
         for pair_idx in range(n_pairs):
@@ -366,14 +363,15 @@ def get_task_contrast_dataset(
             # answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
             # answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
             # answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
-            answer_tokens[i * 4, pair_idx, 0] = task_1_neg_token
-            answer_tokens[i * 4, pair_idx, 1] = task_2_neg_token
-            answer_tokens[i * 4 + 1, pair_idx, 0] = task_2_pos_token
-            answer_tokens[i * 4 + 1, pair_idx, 1] = task_1_pos_token
-            answer_tokens[i * 4 + 2, pair_idx, 0] = task_2_neg_token
-            answer_tokens[i * 4 + 2, pair_idx, 1] = task_1_neg_token
-            answer_tokens[i * 4 + 3, pair_idx, 0] = task_1_pos_token
-            answer_tokens[i * 4 + 3, pair_idx, 1] = task_2_pos_token
+            answer_tokens[i * 4, pair_idx, 0] = task_1_pos_token
+            answer_tokens[i * 4 + 1, pair_idx, 0] = task_1_neg_token
+            answer_tokens[i * 4 + 2, pair_idx, 0] = task_2_pos_token
+            answer_tokens[i * 4 + 3, pair_idx, 0] = task_2_neg_token
+            
+            answer_tokens[i * 4, pair_idx, 1] = task_2_pos_token
+            answer_tokens[i * 4 + 1, pair_idx, 1] = task_2_neg_token
+            answer_tokens[i * 4 + 2, pair_idx, 1] = task_1_pos_token
+            answer_tokens[i * 4 + 3, pair_idx, 1] = task_1_neg_token
     
     clean_tokens = model.to_tokens(
         all_prompts, prepend_bos=True
