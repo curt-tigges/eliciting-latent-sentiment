@@ -19,8 +19,7 @@ from utils.store import save_array, load_array
 #%%
 loader_batch_size = 1
 device = torch.device('cuda')
-MODEL_NAME = "gpt2-small" # FIXME: "EleutherAI/pythia-1.4b"
-HF_NAME = "gpt2"
+HF_NAME = MODEL_NAME = "EleutherAI/pythia-1.4b"
 model_type = "decoder"
 #%%
 model = HookedTransformer.from_pretrained(
@@ -32,6 +31,7 @@ model = HookedTransformer.from_pretrained(
     device=device,
 )
 model.device = model.cfg.device
+print(model.cfg.d_model)
 #%%
 pos_answers = [" Positive"] #, " amazing", " good"]
 neg_answers = [" Negative"] #, " terrible", " bad"]
@@ -110,12 +110,12 @@ len(dataloader)
 model = AutoModelForCausalLM.from_pretrained(HF_NAME, cache_dir=None).to(device)
 #%%
 parser = get_parser()
+MODEL_SUFFIX = MODEL_NAME.replace('EleutherAI/', '')
 argv = [
-    "--model_name", MODEL_NAME,
+    "--model_name", MODEL_SUFFIX,
     "--device", str(device),
     "--layer", "-1",
     # "--all_layers",
-    "--num_examples", "1000",
 ]
 gen_args = parser.parse_args(argv)
 parser.add_argument("--nepochs", type=int, default=1000)
@@ -183,11 +183,11 @@ len(neg_hs_train), len(neg_hs_test)
 #%%
 ccs_train_acc, ccs_test_acc
 # %%
-ccs_line = load_array('ccs', MODEL_NAME).squeeze(0)
+ccs_line = load_array('ccs', MODEL_SUFFIX).squeeze(0)
 ccs_line.shape
 # %%
-km_line = load_array('km_2c_line_embed_and_mlp0', MODEL_NAME)
-rotation_direction = load_array('rotation_direction0', MODEL_NAME)
+km_line = load_array('km_2c_line_embed_and_mlp0', MODEL_SUFFIX)
+rotation_direction = load_array('rotation_pc0', MODEL_SUFFIX)
 # %%
 # compute cosine similarity of ccs_line and km_line
 ccs_line = ccs_line / np.linalg.norm(ccs_line)

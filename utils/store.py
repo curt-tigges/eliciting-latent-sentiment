@@ -3,6 +3,7 @@ import os
 from transformer_lens import HookedTransformer
 from typing import Union
 import torch
+import plotly.graph_objects as go
 
 
 def clean_label(label: str) -> str:
@@ -16,11 +17,13 @@ def get_model_name(model: Union[HookedTransformer, str]) -> str:
     if isinstance(model, HookedTransformer):
         assert len(model.name) > 0, "Model must have a name"
         model = model.name
+    model = model.replace('EleutherAI/', '')
     return model
 
 
 def save_array(
-        array: Union[np.ndarray, torch.Tensor], label: str, 
+        array: Union[np.ndarray, torch.Tensor], 
+        label: str, 
         model: Union[HookedTransformer, str]
     ):
     model: str = get_model_name(model)
@@ -44,3 +47,18 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
     with open(path, 'rb') as f:
         array = np.load(f)
     return array
+
+
+def save_html(
+        fig: go.Figure,
+        label: str, 
+        model: Union[HookedTransformer, str]
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.html')
+    fig.write_html(path)
+    return path
