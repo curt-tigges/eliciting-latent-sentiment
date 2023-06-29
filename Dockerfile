@@ -13,4 +13,4 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN git config --global user.email "oskar.hollinsworth@gmail.com" && \
     git config --global user.name "skar0"
 
-RUN pip install jupyter scikit-learn
+RUN pip install jupyterlab scikit-learn
