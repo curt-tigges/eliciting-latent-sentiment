@@ -77,7 +77,8 @@ def get_prompts(
     negative_adjectives: list = neg_adj,
     neutral_adjectives: list = neutral_adj,
 ) -> Tuple[list, list]:
-    assert prompt_type in ["simple", "completion", "completion_2", "completion_3", "classification", "classification_2", "classification_3", "classification_4"]
+    assert prompt_type in ["simple", "completion", "completion_2", "completion_3", "classification", "classification_2", "classification_3", "classification_4", "classification_contradiction",
+                           "classification_contradiction_2", "completion_contradiction", "completion_contradiction_2"]
     if prompt_type == "simple":
         pos_prompts = [
             f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives))
@@ -158,6 +159,46 @@ def get_prompts(
         ]
         neutral_prompts = [
             f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+    elif prompt_type == "classification_contradiction":
+        pos_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = [
+            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+    elif prompt_type == "classification_contradiction_2":
+        pos_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = [
+            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+    elif prompt_type == "completion_contradiction":
+        pos_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. This film was really" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. This film was really" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = [
+            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. This film was really" for i in range(len(positive_adjectives)-1)
+        ]
+    elif prompt_type == "completion_contradiction_2":
+        pos_prompts = [
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. This film was really" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. This film was really" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = [
+            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. This film was really" for i in range(len(positive_adjectives)-1)
         ]
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
