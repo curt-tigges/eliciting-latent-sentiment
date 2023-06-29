@@ -263,10 +263,10 @@ def get_contrastive_prompts(
     assert prompt_type in ["contrastive_tasks"]
     if prompt_type == "contrastive_tasks":
         task_1_pos_prompts = [
-            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall it was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall it was just very good. Review Sentiment:" for i in range(len(positive_adjectives))
         ]
         task_1_neg_prompts = [
-            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall it was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall it was just very bad. Review Sentiment:" for i in range(len(positive_adjectives))
         ]
         task_2_pos_prompts = [
             f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall it was just very good. This film was really" for i in range(len(positive_adjectives))
