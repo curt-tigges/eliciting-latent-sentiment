@@ -32,7 +32,7 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import save_array
+from utils.store import save_array, save_html
 # ============================================================================ #
 # model loading
 
@@ -932,7 +932,7 @@ fig = px.histogram(
     data_frame=dots_df, x='dot', hover_data=['token'], marginal="rug",
     title="Histogram of dot product of embeddings and KM line on pile",
 )
-# fig.write_html("data/pile_embeddings.html")
+save_html((fig, "pile_embeddings", model))
 fig.show()
 
 # %%

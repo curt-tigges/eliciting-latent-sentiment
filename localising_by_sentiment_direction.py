@@ -13,35 +13,25 @@ from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos,
     residual_flip_dir_by_pos
 )
-from utils.store import load_array
+from utils.store import load_array, save_html
 #%%
 torch.set_grad_enabled(False)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+MODEL_NAME = "EleutherAI/pythia-1.4b"
 model = HookedTransformer.from_pretrained(
-    "gpt2-small",
+    MODEL_NAME,
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
     device=device,
 )
+model.name = MODEL_NAME
 model.cfg.use_attn_results = True
 # %%
 sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
-    'km_line_embed_and_mlp0'
+    'ccs', model
 )
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
-    device, dtype=torch.float32
-)
-positive_dir: Float[np.ndarray, "d_model"] = load_array(
-    'km_positive_embed_and_mlp0'
-)
-positive_dir: Float[Tensor, "d_model"] = torch.tensor(positive_dir).to(
-    device, dtype=torch.float32
-)
-negative_dir: Float[np.ndarray, "d_model"] = load_array(
-    'km_negative_embed_and_mlp0'
-)
-negative_dir: Float[Tensor, "d_model"] = torch.tensor(negative_dir).to(
     device, dtype=torch.float32
 )
 # %%
@@ -115,7 +105,7 @@ fig = px.imshow(
     color_continuous_scale="RdBu",
     color_continuous_midpoint=0,
 )
-fig.write_html(f'data/sentiment_by_head{HTML_SUFFIX}.html')
+save_html(fig, "sentiment_by_head{HTML_SUFFIX}", model)
 fig.show()
 #%%
 # ============================================================================ #
@@ -147,7 +137,7 @@ fig = px.imshow(
     y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
     height = heads * layers * 20,
 )
-fig.write_html(f'data/sentiment_by_position{HTML_SUFFIX}.html')
+save_html(fig, "sentiment_by_position{HTML_SUFFIX}", model)
 fig.show()
 # %%
 fig = px.line(
@@ -162,7 +152,7 @@ fig.for_each_trace(lambda t: t.update(
     legendgroup = example_prompt_dict[t.name],
     hovertemplate = t.hovertemplate.replace(t.name, example_prompt_dict[t.name])
 ))
-fig.write_html(f'data/sentiment_by_position_line{HTML_SUFFIX}.html')
+save_html(fig, "sentiment_by_position_line{HTML_SUFFIX}", model)
 fig.show()
 # %%
 per_pos_flip_dirs: Float[
@@ -186,7 +176,7 @@ fig = px.imshow(
     y=[f'L{l}H{h}' for l in range(layers) for h in range(heads)],
     height = heads * layers * 20,
 )
-fig.write_html(f'data/flip_size_by_position{HTML_SUFFIX}.html')
+save_html(fig, "flip_size_by_position{HTML_SUFFIX}", model)
 fig.show()
 #%%
 per_pos_flip_sent_projections: Float[
@@ -210,5 +200,6 @@ fig = px.imshow(
     height = heads * layers * 20,
 )
 fig.write_html(f'data/flip_percent_sentiment_by_position{HTML_SUFFIX}.html')
+save_html(fig, "flip_percent_sentiment_by_position{HTML_SUFFIX}", model)
 fig.show()
 # %%
