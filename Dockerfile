@@ -14,3 +14,4 @@ RUN git config --global user.email "oskar.hollinsworth@gmail.com" && \
     git config --global user.name "skar0"
 
 RUN pip install jupyterlab scikit-learn
+RUN pip install ipywidgets
