@@ -16,7 +16,7 @@ from tqdm import tqdm
 from path_patching import act_patch, Node, IterNode
 #%% # Model loading
 device = torch.device('cpu')
-MODEL_NAME = 'gpt2-small'
+MODEL_NAME = 'EleutherAI/pythia-1.4b'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -29,7 +29,7 @@ model.name = MODEL_NAME
 #%%
 # corrupted to clean patching style
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
-    model, device
+    model, device, prompt_type='classification_4'
 )
 #%%
 example_prompt = model.to_str_tokens(clean_tokens[0])
@@ -53,6 +53,86 @@ clean_cache.to(device)
 corrupted_cache.to(device)
 #%%
 assert clean_cache['blocks.0.attn.hook_z'].device == device
+#%%
+#  tokenizer_heads = [
+#     (0, 4),
+# ]
+# dae_heads = [
+#     (7, 1),
+#     (9, 2),
+#     (10, 1),
+#     (10, 4),
+#     (11, 9),
+# ]
+# iae_heads = [
+#     (8, 5),
+#     (9, 2),
+#     (9, 10),
+# ]
+# iam_heads = [
+#     (6, 4),
+#     (7, 1),
+#     (7, 5),
+# ]
+circuit_heads = [
+    (6, 11),
+    (11, 1),
+    (13, 13),
+    (18, 2),
+    (21, 0),
+]
+non_circuit_heads = [
+    (layer, head)
+    for layer in range(model.cfg.n_layers)
+    for head in range(model.cfg.n_heads)
+    if (layer, head) not in circuit_heads
+]
+circuit_nodes = [
+    Node("result", layer, head) for layer, head in circuit_heads
+]
+non_circuit_nodes = [
+    Node("result", layer, head) for layer, head in non_circuit_heads
+]
+#%%
+# circuit_heads_positions = [
+#     (0, 4, adj_token),
+#     (0, 4, verb_token),
+#     (7, 1, end_token),
+#     (9, 2, end_token),
+#     (10, 1, end_token),
+#     (10, 4, end_token),
+#     (11, 9, end_token),
+#     (8, 5, end_token),
+#     (9, 2, end_token),
+#     (9, 10, end_token),
+#     (6, 4, s2_token),
+#     (7, 1, s2_token),
+#     (7, 5, s2_token),
+# ]
+circuit_heads_positions = [
+    (6, 11, 11),
+    (6, 11, 28),
+    (6, 11, 29),
+    (11, 1, end_token),
+    (13, 13, end_token),
+    (18, 2, end_token),
+    (21, 0, end_token),
+]
+non_circuit_heads_positions = [
+    (layer, head, pos)
+    for layer in range(model.cfg.n_layers)
+    for head in range(model.cfg.n_heads)
+    for pos in range(len(example_prompt))
+    if (layer, head, pos) not in circuit_heads_positions
+]
+circuit_position_nodes = [
+    Node("result", layer=node[0], head=node[1], seq_pos=node[2]) 
+    for node in circuit_heads_positions
+]
+non_circuit_position_nodes = [
+    Node("result",  layer=node[0], head=node[1], seq_pos=node[2]) 
+    for node in non_circuit_heads_positions
+]
 #%%
 def logit_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
@@ -113,7 +193,6 @@ def get_patch_results_base(
     )
     print(
         f'{metric.__name__} from patching circuit nodes: {circuit_results:.1%}')
-
     print(
         f"fully patched {metric.__name__}: {metric(logits=clean_logits):.1%}",
         
@@ -142,39 +221,6 @@ def get_patch_results(
 # Head resample ablation
 print('Head resample ablation')
 
-tokenizer_heads = [
-    (0, 4),
-]
-dae_heads = [
-    (7, 1),
-    (9, 2),
-    (10, 1),
-    (10, 4),
-    (11, 9),
-]
-iae_heads = [
-    (8, 5),
-    (9, 2),
-    (9, 10),
-]
-iam_heads = [
-    (6, 4),
-    (7, 1),
-    (7, 5),
-]
-circuit_heads = dae_heads + iae_heads + iam_heads + tokenizer_heads
-non_circuit_heads = [
-    (layer, head)
-    for layer in range(model.cfg.n_layers)
-    for head in range(model.cfg.n_heads)
-    if (layer, head) not in circuit_heads
-]
-circuit_nodes = [
-    Node("result", layer, head) for layer, head in circuit_heads
-]
-non_circuit_nodes = [
-    Node("result", layer, head) for layer, head in non_circuit_heads
-]
 get_patch_results(
     circuit_nodes=circuit_nodes,
     non_circuit_nodes=non_circuit_nodes,
@@ -184,46 +230,9 @@ get_patch_results(
 # ============================================================================ #
 # Positional resample ablation
 print('Positional resample ablation')
-tokenizer_heads = [
-    (0, 4, adj_token),
-    (0, 4, verb_token),
-]
-dae_heads = [
-    (7, 1, end_token),
-    (9, 2, end_token),
-    (10, 1, end_token),
-    (10, 4, end_token),
-    (11, 9, end_token),
-]
-iae_heads = [
-    (8, 5, end_token),
-    (9, 2, end_token),
-    (9, 10, end_token),
-]
-iam_heads = [
-    (6, 4, s2_token),
-    (7, 1, s2_token),
-    (7, 5, s2_token),
-]
-circuit_heads = dae_heads + iae_heads + iam_heads + tokenizer_heads
-non_circuit_heads = [
-    (layer, head, pos)
-    for layer in range(model.cfg.n_layers)
-    for head in range(model.cfg.n_heads)
-    for pos in range(len(example_prompt))
-    if (layer, head, pos) not in circuit_heads
-]
-circuit_nodes = [
-    Node("result", layer=node[0], head=node[1], seq_pos=node[2]) 
-    for node in circuit_heads
-]
-non_circuit_nodes = [
-    Node("result",  layer=node[0], head=node[1], seq_pos=node[2]) 
-    for node in non_circuit_heads
-]
 get_patch_results(
-    circuit_nodes=circuit_nodes,
-    non_circuit_nodes=non_circuit_nodes,
+    circuit_nodes=circuit_position_nodes,
+    non_circuit_nodes=non_circuit_position_nodes,
 )
 #%%
 # ============================================================================ #
@@ -274,35 +283,6 @@ def create_directional_cache(directions: List[np.ndarray]) -> ActivationCache:
 direction_cache = create_directional_cache(directions)
 #%%
 print('Directional resample ablation')
-tokenizer_heads = [
-    (0, 4),
-]
-dae_heads = [
-    (7, 1),
-    (9, 2),
-    (10, 1),
-    (10, 4),
-    (11, 9),
-]
-iae_heads = [
-    (8, 5),
-    (9, 2),
-    (9, 10),
-]
-iam_heads = [
-    (6, 4),
-    (7, 1),
-    (7, 5),
-]
-circuit_heads = dae_heads + iae_heads + iam_heads + tokenizer_heads
-non_circuit_heads = [
-    (layer, head)
-    for layer in range(model.cfg.n_layers)
-    for head in range(model.cfg.n_heads)
-    if (layer, head) not in circuit_heads
-]
-circuit_nodes = [Node("result", *node) for node in circuit_heads]
-non_circuit_nodes = [Node("result", *node) for node in non_circuit_heads]
 get_patch_results(
     circuit_nodes=circuit_nodes,
     non_circuit_nodes=non_circuit_nodes,
@@ -314,46 +294,9 @@ get_patch_results(
 # ============================================================================ #
 # Position & direction resample ablation
 print('Position & direction resample ablation')
-tokenizer_heads = [
-    (0, 4, adj_token),
-    (0, 4, verb_token),
-]
-dae_heads = [
-    (7, 1, end_token),
-    (9, 2, end_token),
-    (10, 1, end_token),
-    (10, 4, end_token),
-    (11, 9, end_token),
-]
-iae_heads = [
-    (8, 5, end_token),
-    (9, 2, end_token),
-    (9, 10, end_token),
-]
-iam_heads = [
-    (6, 4, s2_token),
-    (7, 1, s2_token),
-    (7, 5, s2_token),
-]
-circuit_heads = dae_heads + iae_heads + iam_heads + tokenizer_heads
-non_circuit_heads = [
-    (layer, head, pos)
-    for layer in range(model.cfg.n_layers)
-    for head in range(model.cfg.n_heads)
-    for pos in range(len(example_prompt))
-    if (layer, head, pos) not in circuit_heads
-]
-circuit_nodes = [
-    Node("result", layer=node[0], head=node[1], seq_pos=node[2]) 
-    for node in circuit_heads
-]
-non_circuit_nodes = [
-    Node("result",  layer=node[0], head=node[1], seq_pos=node[2]) 
-    for node in non_circuit_heads
-]
 get_patch_results(
-    circuit_nodes=circuit_nodes,
-    non_circuit_nodes=non_circuit_nodes,
+    circuit_nodes=circuit_position_nodes,
+    non_circuit_nodes=non_circuit_position_nodes,
     new_cache=direction_cache,
 )
 #%%

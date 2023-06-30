@@ -19,14 +19,14 @@ import plotly.express as px
 from utils.cache import (
     residual_sentiment_sim_by_head, residual_sentiment_sim_by_pos
 )
-from utils.store import load_array
+from utils.store import load_array, save_html
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 #%%
 torch.set_grad_enabled(False)
-device = torch.device("cpu")
-MODEL_NAME = "EleutherAI/pythia-1.4b"
+device = torch.device("cuda")
+MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -374,7 +374,7 @@ pos_results_dict['base'], neg_results_dict['base'] = ablation_metric(
 #     top_k=top_k,
 # )
 # %%
-ABLATION = mean_ablate_ccs_direction
+ABLATION = mean_ablate_rotation_direction
 
 
 def linear_hook_base(
@@ -564,14 +564,14 @@ for experiment_name, experiment_hook in experiments.items():
 #%%
 results_df = pd.Series(pos_results_dict).rename('log_prob').reset_index()
 results_df['pos_neg'] = 'positive'
-results_df = results_df.append(
-    pd.Series(neg_results_dict).rename('log_prob').reset_index()
+results_df = pd.concat(
+    [results_df, pd.Series(neg_results_dict).rename('log_prob').reset_index()]
 )
 results_df['pos_neg'] = results_df['pos_neg'].fillna('negative')
 results_df.rename(columns={'index': 'experiment'}, inplace=True)
 results_df
 #%%
-px.bar(
+fig = px.bar(
     results_df,
     x='experiment',
     y='log_prob',
@@ -579,6 +579,8 @@ px.bar(
     title=f'Log prob metric by experiment ({ABLATION.__name__})',
     barmode='group',
 )
+save_html(fig, f'log_prob_metric_by_experiment_{ABLATION.__name__}', model)
+fig.show()
 #%%
 
 # # %%
