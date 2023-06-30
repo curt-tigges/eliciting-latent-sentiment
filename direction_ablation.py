@@ -25,8 +25,8 @@ from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 #%%
 torch.set_grad_enabled(False)
-device = torch.device("cpu")
-MODEL_NAME = "EleutherAI/pythia-1.4b"
+device = torch.device("cuda")
+MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -374,7 +374,7 @@ pos_results_dict['base'], neg_results_dict['base'] = ablation_metric(
 #     top_k=top_k,
 # )
 # %%
-ABLATION = mean_ablate_ccs_direction
+ABLATION = mean_ablate_rotation_direction
 
 
 def linear_hook_base(

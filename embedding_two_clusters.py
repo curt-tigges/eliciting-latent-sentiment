@@ -38,8 +38,8 @@ from utils.prompts import remove_pythia_double_token_words
 # model loading
 
 #%%
-device = torch.device('cuda')
-MODEL_NAME = 'EleutherAI/pythia-1.4b'
+device = torch.device('cpu')
+MODEL_NAME = 'gpt2-small'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -265,7 +265,7 @@ def embed_str_tokens(
     assert len(embeddings.shape) == 2, (
         f"Expected embeddings to be 2D, got {embeddings.shape}"
     )
-    return embeddings.cpu().detach()
+    return embeddings.detach()
 #%% # train, test embeddings
 embedding_type = EmbedType.MLP
 train_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
@@ -347,7 +347,9 @@ km_line: Float[np.ndarray, "d_model"] = (
 )
 km_line_normalised: Float[
     Tensor, "d_model"
-] = torch.tensor(km_line / np.linalg.norm(km_line), dtype=torch.float32)
+] = torch.tensor(
+    km_line / np.linalg.norm(km_line), dtype=torch.float32, device=device
+)
 #%%
 print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
@@ -387,7 +389,7 @@ pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
 #%% # bar of % variance explained by each component
 fig = px.bar(
     pca.explained_variance_ratio_, 
-    title="% variance explained by PCA", 
+    title=f"% variance explained by PCA ({model.name})", 
     labels={'index': 'component', 'value': '% variance'},
 )
 fig.update_layout(showlegend=False, title_x=0.5)
@@ -694,7 +696,10 @@ def plot_pca_2d():
         )
     )
     fig.update_layout(
-        title=f"PCA on {embedding_type.value} of single-token adjectives",
+        title=(
+            f"PCA on {embedding_type.value} of single-token adjectives "
+            f"({model.name})"
+        ),
         xaxis_title="PC1",
         yaxis_title="PC2",
     )
