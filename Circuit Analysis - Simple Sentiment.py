@@ -183,24 +183,17 @@ answers_dict = {
     "task_2_positive": [" good", " great"],
     "task_2_negative": [" bad", " terrible"]
 }
-assert set(answers_dict.keys()) == set(["task_1_positive", "task_1_negative", "task_2_positive", "task_2_negative"])
-all_prompts, flipped_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_task_contrast_dataset(
-    model,
-    device=device,
-    n_pairs=1,
-    prompt_type="contrastive_tasks",
-    answers_dict=answers_dict,
+#pos_answers = [" Positive", " amazing", " good"]
+#neg_answers = [" Negative", " terrible", " bad"]
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+    model, device, 1, prompt_type="completion_contradiction", comparison=("positive", "negative")
 )
 
 # %%
-for i in range(len(all_prompts)//2):
-    print(f"Regular Prompt: {all_prompts[i]}\n")
+for i in range(len(all_prompts)):
+    print(f"Regular Prompt: {model.to_str_tokens(clean_tokens[i])}")
     logits, _ = model.run_with_cache(all_prompts[i])
-    print(f"Flipped Prompt: {flipped_prompts[i]}\n")
     print(f"Logit diff: {get_logit_diff(logits, answer_tokens[i].unsqueeze(0))}")
-
-# %%
-model.to_string(answer_tokens[0,:,1])
 
 # %%
 from utils.prompts import get_onesided_datasets
@@ -227,7 +220,7 @@ answer_tokens['positive'].shape
 #pos_answers = [" Positive", " amazing", " good"]
 #neg_answers = [" Negative", " terrible", " bad"]
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
-    model, device, 1, comparison=("positive", "neutral")
+    model, device, 1, comparison=("positive", "negative")
 )
 
 # %%
@@ -241,6 +234,16 @@ for i in range(len(all_prompts)):
     logits, _ = model.run_with_cache(all_prompts[i])
     print(all_prompts[i])
     print(get_logit_diff(logits, answer_tokens[i].unsqueeze(0)))
+
+# %%
+pos_logits, pos_cache = model.run_with_cache(clean_tokens[::2,:])
+pos_logit_diff = get_logit_diff(pos_logits, answer_tokens[::2,:])
+pos_logit_diff
+
+# %%
+neg_logits, neg_cache = model.run_with_cache(clean_tokens[1::2,:])
+neg_logit_diff = get_logit_diff(neg_logits, answer_tokens[1::2,:])
+neg_logit_diff
 
 # %%
 clean_logits, clean_cache = model.run_with_cache(clean_tokens)
@@ -464,7 +467,7 @@ imshow_p(
 )
 
 # %%
-from visualization import (
+from utils.visualization import (
     plot_attention_heads,
     scatter_attention_and_contribution
 )
@@ -475,7 +478,7 @@ import circuitsvis as cv
 plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
 
 # %%
-from visualization import get_attn_head_patterns
+from utils.visualization import get_attn_head_patterns
 
 top_k = 5
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
@@ -484,7 +487,7 @@ tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
-from visualization import scatter_attention_and_contribution_sentiment
+from utils.visualization import scatter_attention_and_contribution_sentiment
 
 from plotly.subplots import make_subplots
 
