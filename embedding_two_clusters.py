@@ -38,7 +38,7 @@ from utils.prompts import remove_pythia_double_token_words
 # model loading
 
 #%%
-device = torch.device('cpu')
+device = torch.device('cuda')
 MODEL_NAME = 'EleutherAI/pythia-1.4b'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -698,6 +698,7 @@ def plot_pca_2d():
         xaxis_title="PC1",
         yaxis_title="PC2",
     )
+    print(save_html(fig, f"PCA_{embedding_type.value}", model))
     return fig
 # %%
 if pca.n_components_ == 2:
@@ -738,7 +739,7 @@ df = pd.DataFrame({
         "pca": train_pcs[:, 0],
         "binary_label": train_pca_labels,
 })
-df.to_csv("data/negativity_scores.csv", index=False)
+# df.to_csv("data/negativity_scores.csv", index=False)
 # %%
 # ============================================================================ #
 # Histogram of dot product of embeddings and km_line
