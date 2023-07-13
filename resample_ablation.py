@@ -1,4 +1,23 @@
-#%%
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: title,-all
+#     custom_cell_magics: kql
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.11.2
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
+
+# %%
+# !ls
+
+# %%
 import einops
 import numpy as np
 from jaxtyping import Float, Int
@@ -14,8 +33,8 @@ from functools import partial
 from collections import defaultdict
 from tqdm import tqdm
 from path_patching import act_patch, Node, IterNode
-#%% # Model loading
-device = torch.device('cpu')
+# %% # Model loading
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 MODEL_NAME = 'EleutherAI/pythia-1.4b'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -26,12 +45,12 @@ model = HookedTransformer.from_pretrained(
 )
 model.cfg.use_attn_result = True
 model.name = MODEL_NAME
-#%%
+# %%
 # corrupted to clean patching style
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
     model, device, prompt_type='classification_4'
 )
-#%%
+# %%
 example_prompt = model.to_str_tokens(clean_tokens[0])
 adj_token = example_prompt.index(' perfect')
 verb_token = example_prompt.index(' loved')
@@ -48,12 +67,15 @@ corrupted_logits, corrupted_cache = model.run_with_cache(
 )
 corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 print('corrupted logit diff', corrupted_logit_diff)
-#%%
+# %%
 clean_cache.to(device)
 corrupted_cache.to(device)
-#%%
+# %%
+clean_cache['blocks.0.attn.hook_z'].device
+
+# %%
 assert clean_cache['blocks.0.attn.hook_z'].device == device
-#%%
+# %%
 #  tokenizer_heads = [
 #     (0, 4),
 # ]
@@ -93,7 +115,7 @@ circuit_nodes = [
 non_circuit_nodes = [
     Node("result", layer, head) for layer, head in non_circuit_heads
 ]
-#%%
+# %%
 # circuit_heads_positions = [
 #     (0, 4, adj_token),
 #     (0, 4, verb_token),
@@ -133,7 +155,7 @@ non_circuit_position_nodes = [
     Node("result",  layer=node[0], head=node[1], seq_pos=node[2]) 
     for node in non_circuit_heads_positions
 ]
-#%%
+# %%
 def logit_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
@@ -147,7 +169,7 @@ def logit_diff_denoising(
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
     return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
-#%%
+# %%
 def logit_flips_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
@@ -161,7 +183,7 @@ def logit_flips_denoising(
     patched_logit_diffs = get_logit_diff(logits, answer_tokens, per_prompt=True)
     return torch.where(patched_logit_diffs * clean_logit_diff > 0, 1.0, 0.0).mean().item()
 
-#%%
+# %%
 def get_patch_results_base(
     circuit_nodes: List[Node],
     non_circuit_nodes: List[Node],
@@ -197,7 +219,7 @@ def get_patch_results_base(
         f"fully patched {metric.__name__}: {metric(logits=clean_logits):.1%}",
         
     )
-#%%
+# %%
 def get_patch_results(
     circuit_nodes: List[Node],
     non_circuit_nodes: List[Node],
@@ -216,7 +238,7 @@ def get_patch_results(
         new_cache=new_cache,
     )
 
-#%%
+# %%
 # ============================================================================ #
 # Head resample ablation
 print('Head resample ablation')
@@ -234,7 +256,8 @@ get_patch_results(
     circuit_nodes=circuit_position_nodes,
     non_circuit_nodes=non_circuit_position_nodes,
 )
-#%%
+# %%
+
 # ============================================================================ #
 # Directional resample ablation
 pos_dir = load_array("km_2c_line_embed_and_mlp0", model)
@@ -245,7 +268,7 @@ neg_dir /= np.linalg.norm(neg_dir)
 neg_dir = torch.tensor(neg_dir, device=device, dtype=torch.float32)
 directions = [pos_dir, neg_dir]
 
-#%%
+# %%
 def create_directional_cache(directions: List[np.ndarray]) -> ActivationCache:
     cache = {}
     for act_name, orig_value in corrupted_cache.items():
@@ -281,7 +304,7 @@ def create_directional_cache(directions: List[np.ndarray]) -> ActivationCache:
     return ActivationCache(cache, model)
 
 direction_cache = create_directional_cache(directions)
-#%%
+# %%
 print('Directional resample ablation')
 get_patch_results(
     circuit_nodes=circuit_nodes,
@@ -299,4 +322,4 @@ get_patch_results(
     non_circuit_nodes=non_circuit_position_nodes,
     new_cache=direction_cache,
 )
-#%%
+# %%
