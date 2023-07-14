@@ -1,8 +1,8 @@
 from transformer_lens import HookedTransformer
 import torch
 from torch import Tensor
-from jaxtyping import Float
-from typing import Tuple
+from jaxtyping import Float, Int, Bool
+from typing import List, Tuple
 import einops
 
 # deprecated for now--those with the weakest positive response are eliminated
@@ -309,3 +309,53 @@ def get_onesided_datasets(
         prompt_return_dict, 
         answer_tokens
     )
+
+def get_ccs_dataset(
+    model: HookedTransformer,
+    device: torch.device,
+    prompt_type: str = "classification_4",
+    pos_answers: List[str] = [" Positive"],
+    neg_answers: List[str] = [" Negative"],
+) -> Tuple[
+    Float[Tensor, "batch q_and_a"], 
+    Float[Tensor, "batch q_and_a"], 
+    List[List[str]],
+    List[List[str]],
+    Int[Tensor, "batch"],
+    Bool[Tensor, "batch"],
+]:
+    all_prompts, answer_tokens, clean_tokens, _ = get_dataset(
+        model, device, n_pairs=1, prompt_type=prompt_type, 
+        pos_answers=pos_answers, neg_answers=neg_answers,
+    )
+    answer_tokens: Int[Tensor, "batch 2"] = answer_tokens.squeeze(1)
+    clean_tokens.shape
+    possible_answers = answer_tokens[0]
+    possible_answers_repeated: Int[Tensor, "batch 2"] = einops.repeat(
+        possible_answers, "answers -> batch answers", batch=clean_tokens.shape[0]
+    )
+    # concatenate clean_tokens and answer_tokens along new dimension
+    pos_tokens: Float[Tensor, "batch q_and_a"] = torch.cat(
+        (clean_tokens, possible_answers_repeated[:, :1]), dim=1
+    )
+    neg_tokens: Float[Tensor, "batch q_and_a"] = torch.cat(
+        (clean_tokens, possible_answers_repeated[:, -1:]), dim=1
+    )
+    gt_labels: Int[Tensor, "batch"] = (
+        pos_tokens[:, -1] == answer_tokens[:, 0]
+    ).to(torch.int64) # 1 for positive, 0 for negative
+    truncated: Bool[Tensor, "batch"] = torch.zeros(
+        gt_labels.shape[0], device=device, dtype=torch.bool
+    )
+    pos_prompts = [
+        [prompt, answer] 
+        for prompt in all_prompts 
+        for answer in pos_answers
+    ]
+    neg_prompts = [
+        [prompt, answer]
+        for prompt in all_prompts
+        for answer in neg_answers
+    ]
+    assert len(pos_prompts) == len(pos_tokens)
+    return neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, truncated
