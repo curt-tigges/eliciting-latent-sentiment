@@ -200,7 +200,7 @@ def ccs_proj_denoising(
     return_tensor: bool = False,
 ) -> Float[Tensor, ""]:
     '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
+    Linear function of CCS projection, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
     patched_ccs_proj = get_ccs_proj(cache, directions)
@@ -249,8 +249,12 @@ final_token_residual_stream = final_residual_stream[:, -1, :]
 # pos_slice is the subset of the positions we take - here the final token of each prompt
 scaled_final_token_residual_stream = clean_cache.apply_ln_to_stack(final_token_residual_stream, layer = -1, pos_slice=-1)
 
-average_ccs_proj = einsum("batch d_model, batch d_model -> ", scaled_final_token_residual_stream, ccs_proj_directions)/len(all_prompts)
-print("Calculated average logit diff:", average_ccs_proj.item())
+average_ccs_proj = einsum(
+    "batch d_model, batch d_model -> ", 
+    scaled_final_token_residual_stream, 
+    ccs_proj_directions
+) / len(clean_tokens)
+print("Calculated average CCS projection:", average_ccs_proj.item())
 print("Original CCS projection:",clean_ccs_proj.item())
 
 # %% [markdown]
@@ -270,17 +274,31 @@ def residual_stack_to_ccs_proj(
     ) / len(clean_tokens)
 
 # %%
-accumulated_residual, labels = clean_cache.accumulated_resid(
+clean_accumulated_residual, labels = clean_cache.accumulated_resid(
     layer=-1, incl_mid=False, pos_slice=-1, return_labels=True
 )
-logit_lens_ccs_projs = residual_stack_to_ccs_proj(
-    accumulated_residual, clean_cache
+clean_logit_lens_ccs_projs = residual_stack_to_ccs_proj(
+    clean_accumulated_residual, clean_cache
 )
 line(
-    logit_lens_ccs_projs, 
+    clean_logit_lens_ccs_projs, 
     x=np.arange(model.cfg.n_layers*1+1)/2, 
     hover_name=labels, 
-    title="CCS projection From Accumulated Residual Stream",
+    title="CCS projection From Accumulated Residual Stream (clean prompts)",
+    labels={'x': "Layer", 'y': "CCS projection"},
+)
+# %%
+corrupt_accumulated_residual, labels = corrupted_cache.accumulated_resid(
+    layer=-1, incl_mid=False, pos_slice=-1, return_labels=True
+)
+corrupt_logit_lens_ccs_projs = residual_stack_to_ccs_proj(
+    corrupt_accumulated_residual, corrupted_cache
+)
+line(
+    corrupt_logit_lens_ccs_projs, 
+    x=np.arange(model.cfg.n_layers*1+1)/2, 
+    hover_name=labels, 
+    title="CCS projection From Accumulated Residual Stream (corrupt prompts)",
     labels={'x': "Layer", 'y': "CCS projection"},
 )
 
@@ -288,10 +306,29 @@ line(
 # #### Layer Attribution
 
 # %%
-per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
-per_layer_ccs_projs = residual_stack_to_ccs_proj(per_layer_residual, clean_cache)
+clean_per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
+clean_per_layer_ccs_projs = residual_stack_to_ccs_proj(clean_per_layer_residual, clean_cache)
 
-line(per_layer_ccs_projs, hover_name=labels, title="CCS projection From Each Layer")
+line(
+    clean_per_layer_ccs_projs, 
+    x=labels,
+    hover_name=labels, 
+    title="CCS projection From Each Layer (clean)",
+    labels={'x': "Layer/Attn-MLP", 'y': "CCS projection"},
+
+)
+# %%
+corrupt_per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
+corrupt_per_layer_ccs_projs = residual_stack_to_ccs_proj(corrupt_per_layer_residual, corrupted_cache)
+
+line(
+    corrupt_per_layer_ccs_projs, 
+    x=labels,
+    hover_name=labels, 
+    title="CCS projection From Each Layer (corrupt)",
+    labels={'x': "Layer/Attn-MLP", 'y': "CCS projection"},
+
+)
 
 # %% [markdown]
 # #### Head Attribution
@@ -299,15 +336,33 @@ line(per_layer_ccs_projs, hover_name=labels, title="CCS projection From Each Lay
 # %%
 def imshow(tensor, renderer=None, **kwargs):
     px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, color_continuous_scale="RdBu", **kwargs).show(renderer)
-
-per_head_residual, labels = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
-per_head_ccs_projs = residual_stack_to_ccs_proj(per_head_residual, clean_cache)
-per_head_ccs_projs = einops.rearrange(per_head_ccs_projs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
-per_head_ccs_projs_pct = per_head_ccs_projs
+#%%
+clean_per_head_residual, labels = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
+clean_per_head_ccs_projs = residual_stack_to_ccs_proj(clean_per_head_residual, clean_cache)
+clean_per_head_ccs_projs = einops.rearrange(
+    clean_per_head_ccs_projs, 
+    "(layer head_index) -> layer head_index", 
+    layer=model.cfg.n_layers, 
+    head_index=model.cfg.n_heads
+)
 imshow(
-    per_head_ccs_projs_pct, 
+    clean_per_head_ccs_projs, 
     labels={"x":"Head", "y":"Layer"}, 
-    title="CCS projection From Each Head"
+    title="CCS projection From Each Head (clean)"
+)
+#%%
+corrupt_per_head_residual, labels = corrupted_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
+corrupt_per_head_ccs_projs = residual_stack_to_ccs_proj(corrupt_per_head_residual, clean_cache)
+corrupt_per_head_ccs_projs = einops.rearrange(
+    corrupt_per_head_ccs_projs, 
+    "(layer head_index) -> layer head_index", 
+    layer=model.cfg.n_layers, 
+    head_index=model.cfg.n_heads
+)
+imshow(
+    clean_per_head_ccs_projs, 
+    labels={"x":"Head", "y":"Layer"}, 
+    title="CCS projection From Each Head (corrupt)"
 )
 
 # %% [markdown]
@@ -317,7 +372,7 @@ imshow(
 # #### Attention Heads
 
 # %%
-results = act_patch(
+head_results = act_patch(
     model=model,
     orig_input=corrupted_tokens,
     new_cache=clean_cache,
@@ -329,9 +384,9 @@ results = act_patch(
 
 # %%
 imshow_p(
-    results['z'] * 100,
+    head_results['z'] * 100,
     title="Patching output of attention heads (corrupted -> clean)",
-    labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+    labels={"x": "Head", "y": "Layer", "color": "CCS proj variation"},
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=600,
@@ -344,7 +399,7 @@ imshow_p(
 # %%
 # iterating over all heads' output in all layers
 
-results = act_patch(
+head_component_results = act_patch(
     model=model,
     orig_input=corrupted_tokens,
     new_cache=clean_cache,
@@ -355,15 +410,15 @@ results = act_patch(
 )
 
 # %%
-assert results.keys() == {"z", "q", "k", "v", "pattern"}
+assert head_component_results.keys() == {"z", "q", "k", "v", "pattern"}
 #assert all([r.shape == (12, 12) for r in results.values()])
 
 imshow_p(
-    torch.stack(tuple(results.values())) * 100,
+    torch.stack(tuple(head_component_results.values())) * 100,
     facet_col=0,
     facet_labels=["Output", "Query", "Key", "Value", "Pattern"],
     title="Patching output of attention heads (corrupted -> clean)",
-    labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+    labels={"x": "Head", "y": "Layer", "color": "CCS proj variation"},
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=1500,
@@ -376,7 +431,7 @@ imshow_p(
 # %%
 # patching at each (layer, sequence position) for each of (resid_pre, attn_out, mlp_out) in turn
 
-results = act_patch(
+attn_mlp_results = act_patch(
     model=model,
     orig_input=corrupted_tokens,
     new_cache=clean_cache,
@@ -387,51 +442,29 @@ results = act_patch(
 )
 
 # %%
-assert results.keys() == {"resid_pre", "attn_out", "mlp_out"}
+assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
 labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
 imshow_p(
-    torch.stack([r.T for r in results.values()]) * 100, # we transpose so layer is on the y-axis
+    torch.stack([r.T for r in attn_mlp_results.values()]) * 100, # we transpose so layer is on the y-axis
     facet_col=0,
     facet_labels=["resid_pre", "attn_out", "mlp_out"],
     title="Patching at resid stream & layer outputs (corrupted -> clean)",
-    labels={"x": "Sequence position", "y": "Layer", "color": "Logit diff variation"},
+    labels={"x": "Sequence position", "y": "Layer", "color": "CCS proj variation"},
     x=labels,
     xaxis_tickangle=45,
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=1300,
-    zmin=-50,
-    zmax=50,
+    zmin=-100,
+    zmax=100,
     margin={"r": 100, "l": 100}
 )
 
-# %%
-import transformer_lens.patching as patching
-ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
-
-attn_head_out_act_patch_results = patching.get_act_patch_attn_head_out_by_pos(model, corrupted_tokens, clean_cache, ccs_proj_denoising_tensor)
-attn_head_out_act_patch_results = einops.rearrange(attn_head_out_act_patch_results, "layer pos head -> (layer head) pos")
-
-# %%
-imshow(attn_head_out_act_patch_results, 
-        yaxis="Head Label", 
-        xaxis="Pos", 
-        x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))],
-        y=ALL_HEAD_LABELS,
-        height=1200,
-        width=1200,
-        zmin=-0.1,
-        zmax=0.1,
-        title="attn_head_out Activation Patching By Pos")
-
 # %% [markdown]
-# ### Circuit Analysis With Patch Patching & Attn Visualization
-
-# %% [markdown]
-# #### Heads Influencing Logit Diff
+# #### Heads Influencing CCS Projection
 
 # %%
-results = path_patch(
+head_path_results = path_patch(
     model,
     orig_input=clean_tokens,
     new_input=corrupted_tokens,
@@ -444,229 +477,12 @@ results = path_patch(
 
 # %%
 imshow_p(
-    results['z'],
-    title="Direct effect on logit diff (patch from head output -> final resid)",
-    labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+    head_path_results['z'],
+    title="Direct effect on CCS projection (patch from head output -> final resid)",
+    labels={"x": "Head", "y": "Layer", "color": "CCS proj variation"},
     border=True,
     width=600,
     margin={"r": 100, "l": 100}
 )
 
-# %%
-from utils.visualization import (
-    plot_attention_heads,
-    scatter_attention_and_contribution
-)
-
-import circuitsvis as cv
-
-# %%
-plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
-
-# %%
-from utils.visualization import get_attn_head_patterns
-
-top_k = 6
-top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
-heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
-tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
-cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
-
-# %%
-from visualization_utils import scatter_attention_and_contribution_sentiment
-
-from plotly.subplots import make_subplots
-
-# Get the figures
-fig1 = scatter_attention_and_contribution_sentiment(model, (10, 11), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig2 = scatter_attention_and_contribution_sentiment(model, (13, 8), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig3 = scatter_attention_and_contribution_sentiment(model, (16, 10), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-fig4 = scatter_attention_and_contribution_sentiment(model, (18, 0), all_prompts, [22 for _ in range(len(all_prompts))], answer_residual_directions, return_fig=True)
-
-# Create subplot
-fig = make_subplots(rows=2, cols=2, subplot_titles=("Head 10.11", "Head 13.8", "Head 16.10", "Head 18.0"))
-
-# Add each figure's data to the subplot
-for i, subplot_fig in enumerate([fig1, fig2, fig3, fig4], start=1):
-    row = (i-1)//2 + 1
-    col = (i-1)%2 + 1
-    for trace in subplot_fig['data']:
-        # Only show legend for the first subplot
-        trace.showlegend = (i == 1)
-        fig.add_trace(trace, row=row, col=col)
-
-# Update layout
-fig.update_layout(height=600, title_text="DAE Heads")
-
-# Update axes labels
-for i in range(1, 3):
-    for j in range(1, 3):
-        fig.update_xaxes(title_text="Attn Prob on Word", row=i, col=j)
-        fig.update_yaxes(title_text="Dot w Sentiment Output Embed", row=i, col=j)
-
-fig.show()
-
-# %% [markdown]
-# #### Direct Attribute Extraction Heads
-
-# %% [markdown]
-# ##### Overall
-
-# %%
-DAE_HEADS = [(21, 0)]
-
-results = path_patch(
-    model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
-    sender_nodes=IterNode("z"),
-    receiver_nodes=[Node("v", layer, head=head) for layer, head in DAE_HEADS],
-    patching_metric=ccs_proj_noising,
-    verbose=True,
-    apply_metric_to_cache=True,
-)
-
-# %%
-imshow_p(
-        results["z"][:22] * 100,
-        title=f"Direct effect on DAE Heads' values)",
-        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        border=True,
-        width=700,
-        margin={"r": 100, "l": 100}
-    )
-
-# %%
-plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
-
-# %%
-top_k = 3
-top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
-heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
-tokens, attn, names = get_attn_head_patterns(model, all_prompts[0], heads)
-cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
-
-# %% [markdown]
-# ##### Key Positions
-
-# %%
-import pickle
-results = path_patch(
-    model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
-    sender_nodes=IterNode("z", seq_pos="each"),
-    receiver_nodes=[Node("v", layer, head=head) for layer, head in DAE_HEADS],
-    patching_metric=ccs_proj_noising,
-    verbose=True,
-    apply_metric_to_cache=True,
-)
-
-# %%
-attn_head_pos_results = einops.rearrange(results['z'], "pos layer head -> (layer head) pos")
-ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
-imshow(attn_head_pos_results, 
-        yaxis="Head Label", 
-        xaxis="Pos", 
-        x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))],
-        y=ALL_HEAD_LABELS,
-        height=1200,
-        width=1200,
-        #zmin=-0.1,
-        #zmax=0.1,
-        title="attn_head_out Path Patching for DAE Heads By Pos")
-
-# %%
-for i in range(0, results["z"].shape[0]):
-    imshow_p(
-        results["z"][i][:22] * 100,
-        title=f"Direct effect on Sentiment Attenders' values from position {i} ({tokens[i]})",
-        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        border=True,
-        width=700,
-        margin={"r": 100, "l": 100}
-    )
-
-# %%
-plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.1])
-
-# %%
-top_k = 4
-top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
-heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
-tokens, attn, names = get_attn_head_patterns(model, all_prompts[0], heads)
-cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
-
-# %% [markdown]
-# #### Intermediate Attribute Extraction Heads
-
-# %% [markdown]
-# ##### Overall
-
-# %%
-IAE_HEADS = [(11, 1), (13, 13), (16, 4), (18, 2), (21, 14)]
-
-results = path_patch(
-    model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
-    sender_nodes=IterNode("z"),
-    receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
-    patching_metric=ccs_proj_noising,
-    verbose=True,
-    apply_metric_to_cache=True,
-)
-
-
-# %%
-imshow_p(
-        results["z"][:18] * 100,
-        title=f"Direct effect on Intermediate AE Heads' values",
-        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        border=True,
-        width=700,
-        margin={"r": 100, "l": 100}
-    )
-
-# %%
-plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
-
-# %%
-top_k = 3
-top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
-heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
-tokens, attn, names = get_attn_head_patterns(model, all_prompts[0], heads)
-cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
-
-# %% [markdown]
-# ##### By Position
-
-# %%
-results = path_patch(
-    model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
-    sender_nodes=IterNode("z", seq_pos="each"),
-    receiver_nodes=[Node("v", layer, head=head) for layer, head in IAE_HEADS],
-    patching_metric=ccs_proj_noising,
-    verbose=True,
-    apply_metric_to_cache=True,
-)
-# %%
-attn_head_pos_results = einops.rearrange(results['z'], "pos layer head -> (layer head) pos")
-ALL_HEAD_LABELS = [f"L{i}H{j}" for i in range(model.cfg.n_layers) for j in range(model.cfg.n_heads)]
-imshow(attn_head_pos_results, 
-        yaxis="Head Label", 
-        xaxis="Pos", 
-        x=[f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))],
-        y=ALL_HEAD_LABELS,
-        height=1200,
-        width=1200,
-        #zmin=-0.1,
-        #zmax=0.1,
-        title="attn_head_out Path Patching for IAE Heads By Pos")
-
-# %%
+#%%
