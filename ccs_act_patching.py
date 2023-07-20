@@ -1,0 +1,263 @@
+# %%
+import os
+import pathlib
+from typing import List, Optional, Union
+
+import torch
+import numpy as np
+import yaml
+
+import einops
+from fancy_einsum import einsum
+
+import circuitsvis as cv
+
+import transformer_lens.utils as utils
+from transformer_lens.hook_points import (
+    HookedRootModule,
+    HookPoint,
+)  # Hooking utilities
+from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache
+import transformer_lens.patching as patching
+
+from torch import Tensor
+from tqdm.notebook import tqdm
+from jaxtyping import Float, Int, Bool
+from typing import List, Optional, Callable, Tuple, Dict, Literal, Set
+from rich import print as rprint
+
+from typing import List, Union
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import re
+
+from functools import partial
+
+from torchtyping import TensorType as TT
+
+from path_patching import Node, IterNode, path_patch, act_patch
+
+from utils.visualization import get_attn_head_patterns
+from utils.prompts import get_ccs_dataset
+from utils.store import load_array, save_array
+from utils.cache import residual_sentiment_sim_by_head
+
+# %%
+torch.set_grad_enabled(False)
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+# %%
+PROMPT_TYPE = "classification_4"
+# %% [markdown]
+# ## Exploratory Analysis
+#
+MODEL_NAME = "EleutherAI/pythia-1.4b"
+model = HookedTransformer.from_pretrained(
+    MODEL_NAME,
+    center_unembed=True,
+    center_writing_weights=True,
+    fold_ln=True,
+    refactor_factored_attn_matrices=False,
+)
+model.name = MODEL_NAME
+#model.set_use_attn_result(True)
+#%%
+ccs_dir: Float[np.ndarray, "d_model"] = load_array("ccs", model)[0]
+# normalise ccs_dir vector
+ccs_dir /= np.linalg.norm(ccs_dir)
+ccs_dir = torch.from_numpy(ccs_dir).to(model.cfg.device)
+ccs_dir.shape
+
+# %% [markdown]
+# ### Dataset Construction
+#%%
+def shuffle_tensor(tensor: Tensor, dim: int = 0) -> Tensor:
+    return tensor[torch.randperm(tensor.shape[dim])]
+
+# %%
+neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, _ = get_ccs_dataset(
+    model, device, prompt_type=PROMPT_TYPE
+)
+#%%
+torch.manual_seed(0)
+pos_pos_tokens = shuffle_tensor(pos_tokens[gt_labels == 1])
+neg_pos_tokens = shuffle_tensor(pos_tokens[gt_labels == 0])
+pos_neg_tokens = shuffle_tensor(neg_tokens[gt_labels == 1])
+neg_neg_tokens = shuffle_tensor(neg_tokens[gt_labels == 0])
+#%%
+gt_labels_d_model = einops.repeat(
+    gt_labels, "batch -> batch d_model", d_model=model.cfg.d_model
+)
+#%%
+def get_clean_corrupt_tokens(exp_string: str) -> Tuple[Tensor, Tensor]:
+    if exp_string[:2] == '00':
+        corrupted_tokens = neg_neg_tokens
+    elif exp_string[:2] == '01':
+        corrupted_tokens = neg_pos_tokens
+    elif exp_string[:2] == '10':
+        corrupted_tokens = pos_neg_tokens
+    elif exp_string[:2] == '11':
+        corrupted_tokens = pos_pos_tokens
+    if exp_string[2:] == '00':
+        clean_tokens = neg_neg_tokens
+    elif exp_string[2:] == '01':
+        clean_tokens = neg_pos_tokens
+    elif exp_string[2:] == '10':
+        clean_tokens = pos_neg_tokens
+    elif exp_string[2:] == '11':
+        clean_tokens = pos_pos_tokens
+    return clean_tokens, corrupted_tokens
+#%%
+def get_ccs_proj_base(
+    cache: ActivationCache,
+    directions: Float[Tensor, "batch d_model"],
+):
+    final_residual_stream: Float[
+        Tensor, "batch pos d_model"
+    ] = cache["resid_post", -1]
+    final_token_residual_stream: Float[
+        Tensor, "batch d_model"
+    ] = final_residual_stream[:, -1, :]
+    # Apply LayerNorm scaling
+    # pos_slice is the subset of the positions we take - 
+    # here the final token of each prompt
+    scaled_final_token_residual_stream: Float[
+        Tensor, "batch d_model"
+    ] = clean_cache.apply_ln_to_stack(
+        final_token_residual_stream, layer = -1, pos_slice=-1
+    )
+    average_ccs_proj = einsum(
+        "batch d_model, batch d_model -> ", 
+        scaled_final_token_residual_stream, 
+        directions
+    ) / len(clean_tokens)
+    return average_ccs_proj
+#%% 
+def ccs_proj_denoising_base(
+    cache: ActivationCache,
+    directions: Float[Tensor, "batch d_model"],
+    flipped_ccs_proj: float,
+    clean_ccs_proj: float,
+    return_tensor: bool = False,
+) -> Float[Tensor, ""]:
+    '''
+    Linear function of CCS projection, calibrated so that it equals 0 when performance is
+    same as on flipped input, and 1 when performance is same as on clean input.
+    '''
+    patched_ccs_proj = get_ccs_proj_base(cache, directions)
+    ld = (
+        (patched_ccs_proj - flipped_ccs_proj) / 
+        (clean_ccs_proj  - flipped_ccs_proj)
+    )
+    if return_tensor:
+        return ld
+    else:
+        return ld.item()
+
+
+def ccs_proj_noising_base(
+    cache: ActivationCache,
+    directions: Float[Tensor, "batch d_model"],
+    clean_ccs_proj: float,
+    corrupted_ccs_proj: float,
+    return_tensor: bool = False,
+) -> float:
+    '''
+    We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
+    and -1 when performance has been destroyed (i.e. is same as ABC dataset).
+    '''
+    patched_ccs_proj = get_ccs_proj_base(cache, directions)
+    ld = ((patched_ccs_proj - clean_ccs_proj) / (clean_ccs_proj - corrupted_ccs_proj))
+
+    if return_tensor:
+        return ld
+    else:
+        return ld.item()
+#%%
+def run_act_patching(
+    model: HookedTransformer,
+    corrupted_tokens: Tensor,
+    clean_cache: ActivationCache,
+    ccs_proj_denoising: Callable[[ActivationCache], float],
+    exp_label: str,
+):
+    head_results: Float[Tensor, "layer head"] = act_patch(
+        model=model,
+        orig_input=corrupted_tokens,
+        new_cache=clean_cache,
+        patching_nodes=IterNode("z"), # iterating over all heads' output in all layers
+        patching_metric=ccs_proj_denoising,
+        verbose=False,
+        apply_metric_to_cache=True,
+    )
+    save_array(
+        head_results['z'] * 100,
+        f'ccs_act_patching_z_{exp_label}',
+        model
+    )
+
+    head_component_results = act_patch(
+        model=model,
+        orig_input=corrupted_tokens,
+        new_cache=clean_cache,
+        patching_nodes=IterNode(["z", "q", "k", "v", "pattern"]),
+        patching_metric=ccs_proj_denoising,
+        verbose=False,
+        apply_metric_to_cache=True,
+    )
+    assert head_component_results.keys() == {"z", "q", "k", "v", "pattern"}
+    save_array(
+        torch.stack(tuple(head_component_results.values())) * 100,
+        f'ccs_act_patching_qkv_{exp_label}',
+        model
+    )
+
+    attn_mlp_results = act_patch(
+        model=model,
+        orig_input=corrupted_tokens,
+        new_cache=clean_cache,
+        patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
+        patching_metric=ccs_proj_denoising,
+        verbose=False,
+        apply_metric_to_cache=True,
+    )
+    assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
+    save_array(
+        torch.stack([r.T for r in attn_mlp_results.values()]) * 100,
+        f'ccs_act_patching_attn_mlp_{exp_label}',
+        model
+    )
+#%%
+# defining clean/corrupt
+# N.B. act patching below is corrupted -> clean, i.e. "denoising"
+for exp_idx in tqdm(range(16)):
+    exp_string = format(exp_idx, '04b')
+    clean_tokens, corrupted_tokens = get_clean_corrupt_tokens(exp_string)
+    ccs_proj_directions = einops.repeat(
+        ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
+    )
+    get_ccs_proj = partial(get_ccs_proj_base, directions=ccs_proj_directions)
+    # run model on clean prompts
+    clean_logits, clean_cache = model.run_with_cache(clean_tokens)
+    clean_ccs_proj = get_ccs_proj(clean_cache)
+    # run model on corrupted prompts
+    corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
+    corrupted_ccs_proj = get_ccs_proj(corrupted_cache)
+    # define patching metrics
+    ccs_proj_denoising = partial(
+        ccs_proj_denoising_base,
+        directions=ccs_proj_directions,
+        flipped_ccs_proj=corrupted_ccs_proj,
+        clean_ccs_proj=clean_ccs_proj,
+    )
+    run_act_patching(
+        model=model,
+        corrupted_tokens=corrupted_tokens,
+        clean_cache=clean_cache,
+        ccs_proj_denoising=ccs_proj_denoising,
+        exp_label=exp_string,
+    )
+    
+
+#%%
