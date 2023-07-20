@@ -47,6 +47,7 @@ from path_patching import Node, IterNode, path_patch, act_patch
 from utils.visualization import get_attn_head_patterns
 from utils.prompts import get_ccs_dataset
 from utils.store import load_array
+from utils.cache import residual_sentiment_sim_by_head
 
 # %%
 torch.set_grad_enabled(False)
@@ -140,18 +141,37 @@ ccs_dir.shape
 # ### Dataset Construction
 
 # %%
+PROMPT_TYPE = "classification_4" # CHANGEME: classification_4
 neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, _ = get_ccs_dataset(
-    model, device,
+    model, device, prompt_type=PROMPT_TYPE
 )
 #%%
-clean_tokens = torch.where(gt_labels == 1, pos_tokens, neg_tokens)
-corrupted_tokens = torch.where(gt_labels == 1, neg_tokens, pos_tokens)
+pos_pos_tokens = pos_tokens[gt_labels == 1]
+neg_pos_tokens = pos_tokens[gt_labels == 0]
+pos_neg_tokens = neg_tokens[gt_labels == 1]
+neg_neg_tokens = neg_tokens[gt_labels == 0]
+#%%
+CORRUPT_LABELS = True
+gt_labels_pos = einops.repeat(
+    gt_labels, "batch -> batch pos", pos=pos_tokens.shape[1]
+)
+clean_tokens = torch.where(gt_labels_pos == 1, pos_tokens, neg_tokens)
+if CORRUPT_LABELS:
+    corrupted_tokens = torch.where(gt_labels_pos == 1, neg_tokens, pos_tokens)
+else:
+    corrupted_tokens = torch.where((gt_labels_pos == 1).shift(), pos_tokens, neg_tokens)
 
 # %%
 clean_tokens.shape, corrupted_tokens.shape
 # %%
 ccs_proj_directions = einops.repeat(
     ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
+)
+gt_labels_d_model = einops.repeat(
+    gt_labels, "batch -> batch d_model", d_model=model.cfg.d_model
+)
+ccs_signed_directions = torch.where(
+    gt_labels_d_model == 1, ccs_proj_directions, -ccs_proj_directions
 )
 print("CCS projection directions shape:", ccs_proj_directions.shape)
 #%%
@@ -190,6 +210,11 @@ clean_ccs_proj
 corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
 corrupted_ccs_proj = get_ccs_proj(corrupted_cache)
 corrupted_ccs_proj
+#%%
+small_cache = ActivationCache(
+    {key: value[:, :-1] for key, value in clean_cache.items()},
+    model
+)
 
 # %%
 def ccs_proj_denoising(
@@ -363,6 +388,21 @@ imshow(
     clean_per_head_ccs_projs, 
     labels={"x":"Head", "y":"Layer"}, 
     title="CCS projection From Each Head (corrupt)"
+)
+# %% [markdown]
+# #### Head Attribution (alt)
+clean_per_head_ccs_projs_alt = residual_sentiment_sim_by_head(
+    small_cache, # CHANGEME clean_cache,
+    ccs_signed_directions, # CHANGEME ccs_proj_directions,
+    centre_residuals=True,
+    normalise_residuals=False,
+    layers=model.cfg.n_layers,
+    heads=model.cfg.n_heads,
+)
+imshow(
+    clean_per_head_ccs_projs_alt, 
+    labels={"x":"Head", "y":"Layer"}, 
+    title="CCS projection From Each Head (clean) (alt)"
 )
 
 # %% [markdown]
