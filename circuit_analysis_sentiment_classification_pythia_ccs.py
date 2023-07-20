@@ -151,15 +151,20 @@ neg_pos_tokens = pos_tokens[gt_labels == 0]
 pos_neg_tokens = neg_tokens[gt_labels == 1]
 neg_neg_tokens = neg_tokens[gt_labels == 0]
 #%%
+POSITIVE_REVIEWS = True
 CORRUPT_LABELS = True
-gt_labels_pos = einops.repeat(
-    gt_labels, "batch -> batch pos", pos=pos_tokens.shape[1]
-)
-clean_tokens = torch.where(gt_labels_pos == 1, pos_tokens, neg_tokens)
-if CORRUPT_LABELS:
-    corrupted_tokens = torch.where(gt_labels_pos == 1, neg_tokens, pos_tokens)
-else:
-    corrupted_tokens = torch.where((gt_labels_pos == 1).shift(), pos_tokens, neg_tokens)
+if POSITIVE_REVIEWS and CORRUPT_LABELS:
+    clean_tokens = pos_pos_tokens
+    corrupted_tokens = pos_neg_tokens
+elif POSITIVE_REVIEWS and not CORRUPT_LABELS:
+    clean_tokens = pos_pos_tokens
+    corrupted_tokens = neg_pos_tokens
+elif not POSITIVE_REVIEWS and CORRUPT_LABELS:
+    clean_tokens = neg_neg_tokens
+    corrupted_tokens = neg_pos_tokens
+elif not POSITIVE_REVIEWS and not CORRUPT_LABELS:
+    clean_tokens = neg_neg_tokens
+    corrupted_tokens = pos_neg_tokens
 
 # %%
 clean_tokens.shape, corrupted_tokens.shape
@@ -169,9 +174,6 @@ ccs_proj_directions = einops.repeat(
 )
 gt_labels_d_model = einops.repeat(
     gt_labels, "batch -> batch d_model", d_model=model.cfg.d_model
-)
-ccs_signed_directions = torch.where(
-    gt_labels_d_model == 1, ccs_proj_directions, -ccs_proj_directions
 )
 print("CCS projection directions shape:", ccs_proj_directions.shape)
 #%%
@@ -393,7 +395,7 @@ imshow(
 # #### Head Attribution (alt)
 clean_per_head_ccs_projs_alt = residual_sentiment_sim_by_head(
     small_cache, # CHANGEME clean_cache,
-    ccs_signed_directions, # CHANGEME ccs_proj_directions,
+    ccs_proj_directions, # CHANGEME ccs_proj_directions,
     centre_residuals=True,
     normalise_residuals=False,
     layers=model.cfg.n_layers,
