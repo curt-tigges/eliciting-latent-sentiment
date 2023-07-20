@@ -151,31 +151,19 @@ neg_pos_tokens = pos_tokens[gt_labels == 0]
 pos_neg_tokens = neg_tokens[gt_labels == 1]
 neg_neg_tokens = neg_tokens[gt_labels == 0]
 #%%
-POSITIVE_REVIEWS = True
-CORRUPT_LABELS = True
-if POSITIVE_REVIEWS and CORRUPT_LABELS:
-    clean_tokens = pos_pos_tokens
-    corrupted_tokens = pos_neg_tokens
-elif POSITIVE_REVIEWS and not CORRUPT_LABELS:
-    clean_tokens = pos_pos_tokens
-    corrupted_tokens = neg_pos_tokens
-elif not POSITIVE_REVIEWS and CORRUPT_LABELS:
-    clean_tokens = neg_neg_tokens
-    corrupted_tokens = neg_pos_tokens
-elif not POSITIVE_REVIEWS and not CORRUPT_LABELS:
-    clean_tokens = neg_neg_tokens
-    corrupted_tokens = pos_neg_tokens
-
-# %%
-clean_tokens.shape, corrupted_tokens.shape
-# %%
-ccs_proj_directions = einops.repeat(
-    ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
-)
 gt_labels_d_model = einops.repeat(
     gt_labels, "batch -> batch d_model", d_model=model.cfg.d_model
 )
-print("CCS projection directions shape:", ccs_proj_directions.shape)
+#%% # defining clean/corrupt
+clean_tokens = torch.cat((pos_pos_tokens, neg_neg_tokens))# CHANGEME
+corrupted_tokens = torch.cat((neg_pos_tokens, pos_neg_tokens)) # CHANGEME
+ccs_proj_directions = einops.repeat(
+    ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
+)
+ccs_signed_directions = ccs_proj_directions * einops.repeat(torch.cat((
+    torch.ones(len(pos_pos_tokens)), -torch.ones(len(pos_pos_tokens)) # CHANGEME
+)), "batch -> batch d_model", d_model=model.cfg.d_model).to(device=device)
+clean_tokens.shape, corrupted_tokens.shape
 #%%
 def get_ccs_proj(
     cache: ActivationCache,
@@ -309,7 +297,7 @@ clean_logit_lens_ccs_projs = residual_stack_to_ccs_proj(
 )
 line(
     clean_logit_lens_ccs_projs, 
-    x=np.arange(model.cfg.n_layers*1+1)/2, 
+    x=np.arange(model.cfg.n_layers*1+1), 
     hover_name=labels, 
     title="CCS projection From Accumulated Residual Stream (clean prompts)",
     labels={'x': "Layer", 'y': "CCS projection"},
@@ -323,7 +311,7 @@ corrupt_logit_lens_ccs_projs = residual_stack_to_ccs_proj(
 )
 line(
     corrupt_logit_lens_ccs_projs, 
-    x=np.arange(model.cfg.n_layers*1+1)/2, 
+    x=np.arange(model.cfg.n_layers*1+1), 
     hover_name=labels, 
     title="CCS projection From Accumulated Residual Stream (corrupt prompts)",
     labels={'x': "Layer", 'y': "CCS projection"},
@@ -392,19 +380,19 @@ imshow(
     title="CCS projection From Each Head (corrupt)"
 )
 # %% [markdown]
-# #### Head Attribution (alt)
-clean_per_head_ccs_projs_alt = residual_sentiment_sim_by_head(
-    small_cache, # CHANGEME clean_cache,
-    ccs_proj_directions, # CHANGEME ccs_proj_directions,
+# #### Head Attribution (signed)
+clean_per_head_ccs_projs_signed = residual_sentiment_sim_by_head(
+    small_cache,
+    ccs_signed_directions,
     centre_residuals=True,
     normalise_residuals=False,
     layers=model.cfg.n_layers,
     heads=model.cfg.n_heads,
 )
 imshow(
-    clean_per_head_ccs_projs_alt, 
+    clean_per_head_ccs_projs_signed, 
     labels={"x":"Head", "y":"Layer"}, 
-    title="CCS projection From Each Head (clean) (alt)"
+    title="Signed CCS projection From Each Head (clean)"
 )
 
 # %% [markdown]
