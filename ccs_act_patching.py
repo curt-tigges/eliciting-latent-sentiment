@@ -10,8 +10,6 @@ import yaml
 import einops
 from fancy_einsum import einsum
 
-import circuitsvis as cv
-
 import transformer_lens.utils as utils
 from transformer_lens.hook_points import (
     HookedRootModule,
@@ -176,6 +174,20 @@ def ccs_proj_noising_base(
     else:
         return ld.item()
 #%%
+def check_patching_result(
+    array: Float[Tensor, "facet layer head"],
+):
+    '''
+    Checks 2 or 3 dimensional array of percentages from act patching.
+    '''
+    if array.ndim == 2:
+        array = array.unsqueeze(0)
+    zero = torch.tensor(0, device=device, dtype=torch.float32)
+    assert torch.isfinite(array).all()
+    assert torch.isclose(array[0, 0, 0], zero, rtol=0, atol=1), (
+        f"Expected first element to be 0, got {array[0, 0, 0]}"
+    )
+#%%
 def run_act_patching(
     model: HookedTransformer,
     corrupted_tokens: Tensor,
@@ -187,7 +199,7 @@ def run_act_patching(
     positions_before_last = einops.repeat(
         torch.arange(seq_len - 1), 'pos -> batch pos', batch=batch_size
     )
-    head_results_except_last = act_patch(
+    head_results_except_last: Float[Tensor, "layer head"] = act_patch(
         model=model,
         orig_input=corrupted_tokens,
         new_cache=clean_cache,
@@ -195,8 +207,9 @@ def run_act_patching(
         patching_metric=ccs_proj_denoising,
         verbose=False,
         apply_metric_to_cache=True,
-    )
-    head_results_last = act_patch(
+    )['z'] * 100
+    check_patching_result(head_results_except_last)
+    head_results_last: Float[Tensor, "layer head"] = act_patch(
         model=model,
         orig_input=corrupted_tokens,
         new_cache=clean_cache,
@@ -204,12 +217,13 @@ def run_act_patching(
         patching_metric=ccs_proj_denoising,
         verbose=False,
         apply_metric_to_cache=True,
-    )
+    )['z'] * 100
+    check_patching_result(head_results_last)
     # stack head results with new dim 0
     head_results: Float[Tensor, "pos layer head"] = torch.stack(
-        (head_results_except_last['z'] * 100, head_results_last['z'] * 100), dim=0
+        (head_results_except_last, head_results_last), dim=0
     )
-    assert torch.isfinite(head_results).all()
+    check_patching_result(head_results)
     save_array(
         head_results,
         f'ccs_act_patching_z_{exp_label}',
@@ -226,8 +240,10 @@ def run_act_patching(
         apply_metric_to_cache=True,
     )
     assert head_component_results.keys() == {"z", "q", "k", "v", "pattern"}
+    head_components_stacked: Float[Tensor, "qkv layer head"] = torch.stack(tuple(head_component_results.values())) * 100
+    check_patching_result(head_components_stacked)
     save_array(
-        torch.stack(tuple(head_component_results.values())) * 100,
+        head_components_stacked,
         f'ccs_act_patching_qkv_{exp_label}',
         model
     )
@@ -242,8 +258,10 @@ def run_act_patching(
         apply_metric_to_cache=True,
     )
     assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
+    attn_mlp_stacked: Float[Tensor, "mlp_attn layer head"] = torch.stack([r.T for r in attn_mlp_results.values()]) * 100
+    check_patching_result(attn_mlp_stacked)
     save_array(
-        torch.stack([r.T for r in attn_mlp_results.values()]) * 100,
+        attn_mlp_stacked,
         f'ccs_act_patching_attn_mlp_{exp_label}',
         model
     )
@@ -262,29 +280,35 @@ _, incorrect_cache = model.run_with_cache(incorrect_tokens, return_type=None)
 incorrect_ccs_proj = get_ccs_proj_base(incorrect_cache, directions=ccs_proj_directions)
 correct_ccs_proj, incorrect_ccs_proj
 #%%
-# N.B. act patching below is corrupted -> clean, i.e. "denoising"
-for exp_idx in tqdm(range(16)):
-    exp_string = format(exp_idx, '04b')
-    if exp_string[0] != exp_string[1]: # FIXME: re-run and check this works for 0000, 1111
-        clean_ccs_proj = correct_ccs_proj
-        corrupted_ccs_proj = incorrect_ccs_proj
-    else:
-        clean_ccs_proj = incorrect_ccs_proj
-        corrupted_ccs_proj = correct_ccs_proj
+def prettify_exp_string(exp_string: str) -> str:
+    exp_string = exp_string.replace('0', '-').replace('1', '+')
+    return exp_string[:2] + ' to ' + exp_string[2:]
+#%%
+def run_experiment(idx: int):
+    exp_string = format(idx, '04b')
+    print(prettify_exp_string(exp_string))
     clean_tokens, corrupted_tokens = get_clean_corrupt_tokens(exp_string)
     ccs_proj_directions = einops.repeat(
         ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
     )
     # run model on clean prompts
-    clean_logits, clean_cache = model.run_with_cache(clean_tokens)
+    _, clean_cache = model.run_with_cache(clean_tokens, return_type=None)
     clean_ccs_proj = get_ccs_proj_base(clean_cache, directions=ccs_proj_directions)
-    print('clean_ccs_proj', clean_ccs_proj)
-    # define patching metrics
+    # run model on corrupt prompts
+    _, corrupted_cache = model.run_with_cache(corrupted_tokens, return_type=None)
+    corrupted_ccs_proj = get_ccs_proj_base(corrupted_cache, directions=ccs_proj_directions)
+    # set uniform scale across experiments
+    proj_diff_sign = 1 if clean_ccs_proj - corrupted_ccs_proj >= 0 else -1
+    clean_ccs_proj_rescaled = (
+        corrupted_ccs_proj + torch.abs(correct_ccs_proj - incorrect_ccs_proj) * proj_diff_sign
+    )
+    # print(clean_ccs_proj, corrupted_ccs_proj, clean_ccs_proj_rescaled)
+    # define patching metric
     ccs_proj_denoising = partial(
         ccs_proj_denoising_base,
         directions=ccs_proj_directions,
         flipped_ccs_proj=corrupted_ccs_proj,
-        clean_ccs_proj=clean_ccs_proj,
+        clean_ccs_proj=clean_ccs_proj_rescaled,
     )
     run_act_patching(
         model=model,
@@ -293,6 +317,8 @@ for exp_idx in tqdm(range(16)):
         ccs_proj_denoising=ccs_proj_denoising,
         exp_label=exp_string,
     )
-    
-
+#%%
+# N.B. act patching below is corrupted -> clean, i.e. "denoising"
+for exp_idx in tqdm(range(4, 6)):
+    run_experiment(exp_idx)
 #%%

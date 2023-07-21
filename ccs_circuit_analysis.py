@@ -34,7 +34,6 @@ import re
 
 from functools import partial
 
-from torchtyping import TensorType as TT
 
 from utils.visualization import get_attn_head_patterns
 from utils.prompts import get_ccs_dataset
@@ -82,11 +81,20 @@ def quad_to_tri_mapper(s: str) -> str:
 # get available experimental results
 exp_names = get_labels('ccs_act_patching_attn_mlp_*', model)
 exp_names = [re.sub(r'ccs_act_patching_attn_mlp_(.*).npy', r'\1', name) for name in exp_names]
+exp_names = sorted(exp_names)
 exp_names
 #%%
 review_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[0] == '1']
 review_const_labels = [e for e in exp_names if quad_to_tri_mapper(e)[0] == '0']
 review_flip_labels, review_const_labels
+#%%
+label_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[1] == '1']
+label_const_labels = [e for e in exp_names if quad_to_tri_mapper(e)[1] == '0']
+label_flip_labels, label_const_labels
+#%%
+xor_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[2] == '1']
+xor_const_labels = [e for e in exp_names if quad_to_tri_mapper(e)[2] == '0']
+xor_flip_labels, xor_const_labels
 # %%
 update_layout_set = {
     "xaxis_range", "yaxis_range", "hovermode", "xaxis_title", "yaxis_title", "colorbar", "colorscale", "coloraxis", "title_x", "bargap", "bargroupgap", "xaxis_tickformat",
@@ -178,7 +186,16 @@ for label in exp_names:
     plot_results([label, ], prettify_exp_string(label))
 
 #%%
-# plot_results(review_flip_labels, "review flips")
-# #%%
-# plot_results(review_const_labels, "review constants")
+plot_results(review_flip_labels, "review flips")
+#%%
+plot_results(review_const_labels, "review constants")
+#%%
+plot_results(label_flip_labels, "label flips")
+#%%
+plot_results(label_const_labels, "label constants")
+#%%
+plot_results(xor_flip_labels, "xor flips")
+#%%
+plot_results(xor_const_labels, "xor constants")
+#%%
 #%%
