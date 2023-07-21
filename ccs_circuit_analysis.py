@@ -80,8 +80,8 @@ def quad_to_tri_mapper(s: str) -> str:
     return ''.join([str(1 - i) for i in out])
 #%%
 # get available experimental results
-exp_names = get_labels('ccs_act_patching_z_*', model)
-exp_names = [re.sub(r'ccs_act_patching_z_(.*).npy', r'\1', name) for name in exp_names]
+exp_names = get_labels('ccs_act_patching_attn_mlp_*', model)
+exp_names = [re.sub(r'ccs_act_patching_attn_mlp_(.*).npy', r'\1', name) for name in exp_names]
 exp_names
 #%%
 review_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[0] == '1']
@@ -126,8 +126,14 @@ def plot_results(labels: List[str], group: str):
     head_component_results = sum([load_array(f'ccs_act_patching_qkv_{label}', model) for label in labels]) / len(labels)
     attn_mlp_results = sum([load_array(f'ccs_act_patching_attn_mlp_{label}', model) for label in labels]) / len(labels)
 
+    assert np.isfinite(head_results).all()
+    assert np.isfinite(head_component_results).all()
+    assert np.isfinite(attn_mlp_results).all()
+
     imshow_p(
         head_results,
+        facet_col=0,
+        facet_labels=["Review", "Label",],
         title=f"Patching metric for attention heads, averaged over {group}",
         labels={"x": "Head", "y": "Layer", "color": "CCS proj variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
@@ -149,7 +155,7 @@ def plot_results(labels: List[str], group: str):
     )
 
     imshow_p(
-        attn_mlp_results, # we transpose so layer is on the y-axis
+        attn_mlp_results,
         facet_col=0,
         facet_labels=["resid_pre", "attn_out", "mlp_out"],
         title=f"Patching metric for resid stream & layer outputs, averaged over {group}",
@@ -172,7 +178,7 @@ for label in exp_names:
     plot_results([label, ], prettify_exp_string(label))
 
 #%%
-plot_results(review_flip_labels, "review flips")
-#%%
-plot_results(review_const_labels, "review constants")
+# plot_results(review_flip_labels, "review flips")
+# #%%
+# plot_results(review_const_labels, "review constants")
 #%%

@@ -116,6 +116,7 @@ def get_ccs_proj_base(
     final_residual_stream: Float[
         Tensor, "batch pos d_model"
     ] = cache["resid_post", -1]
+    batch_size, seq_len, d_model = final_residual_stream.shape
     final_token_residual_stream: Float[
         Tensor, "batch d_model"
     ] = final_residual_stream[:, -1, :]
@@ -124,14 +125,14 @@ def get_ccs_proj_base(
     # here the final token of each prompt
     scaled_final_token_residual_stream: Float[
         Tensor, "batch d_model"
-    ] = clean_cache.apply_ln_to_stack(
+    ] = cache.apply_ln_to_stack(
         final_token_residual_stream, layer = -1, pos_slice=-1
     )
     average_ccs_proj = einsum(
         "batch d_model, batch d_model -> ", 
         scaled_final_token_residual_stream, 
         directions
-    ) / len(clean_tokens)
+    ) / batch_size
     return average_ccs_proj
 #%% 
 def ccs_proj_denoising_base(
@@ -182,17 +183,35 @@ def run_act_patching(
     ccs_proj_denoising: Callable[[ActivationCache], float],
     exp_label: str,
 ):
-    head_results: Float[Tensor, "layer head"] = act_patch(
+    batch_size, seq_len = corrupted_tokens.shape
+    positions_before_last = einops.repeat(
+        torch.arange(seq_len - 1), 'pos -> batch pos', batch=batch_size
+    )
+    head_results_except_last = act_patch(
         model=model,
         orig_input=corrupted_tokens,
         new_cache=clean_cache,
-        patching_nodes=IterNode("z"), # iterating over all heads' output in all layers
+        patching_nodes=IterNode("z", seq_pos=positions_before_last), # iterating over all heads' output in all layers
         patching_metric=ccs_proj_denoising,
         verbose=False,
         apply_metric_to_cache=True,
     )
+    head_results_last = act_patch(
+        model=model,
+        orig_input=corrupted_tokens,
+        new_cache=clean_cache,
+        patching_nodes=IterNode("z", seq_pos=seq_len - 1), # iterating over all heads' output in all layers
+        patching_metric=ccs_proj_denoising,
+        verbose=False,
+        apply_metric_to_cache=True,
+    )
+    # stack head results with new dim 0
+    head_results: Float[Tensor, "pos layer head"] = torch.stack(
+        (head_results_except_last['z'] * 100, head_results_last['z'] * 100), dim=0
+    )
+    assert torch.isfinite(head_results).all()
     save_array(
-        head_results['z'] * 100,
+        head_results,
         f'ccs_act_patching_z_{exp_label}',
         model
     )
@@ -229,21 +248,37 @@ def run_act_patching(
         model
     )
 #%%
-# defining clean/corrupt
+# compute baselines for denominator of patching metric
+correct_tokens = torch.cat((pos_pos_tokens, neg_neg_tokens))
+incorrect_tokens = torch.cat((pos_neg_tokens, neg_pos_tokens))
+ccs_proj_directions = einops.repeat(
+        ccs_dir, "d_model -> batch d_model", batch=len(correct_tokens)
+)
+# run model on clean prompts
+_, correct_cache = model.run_with_cache(correct_tokens, return_type=None)
+correct_ccs_proj = get_ccs_proj_base(correct_cache, directions=ccs_proj_directions)
+# run model on corrupted prompts
+_, incorrect_cache = model.run_with_cache(incorrect_tokens, return_type=None)
+incorrect_ccs_proj = get_ccs_proj_base(incorrect_cache, directions=ccs_proj_directions)
+correct_ccs_proj, incorrect_ccs_proj
+#%%
 # N.B. act patching below is corrupted -> clean, i.e. "denoising"
 for exp_idx in tqdm(range(16)):
     exp_string = format(exp_idx, '04b')
+    if exp_string[0] != exp_string[1]: # FIXME: re-run and check this works for 0000, 1111
+        clean_ccs_proj = correct_ccs_proj
+        corrupted_ccs_proj = incorrect_ccs_proj
+    else:
+        clean_ccs_proj = incorrect_ccs_proj
+        corrupted_ccs_proj = correct_ccs_proj
     clean_tokens, corrupted_tokens = get_clean_corrupt_tokens(exp_string)
     ccs_proj_directions = einops.repeat(
         ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
     )
-    get_ccs_proj = partial(get_ccs_proj_base, directions=ccs_proj_directions)
     # run model on clean prompts
     clean_logits, clean_cache = model.run_with_cache(clean_tokens)
-    clean_ccs_proj = get_ccs_proj(clean_cache)
-    # run model on corrupted prompts
-    corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
-    corrupted_ccs_proj = get_ccs_proj(corrupted_cache)
+    clean_ccs_proj = get_ccs_proj_base(clean_cache, directions=ccs_proj_directions)
+    print('clean_ccs_proj', clean_ccs_proj)
     # define patching metrics
     ccs_proj_denoising = partial(
         ccs_proj_denoising_base,
