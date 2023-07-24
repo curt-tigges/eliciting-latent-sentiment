@@ -45,7 +45,7 @@ from torchtyping import TensorType as TT
 
 from path_patching import Node, IterNode, path_patch, act_patch
 
-from utils.visualization import get_attn_head_patterns
+from utils.visualization import plot_attention
 from utils.prompts import get_ccs_dataset
 from utils.store import load_array
 from utils.cache import residual_sentiment_sim_by_head
@@ -361,12 +361,35 @@ imshow(
 #%%[markdown]
 # ### Attention analysis
 #%%
-from utils.visualization import get_attn_head_patterns
 
-top_k = 5
-tokens, attn, names = get_attn_head_patterns(model, model.to_string(pos_pos_tokens[0][1:]), [(7, 6), (11, 5)])
-cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
-
+#%%
+plot_attention(
+    model, 
+    model.to_string(pos_pos_tokens[0][1:]), [(7, 6), (11, 5)], 
+    weighted=True,
+    max_value=0.2,
+)
+#%%
+plot_attention(
+    model, 
+    model.to_string(pos_neg_tokens[0][1:]), [(7, 6), (11, 5)], 
+    weighted=True,
+    max_value=0.2,
+)
+#%%
+plot_attention(
+    model, 
+    model.to_string(neg_pos_tokens[0][1:]), [(7, 6), (11, 5)], 
+    weighted=True,
+    max_value=0.2,
+)
+#%%
+plot_attention(
+    model, 
+    model.to_string(neg_neg_tokens[0][1:]), [(7, 6), (11, 5)], 
+    weighted=True,
+    max_value=0.2,
+)
 # %% [markdown]
 # ### Activation Patching
 

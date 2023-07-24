@@ -144,7 +144,9 @@ def get_attn_head_patterns(
 
 
 def get_attn_pattern(
-    model: HookedTransformer, prompt: str, attn_heads: List[Tuple[int]], 
+    model: HookedTransformer, 
+    prompt: str, 
+    attn_heads: List[Tuple[int]], 
     cache: ActivationCache = None,
     weighted: bool = True,
 ) -> Tuple[List[str], Float[Tensor, "head dest src"], List[str]]:
