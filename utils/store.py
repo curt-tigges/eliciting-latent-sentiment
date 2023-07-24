@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 
 def clean_label(label: str) -> str:
     label = label.replace('.npy', '')
+    label = label.replace('.html', '')
     label = label.replace('data/', '')
     assert "/" not in label, "Label must not contain slashes"
     return label
@@ -51,9 +52,9 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
 
 
 def save_html(
-        fig: go.Figure,
-        label: str, 
-        model: Union[HookedTransformer, str]
+    fig: go.Figure,
+    label: str, 
+    model: Union[HookedTransformer, str]
 ):
     model: str = get_model_name(model)
     label = clean_label(label)

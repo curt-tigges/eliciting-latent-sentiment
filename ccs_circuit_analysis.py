@@ -37,11 +37,12 @@ from functools import partial
 
 from utils.visualization import get_attn_head_patterns
 from utils.prompts import get_ccs_dataset
-from utils.store import load_array, get_labels
+from utils.store import load_array, get_labels, save_html
 from utils.cache import residual_sentiment_sim_by_head
 
 # %%
 torch.set_grad_enabled(False)
+SHOW_INLINE = True
 device = 'cpu' # torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 PROMPT_TYPE = "classification_4"
 #%%
@@ -79,16 +80,16 @@ def quad_to_tri_mapper(s: str) -> str:
     return ''.join([str(1 - i) for i in out])
 #%%
 # get available experimental results
-exp_names = get_labels('ccs_act_patching_attn_mlp_*', model)
+exp_names = get_labels('ccs_act_patching_attn_mlp_*.npy', model)
 exp_names = [re.sub(r'ccs_act_patching_attn_mlp_(.*).npy', r'\1', name) for name in exp_names]
 exp_names = sorted(exp_names)
 exp_names
 #%%
-review_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[0] == '1']
+review_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[0] == '1' and quad_to_tri_mapper(e)[1] == '0']
 review_const_labels = [e for e in exp_names if quad_to_tri_mapper(e)[0] == '0']
 review_flip_labels, review_const_labels
 #%%
-label_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[1] == '1']
+label_flip_labels = [e for e in exp_names if quad_to_tri_mapper(e)[1] == '1' and quad_to_tri_mapper(e)[0] == '0']
 label_const_labels = [e for e in exp_names if quad_to_tri_mapper(e)[1] == '0']
 label_flip_labels, label_const_labels
 #%%
@@ -102,7 +103,9 @@ update_layout_set = {
     "showlegend", "xaxis_tickmode", "yaxis_tickmode", "xaxis_tickangle", "yaxis_tickangle", "margin", "xaxis_visible", "yaxis_visible", "bargap", "bargroupgap"
 }
 
-def imshow_p(tensor, renderer=None, **kwargs):
+def imshow_p(array, renderer=None, **kwargs):
+    if isinstance(array, torch.Tensor):
+        utils.to_numpy(array)
     kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
     kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
     facet_labels = kwargs_pre.pop("facet_labels", None)
@@ -111,7 +114,7 @@ def imshow_p(tensor, renderer=None, **kwargs):
         kwargs_pre["color_continuous_scale"] = "RdBu"
     if "margin" in kwargs_post and isinstance(kwargs_post["margin"], int):
         kwargs_post["margin"] = dict.fromkeys(list("tblr"), kwargs_post["margin"])
-    fig = px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, **kwargs_pre)
+    fig = px.imshow(array, color_continuous_midpoint=0.0, **kwargs_pre)
     if facet_labels:
         for i, label in enumerate(facet_labels):
             fig.layout.annotations[i]['text'] = label
@@ -126,19 +129,28 @@ def imshow_p(tensor, renderer=None, **kwargs):
             kwargs_post[f"xaxis{i}_{setting}"] = kwargs_post[f"xaxis_{setting}"]
             i += 1
     fig.update_layout(**kwargs_post)
-    fig.show(renderer=renderer)
+    if SHOW_INLINE:
+        fig.show(renderer=renderer)
+    return fig
+#%%
+def aggregate_arrays(arrays: List[np.ndarray]):
+    return np.mean(arrays, axis=0)
+#%%
+# def aggregate_arrays(arrays: List[np.ndarray]):
+#     return np.min(np.abs(arrays), axis=0)
 
 #%%
 def plot_results(labels: List[str], group: str):
-    head_results = sum([load_array(f'ccs_act_patching_z_{label}', model) for label in labels]) / len(labels)
-    head_component_results = sum([load_array(f'ccs_act_patching_qkv_{label}', model) for label in labels]) / len(labels)
-    attn_mlp_results = sum([load_array(f'ccs_act_patching_attn_mlp_{label}', model) for label in labels]) / len(labels)
+    group_clean = group.replace(' ', '_') # FIXME: add a replace for +/-
+    head_results = aggregate_arrays([load_array(f'ccs_act_patching_z_{label}', model) for label in labels])
+    head_component_results = aggregate_arrays([load_array(f'ccs_act_patching_qkv_{label}', model) for label in labels])
+    attn_mlp_results = aggregate_arrays([load_array(f'ccs_act_patching_attn_mlp_{label}', model) for label in labels])
 
     assert np.isfinite(head_results).all()
     assert np.isfinite(head_component_results).all()
     assert np.isfinite(attn_mlp_results).all()
 
-    imshow_p(
+    fig = imshow_p(
         head_results,
         facet_col=0,
         facet_labels=["Review", "Label",],
@@ -146,11 +158,12 @@ def plot_results(labels: List[str], group: str):
         labels={"x": "Head", "y": "Layer", "color": "CCS proj variation"},
         coloraxis=dict(colorbar_ticksuffix = "%"),
         border=True,
-        width=600,
+        width=800,
         margin={"r": 100, "l": 100}
     )
+    save_html(fig, f"ccs_act_patching_z_{group_clean}", model)
 
-    imshow_p(
+    fig = imshow_p(
         head_component_results,
         facet_col=0,
         facet_labels=["Output", "Query", "Key", "Value", "Pattern"],
@@ -161,41 +174,53 @@ def plot_results(labels: List[str], group: str):
         width=1500,
         margin={"r": 100, "l": 100}
     )
+    save_html(fig, f"ccs_act_patching_qkv_{group_clean}", model)
 
-    imshow_p(
-        attn_mlp_results,
-        facet_col=0,
-        facet_labels=["resid_pre", "attn_out", "mlp_out"],
-        title=f"Patching metric for resid stream & layer outputs, averaged over {group}",
+    fig = imshow_p(
+        attn_mlp_results[0, ...],
+        title=f"Patching metric for resid stream by position, averaged over {group}",
         labels={"x": "Sequence position", "y": "Layer", "color": "CCS proj variation"},
         x=position_labels,
         xaxis_tickangle=45,
         coloraxis=dict(colorbar_ticksuffix = "%"),
         border=True,
-        width=1300,
-        zmin=-100,
-        zmax=100,
+        width=800,
         margin={"r": 100, "l": 100}
     )
+    save_html(fig, f"ccs_act_patching_resid_{group_clean}", model)
+
+    fig = imshow_p(
+        attn_mlp_results[1:, ...],
+        facet_col=0,
+        facet_labels=["attn_out", "mlp_out"],
+        title=f"Patching metric for attn vs mlp, averaged over {group}",
+        labels={"x": "Sequence position", "y": "Layer", "color": "CCS proj variation"},
+        x=position_labels,
+        xaxis_tickangle=45,
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        border=True,
+        width=1500,
+        margin={"r": 100, "l": 100}
+    )
+    save_html(fig, f"ccs_act_patching_attn_mlp_{group_clean}", model)
 #%%
 def prettify_exp_string(exp_string: str) -> str:
     exp_string = exp_string.replace('0', '-').replace('1', '+')
     return exp_string[:2] + ' to ' + exp_string[2:]
 #%% # plot individual experiments
-for label in exp_names:
-    plot_results([label, ], prettify_exp_string(label))
+# for label in exp_names:
+#     plot_results([label, ], prettify_exp_string(label))
 
 #%%
 plot_results(review_flip_labels, "review flips")
-#%%
-plot_results(review_const_labels, "review constants")
+# #%%
+# plot_results(review_const_labels, "review constants")
 #%%
 plot_results(label_flip_labels, "label flips")
 #%%
-plot_results(label_const_labels, "label constants")
+# plot_results(label_const_labels, "label constants")
 #%%
 plot_results(xor_flip_labels, "xor flips")
 #%%
-plot_results(xor_const_labels, "xor constants")
-#%%
+# plot_results(xor_const_labels, "xor constants")
 #%%
