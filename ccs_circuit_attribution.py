@@ -5,6 +5,7 @@
 # ## Setup
 
 # %%
+from IPython.display import display, HTML
 import os
 import pathlib
 from typing import List, Optional, Union
@@ -141,7 +142,7 @@ ccs_dir.shape
 # ### Dataset Construction
 
 # %%
-PROMPT_TYPE = "classification_4" # CHANGEME: classification_4
+PROMPT_TYPE = "classification_4"
 neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, _ = get_ccs_dataset(
     model, device, prompt_type=PROMPT_TYPE
 )
@@ -155,14 +156,11 @@ gt_labels_d_model = einops.repeat(
     gt_labels, "batch -> batch d_model", d_model=model.cfg.d_model
 )
 #%% # defining clean/corrupt
-clean_tokens = torch.cat((pos_pos_tokens, neg_neg_tokens))# CHANGEME
-corrupted_tokens = torch.cat((neg_pos_tokens, pos_neg_tokens)) # CHANGEME
+clean_tokens = torch.cat((pos_pos_tokens, neg_neg_tokens, pos_pos_tokens, neg_neg_tokens))# CHANGEME
+corrupted_tokens = torch.cat((neg_pos_tokens, pos_neg_tokens, pos_neg_tokens, neg_pos_tokens)) # CHANGEME
 ccs_proj_directions = einops.repeat(
     ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
 )
-ccs_signed_directions = ccs_proj_directions * einops.repeat(torch.cat((
-    torch.ones(len(pos_pos_tokens)), -torch.ones(len(pos_pos_tokens)) # CHANGEME
-)), "batch -> batch d_model", d_model=model.cfg.d_model).to(device=device)
 clean_tokens.shape, corrupted_tokens.shape
 #%%
 def get_ccs_proj(
@@ -191,20 +189,20 @@ def get_ccs_proj(
     return average_ccs_proj
 
 
+#%%
+def name_filter(name: str):
+    names = ["resid_pre", "attn_out", "mlp_out", "z", "q", "k", "v", "pattern", "resid_post", "hook_scale"]
+    return any([name.endswith(n) for n in names])
+
 # %%
-clean_logits, clean_cache = model.run_with_cache(clean_tokens)
+clean_logits, clean_cache = model.run_with_cache(clean_tokens, names_filter=name_filter)
 clean_ccs_proj = get_ccs_proj(clean_cache)
 clean_ccs_proj
 
 # %%
-corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
+corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens, names_filter=name_filter)
 corrupted_ccs_proj = get_ccs_proj(corrupted_cache)
 corrupted_ccs_proj
-#%%
-small_cache = ActivationCache(
-    {key: value[:, :-1] for key, value in clean_cache.items()},
-    model
-)
 
 # %%
 def ccs_proj_denoising(
@@ -295,13 +293,6 @@ clean_accumulated_residual, labels = clean_cache.accumulated_resid(
 clean_logit_lens_ccs_projs = residual_stack_to_ccs_proj(
     clean_accumulated_residual, clean_cache
 )
-line(
-    clean_logit_lens_ccs_projs, 
-    x=np.arange(model.cfg.n_layers*1+1), 
-    hover_name=labels, 
-    title="CCS projection From Accumulated Residual Stream (clean prompts)",
-    labels={'x': "Layer", 'y': "CCS projection"},
-)
 # %%
 corrupt_accumulated_residual, labels = corrupted_cache.accumulated_resid(
     layer=-1, incl_mid=False, pos_slice=-1, return_labels=True
@@ -309,11 +300,12 @@ corrupt_accumulated_residual, labels = corrupted_cache.accumulated_resid(
 corrupt_logit_lens_ccs_projs = residual_stack_to_ccs_proj(
     corrupt_accumulated_residual, corrupted_cache
 )
+#%%
 line(
-    corrupt_logit_lens_ccs_projs, 
+    clean_logit_lens_ccs_projs - corrupt_logit_lens_ccs_projs, 
     x=np.arange(model.cfg.n_layers*1+1), 
     hover_name=labels, 
-    title="CCS projection From Accumulated Residual Stream (corrupt prompts)",
+    title="CCS projection From Accumulated Residual Stream (clean - corrupt)",
     labels={'x': "Layer", 'y': "CCS projection"},
 )
 
@@ -324,23 +316,15 @@ line(
 clean_per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
 clean_per_layer_ccs_projs = residual_stack_to_ccs_proj(clean_per_layer_residual, clean_cache)
 
-line(
-    clean_per_layer_ccs_projs, 
-    x=labels,
-    hover_name=labels, 
-    title="CCS projection From Each Layer (clean)",
-    labels={'x': "Layer/Attn-MLP", 'y': "CCS projection"},
-
-)
 # %%
 corrupt_per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
 corrupt_per_layer_ccs_projs = residual_stack_to_ccs_proj(corrupt_per_layer_residual, corrupted_cache)
 
 line(
-    corrupt_per_layer_ccs_projs, 
+    clean_per_layer_ccs_projs - corrupt_per_layer_ccs_projs, 
     x=labels,
     hover_name=labels, 
-    title="CCS projection From Each Layer (corrupt)",
+    title="CCS projection From Each Layer (clean - corrupt)",
     labels={'x': "Layer/Attn-MLP", 'y': "CCS projection"},
 
 )
@@ -360,11 +344,6 @@ clean_per_head_ccs_projs = einops.rearrange(
     layer=model.cfg.n_layers, 
     head_index=model.cfg.n_heads
 )
-imshow(
-    clean_per_head_ccs_projs, 
-    labels={"x":"Head", "y":"Layer"}, 
-    title="CCS projection From Each Head (clean)"
-)
 #%%
 corrupt_per_head_residual, labels = corrupted_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
 corrupt_per_head_ccs_projs = residual_stack_to_ccs_proj(corrupt_per_head_residual, clean_cache)
@@ -375,25 +354,18 @@ corrupt_per_head_ccs_projs = einops.rearrange(
     head_index=model.cfg.n_heads
 )
 imshow(
-    clean_per_head_ccs_projs, 
+    clean_per_head_ccs_projs - corrupt_per_head_ccs_projs, 
     labels={"x":"Head", "y":"Layer"}, 
-    title="CCS projection From Each Head (corrupt)"
+    title="CCS projection From Each Head (clean - corrupt)"
 )
-# %% [markdown]
-# #### Head Attribution (signed)
-clean_per_head_ccs_projs_signed = residual_sentiment_sim_by_head(
-    small_cache,
-    ccs_signed_directions,
-    centre_residuals=True,
-    normalise_residuals=False,
-    layers=model.cfg.n_layers,
-    heads=model.cfg.n_heads,
-)
-imshow(
-    clean_per_head_ccs_projs_signed, 
-    labels={"x":"Head", "y":"Layer"}, 
-    title="Signed CCS projection From Each Head (clean)"
-)
+#%%[markdown]
+# ### Attention analysis
+#%%
+from utils.visualization import get_attn_head_patterns
+
+top_k = 5
+tokens, attn, names = get_attn_head_patterns(model, model.to_string(pos_pos_tokens[0][1:]), [(7, 6), (11, 5)])
+cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %% [markdown]
 # ### Activation Patching
@@ -489,30 +461,3 @@ imshow_p(
     zmax=100,
     margin={"r": 100, "l": 100}
 )
-
-# %% [markdown]
-# #### Heads Influencing CCS Projection
-
-# %%
-head_path_results = path_patch(
-    model,
-    orig_input=clean_tokens,
-    new_input=corrupted_tokens,
-    sender_nodes=IterNode('z'), # This means iterate over all heads in all layers
-    receiver_nodes=Node('resid_post', 23), # This is resid_post at layer 11
-    patching_metric=ccs_proj_noising,
-    verbose=True,
-    apply_metric_to_cache=True,
-)
-
-# %%
-imshow_p(
-    head_path_results['z'],
-    title="Direct effect on CCS projection (patch from head output -> final resid)",
-    labels={"x": "Head", "y": "Layer", "color": "CCS proj variation"},
-    border=True,
-    width=600,
-    margin={"r": 100, "l": 100}
-)
-
-#%%
