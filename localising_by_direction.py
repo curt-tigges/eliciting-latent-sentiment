@@ -16,7 +16,7 @@ from utils.cache import (
 from utils.store import load_array, save_html
 #%%
 torch.set_grad_enabled(False)
-device = torch.device('cpu') # torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODEL_NAME = "EleutherAI/pythia-1.4b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -28,7 +28,7 @@ model = HookedTransformer.from_pretrained(
 model.name = MODEL_NAME
 model.cfg.use_attn_results = True
 # %%
-SENTIMENT_DIR = 'km_2c_line_embed_and_mlp0'
+SENTIMENT_DIR = 'ccs'
 sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
     SENTIMENT_DIR, model
 ).squeeze()

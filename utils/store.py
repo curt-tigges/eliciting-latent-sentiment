@@ -1,4 +1,5 @@
 import numpy as np
+import glob
 import os
 from transformer_lens import HookedTransformer
 from typing import Union
@@ -8,6 +9,7 @@ import plotly.graph_objects as go
 
 def clean_label(label: str) -> str:
     label = label.replace('.npy', '')
+    label = label.replace('.html', '')
     label = label.replace('data/', '')
     assert "/" not in label, "Label must not contain slashes"
     return label
@@ -22,10 +24,10 @@ def get_model_name(model: Union[HookedTransformer, str]) -> str:
 
 
 def save_array(
-        array: Union[np.ndarray, torch.Tensor], 
-        label: str, 
-        model: Union[HookedTransformer, str]
-    ):
+    array: Union[np.ndarray, torch.Tensor], 
+    label: str, 
+    model: Union[HookedTransformer, str]
+):
     model: str = get_model_name(model)
     if isinstance(array, torch.Tensor):
         array = array.cpu().detach().numpy()
@@ -50,9 +52,9 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
 
 
 def save_html(
-        fig: go.Figure,
-        label: str, 
-        model: Union[HookedTransformer, str]
+    fig: go.Figure,
+    label: str, 
+    model: Union[HookedTransformer, str]
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -62,3 +64,10 @@ def save_html(
     path = os.path.join(model_path, label + '.html')
     fig.write_html(path)
     return path
+
+
+def get_labels(glob_str: str, model: Union[HookedTransformer, str]) -> list:
+    model: str = get_model_name(model)
+    model_path = os.path.join('data', model)
+    labels = [os.path.split(p)[-1] for p in glob.iglob(os.path.join(model_path, glob_str))]
+    return labels

@@ -1,8 +1,9 @@
 import os
 import pathlib
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
+from torch import Tensor
 import numpy as np
 import pandas as pd
 import yaml
@@ -37,7 +38,7 @@ from transformer_lens import (
 
 from functools import partial
 
-from torchtyping import TensorType as TT
+from jaxtyping import Float
 
 if torch.cuda.is_available():
     device = int(os.environ.get("LOCAL_RANK", 0))
@@ -47,6 +48,7 @@ else:
 
 import pandas as pd
 import plotly.express as px
+import circuitsvis as cv
 
 
 def plot_attention_heads(tensor, title="", top_n=0, range_x=[0, 2.5], threshold=0.02):
@@ -123,7 +125,9 @@ def two_lines(tensor1, tensor2, renderer=None, **kwargs):
     )
 
 
-def get_attn_head_patterns(model, prompt, attn_heads):
+def get_attn_head_patterns(
+    model: HookedTransformer, prompt: Union[str, List[int]], attn_heads: List[Tuple[int]]
+):
     if isinstance(prompt, str):
         prompt = model.to_tokens(prompt)
     logits, cache = model.run_with_cache(prompt, remove_batch_dim=True)
@@ -137,6 +141,54 @@ def get_attn_head_patterns(model, prompt, attn_heads):
     tokens = model.to_str_tokens(prompt)
 
     return tokens, attention_pattern, head_name_list
+
+
+def get_attn_pattern(
+    model: HookedTransformer, 
+    prompt: str, 
+    attn_heads: List[Tuple[int]], 
+    cache: ActivationCache = None,
+    weighted: bool = True,
+) -> Tuple[List[str], Float[Tensor, "head dest src"], List[str]]:
+    if cache is None:
+        _, cache = model.run_with_cache(prompt, return_type=None)
+    tokens = model.to_str_tokens(prompt)
+    head_list = []
+    head_name_list = []
+    for layer, head in attn_heads:
+        attn: Float[Tensor, "dest src"] = cache["pattern", layer, "attn"][:, head, :, :].mean(
+            dim=0, keepdim=False
+        )
+        assert torch.allclose(attn.sum(dim=-1), torch.ones_like(attn.sum(dim=-1)))
+        if weighted:
+            v: Float[Tensor, "src"] = cache["v", layer][:, :, head, :].norm(dim=-1).mean(dim=0, keepdim=False)
+            attn: Float[Tensor, "dest src"] = einops.einsum(
+                attn, v, "dest src, src -> dest src"
+            )
+            attn /= attn.sum(dim=-1, keepdim=True)
+            assert torch.allclose(attn.sum(dim=-1), torch.ones_like(attn.sum(dim=-1)))
+        head_list.append(attn)
+        head_name_list.append(f"L{layer}H{head}")
+    attention_pattern: Float[Tensor, "head dest src"] = torch.stack(head_list, dim=0)
+    return tokens, attention_pattern, head_name_list
+
+
+
+def plot_attention(
+    model: HookedTransformer, prompt: str, attn_heads: List[Tuple[int]], 
+    cache: ActivationCache = None, weighted: bool = True, 
+    max_value: float = 1.0, min_value: float = 0.0
+):
+    tokens, attention_pattern, head_name_list = get_attn_pattern(
+        model, prompt, attn_heads, cache, weighted
+    )
+    return cv.attention.attention_heads(
+        tokens=tokens, 
+        attention=attention_pattern, 
+        attention_head_names=head_name_list,
+        max_value=max_value,
+        min_value=min_value,
+    )
 
 
 def scatter_attention_and_contribution(
