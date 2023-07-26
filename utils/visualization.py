@@ -152,6 +152,7 @@ def get_attn_pattern(
 ) -> Tuple[List[str], Float[Tensor, "head dest src"], List[str]]:
     if cache is None:
         _, cache = model.run_with_cache(prompt, return_type=None)
+    tokens = model.to_str_tokens(prompt)
     head_list = []
     head_name_list = []
     for layer, head in attn_heads:
@@ -168,8 +169,7 @@ def get_attn_pattern(
             assert torch.allclose(attn.sum(dim=-1), torch.ones_like(attn.sum(dim=-1)))
         head_list.append(attn)
         head_name_list.append(f"L{layer}H{head}")
-    attention_pattern = torch.stack(head_list, dim=0)
-    tokens = model.to_str_tokens(prompt)
+    attention_pattern: Float[Tensor, "head dest src"] = torch.stack(head_list, dim=0)
     return tokens, attention_pattern, head_name_list
 
 

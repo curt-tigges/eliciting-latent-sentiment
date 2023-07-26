@@ -1,7 +1,4 @@
 # %% [markdown]
-# # Classification Circuit in Pythia 1.4B
-
-# %% [markdown]
 # ## Setup
 
 # %%
@@ -58,7 +55,8 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 update_layout_set = {
     "xaxis_range", "yaxis_range", "hovermode", "xaxis_title", "yaxis_title", "colorbar", "colorscale", "coloraxis", "title_x", "bargap", "bargroupgap", "xaxis_tickformat",
     "yaxis_tickformat", "title_y", "legend_title_text", "xaxis_showgrid", "xaxis_gridwidth", "xaxis_gridcolor", "yaxis_showgrid", "yaxis_gridwidth", "yaxis_gridcolor",
-    "showlegend", "xaxis_tickmode", "yaxis_tickmode", "xaxis_tickangle", "yaxis_tickangle", "margin", "xaxis_visible", "yaxis_visible", "bargap", "bargroupgap"
+    "showlegend", "xaxis_tickmode", "yaxis_tickmode", "xaxis_tickangle", "yaxis_tickangle", "margin", "xaxis_visible", "yaxis_visible", "bargap", "bargroupgap",
+    "barmode",
 }
 
 def imshow_p(tensor, renderer=None, **kwargs):
@@ -102,6 +100,7 @@ def hist_p(tensor, renderer=None, **kwargs):
         for i in range(len(fig.data)):
             fig.data[i]["name"] = names[i // 2]
     fig.show(renderer)
+    return fig
 
 # %%
 def imshow(tensor, renderer=None, xaxis="", yaxis="", **kwargs):
@@ -140,7 +139,6 @@ ccs_dir.shape
 
 # %% [markdown]
 # ### Dataset Construction
-
 # %%
 PROMPT_TYPE = "classification_4"
 neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, _ = get_ccs_dataset(
@@ -162,6 +160,9 @@ ccs_proj_directions = einops.repeat(
     ccs_dir, "d_model -> batch d_model", batch=len(clean_tokens)
 )
 clean_tokens.shape, corrupted_tokens.shape
+#%%
+example_prompt = model.to_str_tokens(clean_tokens[0])
+example_prompt_indexed = [f'{i}: {s}' for i, s in enumerate(example_prompt)]
 #%%
 def get_ccs_proj(
     cache: ActivationCache,
@@ -252,23 +253,59 @@ ccs_proj_noising_tensor = partial(ccs_proj_noising, return_tensor=True)
 # %% [markdown]
 # ### Direct Logit Attribution
 
+#%%
+def get_ccs_proj_at_pos(pos: int, cache: ActivationCache):
+    '''
+    cache syntax - resid_post is the residual stream at the end of the layer, 
+    -1 gets the final layer. The general syntax is [activation_name, layer_index, sub_layer_type]. 
+    '''
+    final_residual_stream: Float[Tensor, "batch pos d_model"] = cache["resid_post", -1]
+    final_token_residual_stream = final_residual_stream[:, pos, :]
+    # Apply LayerNorm scaling
+    # pos_slice is the subset of the positions we take
+    scaled_final_token_residual_stream = cache.apply_ln_to_stack(
+        final_token_residual_stream, layer = -1, pos_slice=pos
+    )
+    average_ccs_proj = einsum(
+        "batch d_model, batch d_model -> ", 
+        scaled_final_token_residual_stream, 
+        ccs_proj_directions
+    ) / len(clean_tokens)
+    return average_ccs_proj
 
-# %%
-# cache syntax - resid_post is the residual stream at the end of the layer, -1 gets the final layer. The general syntax is [activation_name, layer_index, sub_layer_type]. 
-final_residual_stream = clean_cache["resid_post", -1]
-print("Final residual stream shape:", final_residual_stream.shape)
-final_token_residual_stream = final_residual_stream[:, -1, :]
-# Apply LayerNorm scaling
-# pos_slice is the subset of the positions we take - here the final token of each prompt
-scaled_final_token_residual_stream = clean_cache.apply_ln_to_stack(final_token_residual_stream, layer = -1, pos_slice=-1)
-
-average_ccs_proj = einsum(
-    "batch d_model, batch d_model -> ", 
-    scaled_final_token_residual_stream, 
-    ccs_proj_directions
-) / len(clean_tokens)
+# %%[markdown]
+#### Position attribution
+average_ccs_proj = get_ccs_proj_at_pos(-1, clean_cache)
 print("Calculated average CCS projection:", average_ccs_proj.item())
 print("Original CCS projection:",clean_ccs_proj.item())
+
+#%%
+clean_ccs_by_pos = torch.tensor([get_ccs_proj_at_pos(seq_pos, clean_cache) for seq_pos in range(clean_tokens.shape[1])])
+corrupt_ccs_by_pos = torch.tensor([get_ccs_proj_at_pos(seq_pos, corrupted_cache) for seq_pos in range(corrupted_tokens.shape[1])])
+#%%
+line(
+    clean_ccs_by_pos, 
+    x=example_prompt_indexed,
+    hover_name=example_prompt_indexed, 
+    title="CCS projection At Each Position (clean)",
+    labels={'x': "Position", 'y': "CCS projection"},
+)
+#%%
+line(
+    corrupt_ccs_by_pos, 
+    x=example_prompt_indexed,
+    hover_name=example_prompt_indexed, 
+    title="CCS projection At Each Position (corrupt)",
+    labels={'x': "Position", 'y': "CCS projection"},
+)
+#%%
+line(
+    clean_ccs_by_pos - corrupt_ccs_by_pos, 
+    x=example_prompt_indexed,
+    hover_name=example_prompt_indexed, 
+    title="CCS projection At Each Position (clean - corrupt)",
+    labels={'x': "Position", 'y': "CCS projection"},
+)
 
 # %% [markdown]
 # #### Logit Lens
@@ -361,37 +398,134 @@ imshow(
 #%%[markdown]
 # ### Attention analysis
 #%%
+adjective_positions = (6, 15, 20, 29)
+end_of_review_tokens = (33, 34)
+#%%
+_, pos_pos_cache = model.run_with_cache(pos_pos_tokens, names_filter=name_filter)
+_, neg_pos_cache = model.run_with_cache(neg_pos_tokens, names_filter=name_filter)
+_, pos_neg_cache = model.run_with_cache(pos_neg_tokens, names_filter=name_filter)
+_, neg_neg_cache = model.run_with_cache(neg_neg_tokens, names_filter=name_filter)
+#%%
+# TODO: compute attention of 7.6 for 4 cases, on sentiment tokens (and end of review tokens - iment, colon), plot as histogram with 4 colours
+def get_attn_pattern(
+    attn_head: Tuple[int], 
+    cache: ActivationCache,
+) -> Float[np.ndarray, "head dest src"]:
+    layer, head = attn_head
+    attention_pattern: Float[Tensor, "batch dest src"] = cache["pattern", layer, "attn"][:, head, :, :]
+    assert torch.allclose(attention_pattern.sum(dim=-1), torch.ones_like(attention_pattern.sum(dim=-1)))
+    return attention_pattern.cpu().detach().numpy()
+#%% 
+def plot_attn_histograms(
+    attn_head: Tuple[int], positions: Tuple[int], position_label: str
+):
+    pos_pos_attn = get_attn_pattern(attn_head, pos_pos_cache)[:, -1, positions].flatten()
+    pos_neg_attn = get_attn_pattern(attn_head, pos_neg_cache)[:, -1, positions].flatten()
+    neg_pos_attn = get_attn_pattern(attn_head, neg_pos_cache)[:, -1, positions].flatten()
+    neg_neg_attn = get_attn_pattern(attn_head, neg_neg_cache)[:, -1, positions].flatten()
+    # Create the histogram traces for each group
+    trace1 = go.Histogram(x=pos_pos_attn, name='pos_pos', opacity=0.7)
+    trace2 = go.Histogram(x=pos_neg_attn, name='pos_neg', opacity=0.7)
+    trace3 = go.Histogram(x=neg_pos_attn, name='neg_pos', opacity=0.7)
+    trace4 = go.Histogram(x=neg_neg_attn, name='neg_neg', opacity=0.7)
 
+    # Create the figure and add the traces
+    fig = go.Figure(data=[trace1, trace2, trace3, trace4])
+
+    layer, head = attn_head
+
+    # Update the layout
+    fig.update_layout(
+        title=f'Attention of {layer}.{head} to {position_label}',
+        xaxis=dict(title='Attention probability'),
+        yaxis=dict(title='Frequency'),
+        barmode='group'  # This groups the histograms side by side
+    )
+    # Show the plot
+    fig.show()
+#%%
+plot_attn_histograms((7, 6), adjective_positions, "adjectives")
+#%%
+plot_attn_histograms((7, 6), end_of_review_tokens, "end of review tokens")
+#%%
+# plot 4 histograms for the 4 cases on one axes
+# fig = hist_p(
+#     np.stack([pos_pos_attn, pos_neg_attn, neg_pos_attn, neg_neg_attn]),
+#     labels={"value": "Attention", "count": "Count", "variable": "Case x4"},
+#     names=["pos_pos", "pos_neg", "neg_pos", "neg_neg"],
+#     title="Attention of 7.6 to adjectives",
+#     opacity=0.75,
+#     color_discrete_sequence=["#636EFA", "#EF553B", "#00CC96", "#AB63FA"],
+#     width=600,
+#     height=400,
+#     margin={"r": 100, "l": 100},
+#     barmode="group",
+#     bargap=0,
+# )
+#%%
+attn_heads = [
+    (6, 11), (7, 6), (7, 15), (9, 1), (10, 12), 
+    (11, 1), (11, 5), (12, 2), (13, 2), (17, 10),
+]
+max_attn = 0.2
 #%%
 plot_attention(
     model, 
-    model.to_string(pos_pos_tokens[0][1:]), [(7, 6), (11, 5)], 
+    model.to_string(pos_pos_tokens[0][1:]), 
+    attn_heads, 
     weighted=True,
-    max_value=0.2,
+    max_value=max_attn,
 )
 #%%
 plot_attention(
     model, 
-    model.to_string(pos_neg_tokens[0][1:]), [(7, 6), (11, 5)], 
+    model.to_string(pos_neg_tokens[0][1:]), 
+    attn_heads, 
     weighted=True,
-    max_value=0.2,
+    max_value=max_attn,
 )
 #%%
 plot_attention(
     model, 
-    model.to_string(neg_pos_tokens[0][1:]), [(7, 6), (11, 5)], 
+    model.to_string(neg_pos_tokens[0][1:]), 
+    attn_heads, 
     weighted=True,
-    max_value=0.2,
+    max_value=max_attn,
 )
 #%%
 plot_attention(
     model, 
-    model.to_string(neg_neg_tokens[0][1:]), [(7, 6), (11, 5)], 
+    model.to_string(neg_neg_tokens[0][1:]), 
+    attn_heads, 
     weighted=True,
-    max_value=0.2,
+    max_value=max_attn,
 )
 # %% [markdown]
 # ### Activation Patching
+
+# %%
+head_pos_results = [act_patch(
+    model=model,
+    orig_input=corrupted_tokens,
+    new_cache=clean_cache,
+    patching_nodes=Node("z", 6, 11, seq_pos=seq_pos),
+    patching_metric=ccs_proj_denoising,
+    verbose=True,
+    apply_metric_to_cache=True,
+) for seq_pos in range(corrupted_tokens.shape[1])]
+
+# %%
+imshow_p(
+    torch.tensor(head_pos_results).unsqueeze(0) * 100,
+    title="Patching output of 6.11 by position",
+    labels={"x": "Position", "y": "Head", "color": "CCS proj variation"},
+    coloraxis=dict(colorbar_ticksuffix = "%"),
+    border=True,
+    width=600,
+    margin={"r": 100, "l": 100},
+    x=example_prompt_indexed,
+    y=["6.11"],
+)
 
 # %% [markdown]
 # #### Attention Heads
