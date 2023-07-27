@@ -160,7 +160,7 @@ else:
 ablate_dir /= np.linalg.norm(ablate_dir)
 ablate_dir = torch.from_numpy(ablate_dir).to(dtype=torch.float32, device=device)
 # %%
-_, answer_tokens, pos_neg_tokens, _ = get_dataset(
+_, pos_neg_answers, pos_neg_tokens, _ = get_dataset(
     model, device, n_pairs=1, 
     comparison=("positive", "negative",)
 )
@@ -195,11 +195,11 @@ average_projection
 #%%
 if POSITIVE:
     orig_tokens = pos_neg_tokens[::2]
-    answer_tokens = answer_tokens[::2]
+    answer_tokens = pos_neg_answers[::2]
     orig_embeddings = pos_neg_embeddings[::2]
 else:
     orig_tokens = pos_neg_tokens[1::2]
-    answer_tokens = answer_tokens[1::2]
+    answer_tokens = pos_neg_answers[1::2]
     orig_embeddings = pos_neg_embeddings[1::2]
 print(model.to_str_tokens(orig_tokens[0]))
 print(model.to_str_tokens(answer_tokens[0]))
@@ -256,49 +256,61 @@ def maybe_add_hook(
     model.reset_hooks()
     if ablate:
         model.add_hook(lambda name: name.endswith('resid_post'), ablation_hook)
-#%%
-def test_prompt(
-    model: HookedTransformer, ablate: bool, 
-    batch_index: int = 0, pair_index: int = 0, 
-    answer_index=None,
-    top_k: int = 10,
-):
-    if answer_index is None:
-        answer_index = 0 if POSITIVE else 1
-    example_prompt = model.to_string(orig_tokens[batch_index])
-    example_answer = model.to_string(answer_tokens[
-        batch_index, pair_index, answer_index
-    ])
-    maybe_add_hook(model, ablate)
-    utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=top_k)
-#%%
-def run_with_cache(
-    model: HookedTransformer, tokens: Int[Tensor, "batch pos"], ablate: bool
-):
-    maybe_add_hook(model, ablate)
-    logits, cache = model.run_with_cache(tokens)
-    return logits, cache
 
+# %% [markdown] id="TfiWnZtelFMV"
+# ### Direct Logit Attribution
+#%%
+def cache_to_logit_diff(
+    cache: ActivationCache
+):
+    final_residual_stream: Float[Tensor, "batch pos d_model"] = cache["resid_post", -1]
+    final_token_residual_stream: Float[Tensor, "batch d_model"] = final_residual_stream[:, -1, :]
+    scaled_residual_stack: Float[Tensor, "components batch d_model"] = cache.apply_ln_to_stack(final_token_residual_stream, layer = -1, pos_slice=-1)
+    answer_residual_directions: Float[Tensor, "batch pair correct d_model"] = model.tokens_to_residual_directions(answer_tokens)
+    answer_residual_directions = answer_residual_directions.mean(dim=1)
+    logit_diff_directions: Float[Tensor, "batch d_model"] = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
+    diff_from_unembedding_bias: Float[Tensor, "batch"] = (
+        model.b_U[answer_tokens[:, :, 0]] - 
+        model.b_U[answer_tokens[:, :, 1]]
+    ).mean(dim=1)
+    prod = scaled_residual_stack * logit_diff_directions
+    return (prod.sum(dim=-1) + diff_from_unembedding_bias).mean()
 #%% [markdown]
 #### Sanity check ablation
+#%%
+batch_index = 0
+pair_index = 0
+answer_index = 0 if POSITIVE else 1
+top_k = 10
+example_prompt = model.to_string(orig_tokens[batch_index])
+example_answer = model.to_string(answer_tokens[
+    batch_index, pair_index, answer_index
+])
 # %%
 print("Without ablation:")
-test_prompt(model, ablate=False, answer_index=1, top_k=20)
+maybe_add_hook(model, ablate=False)
+utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=top_k)
 #%%
 print("With ablation:")
-test_prompt(model, ablate=True, answer_index=1, top_k=20)
+maybe_add_hook(model, ablate=True)
+utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k=top_k)
 # %%
 print("Without ablation:")
-clean_logits, clean_cache = run_with_cache(model, orig_tokens, ablate=False)
+maybe_add_hook(model, ablate=False)
+clean_logits, clean_cache = model.run_with_cache(orig_tokens)
 clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
 clean_logit_diff
 # %%
 print("With ablation:")
-corrupted_logits, corrupted_cache = run_with_cache(model, orig_tokens, ablate=True)
+maybe_add_hook(model, ablate=True)
+corrupted_logits, corrupted_cache = model.run_with_cache(orig_tokens)
 corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 corrupted_logit_diff
-
-
+# %%
+model.reset_hooks()
+average_logit_diff = cache_to_logit_diff(clean_cache)
+print("Calculated average logit diff:", average_logit_diff.item())
+print("Original logit difference:",clean_logit_diff.item())
 # %%
 def logit_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
@@ -319,49 +331,16 @@ def logit_diff_noising(
         corrupted_logit_diff: float = corrupted_logit_diff,
         answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
     ) -> float:
-        '''
-        We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
-        and -1 when performance has been destroyed (i.e. is same as ABC dataset).
-        '''
-        patched_logit_diff = get_logit_diff(logits, answer_tokens)
-        return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
-
-
-# %% [markdown] id="TfiWnZtelFMV"
-# ### Direct Logit Attribution
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="bt_jzrazlMAK" outputId="39683745-1153-4a0f-bdbf-5f3be977abe3"
-answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
-print("Answer residual directions shape:", answer_residual_directions.shape)
-logit_diff_directions = answer_residual_directions[:, 0, 0, :] - answer_residual_directions[:, 0, 1, :]
-print("Logit difference directions shape:", logit_diff_directions.shape)
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="LsDE7VUGIX8l" outputId="226c2ad4-fb5b-44f4-b872-1d06eee7cbd5"
-# cache syntax - resid_post is the residual stream at the end of the layer, -1 gets the final layer. The general syntax is [activation_name, layer_index, sub_layer_type]. 
-final_residual_stream: Float[Tensor, "batch pos d_model"] = clean_cache["resid_post", -1]
-print("Final residual stream shape:", final_residual_stream.shape)
-final_token_residual_stream: Float[Tensor, "batch d_model"] = final_residual_stream[:, -1, :]
-# Apply LayerNorm scaling
-# pos_slice is the subset of the positions we take - here the final token of each prompt
-scaled_final_token_residual_stream: Float[Tensor, "batch d_model"]  = clean_cache.apply_ln_to_stack(
-    final_token_residual_stream, layer = -1, pos_slice=-1
-)
-
-average_logit_diff = einsum(
-    "batch d_model, batch d_model -> ", scaled_final_token_residual_stream, logit_diff_directions
-) / len(orig_tokens)
-print("Calculated average logit diff:", average_logit_diff.item())
-print("Original logit difference:",clean_logit_diff.item())
+    '''
+    We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
+    and -1 when performance has been destroyed (i.e. is same as ABC dataset).
+    '''
+    patched_logit_diff = get_logit_diff(logits, answer_tokens)
+    return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
 
 
 # %% [markdown] id="Nb2nC45lIohT"
 # #### Logit Lens
-
-# %% id="DvRDK2krIrid"
-def residual_stack_to_logit_diff(residual_stack: TT["components", "batch", "d_model"], cache: ActivationCache) -> float:
-    scaled_residual_stack = clean_cache.apply_ln_to_stack(residual_stack, layer = -1, pos_slice=-1)
-    return einsum("... batch d_model, batch d_model -> ...", scaled_residual_stack, logit_diff_directions)/len(orig_tokens)
-
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 542} id="7vxP1pNuPMhr" outputId="616ac0ef-ddd2-4b1e-bccd-8ee3a3ebce23"
 accumulated_residual, labels = clean_cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
