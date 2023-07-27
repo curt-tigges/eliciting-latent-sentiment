@@ -413,19 +413,20 @@ imshow(clean_per_head_logit_diffs - corrupted_per_head_logit_diffs, labels={"x":
 # #### Attention Heads
 
 # %%
+model.reset_hooks()
 results = act_patch(
     model=model,
     orig_input=orig_tokens,
-    new_cache=clean_cache,
+    new_cache=corrupted_cache,
     patching_nodes=IterNode("z"), # iterating over all heads' output in all layers
-    patching_metric=logit_diff_denoising,
+    patching_metric=logit_diff_noising,
     verbose=True,
 )
 
 # %%
 imshow_p(
     results['z'] * 100,
-    title="Patching output of attention heads (corrupted -> clean)",
+    title="Patching output of attention heads (clean -> corrupted)",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
@@ -438,13 +439,13 @@ imshow_p(
 
 # %%
 # iterating over all heads' output in all layers
-
+model.reset_hooks()
 results = act_patch(
     model=model,
     orig_input=orig_tokens,
-    new_cache=clean_cache,
+    new_cache=corrupted_cache,
     patching_nodes=IterNode(["z", "q", "k", "v", "pattern"]),
-    patching_metric=logit_diff_denoising,
+    patching_metric=logit_diff_noising,
     verbose=True,
 )
 
@@ -456,7 +457,7 @@ imshow_p(
     torch.stack(tuple(results.values())) * 100,
     facet_col=0,
     facet_labels=["Output", "Query", "Key", "Value", "Pattern"],
-    title="Patching output of attention heads (corrupted -> clean)",
+    title="Patching output of attention heads (clean -> corrupted)",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
@@ -469,13 +470,13 @@ imshow_p(
 
 # %%
 # patching at each (layer, sequence position) for each of (resid_pre, attn_out, mlp_out) in turn
-
+model.reset_hooks()
 results = act_patch(
     model=model,
     orig_input=orig_tokens,
-    new_cache=clean_cache,
+    new_cache=corrupted_cache,
     patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
-    patching_metric=logit_diff_denoising,
+    patching_metric=logit_diff_noising,
     verbose=True,
 )
 
@@ -486,7 +487,7 @@ imshow_p(
     torch.stack([r.T for r in results.values()]) * 100, # we transpose so layer is on the y-axis
     facet_col=0,
     facet_labels=["resid_pre", "attn_out", "mlp_out"],
-    title="Patching at resid stream & layer outputs (corrupted -> clean)",
+    title="Patching at resid stream & layer outputs (clean -> corrupted)",
     labels={"x": "Sequence position", "y": "Layer", "color": "Logit diff variation"},
     x=labels,
     xaxis_tickangle=45,
