@@ -38,6 +38,7 @@ from rich import print as rprint
 from typing import List, Union
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 from plotly.subplots import make_subplots
 import re
 
@@ -53,9 +54,11 @@ from utils.circuit_analysis import get_logit_diff, logit_diff_denoising, logit_d
 from utils.store import load_array
 
 # %%
+pio.renderers.default = "notebook"
 torch.set_grad_enabled(False)
-
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+POSITIVE_PROMPTS = False
+POSITIVE_DIRECTION = True
 
 # %%
 update_layout_set = {
@@ -141,8 +144,6 @@ model.name = MODEL_NAME
 # %% [markdown]
 # ### Dataset Construction
 #%%
-POSITIVE = True
-#%%
 def embed_and_mlp0(
     tokens: Int[Tensor, "batch 1"],
     transformer: HookedTransformer = model
@@ -153,7 +154,7 @@ def embed_and_mlp0(
     resid_post = resid_mid + mlp_out
     return block0.ln2(resid_post)
 #%%
-if POSITIVE:
+if POSITIVE_DIRECTION:
     ablate_dir = load_array('km_2c_line_embed_and_mlp0', model)
 else:
     ablate_dir = load_array('rotation_direction0', model)
@@ -193,7 +194,7 @@ print(compute_mean_projection(pos_neg_embeddings[1::2], ablate_dir))
 average_projection: float = compute_mean_projection(pos_neg_embeddings, ablate_dir)
 average_projection
 #%%
-if POSITIVE:
+if POSITIVE_PROMPTS:
     orig_tokens = pos_neg_tokens[::2]
     answer_tokens = pos_neg_answers[::2]
     orig_embeddings = pos_neg_embeddings[::2]
@@ -280,7 +281,7 @@ def cache_to_logit_diff(
 #%%
 batch_index = 0
 pair_index = 0
-answer_index = 0 if POSITIVE else 1
+answer_index = 0
 top_k = 10
 example_prompt = model.to_string(orig_tokens[batch_index])
 example_answer = model.to_string(answer_tokens[
