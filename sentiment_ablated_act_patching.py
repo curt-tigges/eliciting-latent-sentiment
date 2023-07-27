@@ -338,23 +338,56 @@ def logit_diff_noising(
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
     return ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)).item()
 
-
+#%%
+def residual_stack_to_logit_diff(
+    residual_stack: TT["components", "batch", "d_model"], cache: ActivationCache
+) -> float:
+    answer_residual_directions: Float[Tensor, "batch pair correct d_model"] = model.tokens_to_residual_directions(answer_tokens)
+    answer_residual_directions = answer_residual_directions.mean(dim=1)
+    logit_diff_directions: Float[Tensor, "batch d_model"] = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
+    scaled_residual_stack: Float[Tensor, "components batch d_model"] = cache.apply_ln_to_stack(
+        residual_stack, layer = -1, pos_slice=-1
+    )
+    diff_from_unembedding_bias: Float[Tensor, "batch"] = (
+        model.b_U[answer_tokens[:, :, 0]] - 
+        model.b_U[answer_tokens[:, :, 1]]
+    ).mean(dim=1)
+    prod: Float[Tensor, "components batch d_model"] = scaled_residual_stack * logit_diff_directions
+    logit_diff_per_prompt: Float[Tensor, "components batch"] = prod.sum(dim=-1)# + diff_from_unembedding_bias
+    return logit_diff_per_prompt.mean(dim=-1)
 # %% [markdown] id="Nb2nC45lIohT"
 # #### Logit Lens
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 542} id="7vxP1pNuPMhr" outputId="616ac0ef-ddd2-4b1e-bccd-8ee3a3ebce23"
-accumulated_residual, labels = clean_cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
-logit_lens_logit_diffs = residual_stack_to_logit_diff(accumulated_residual, clean_cache)
-line(logit_lens_logit_diffs, x=np.arange(model.cfg.n_layers*2+1)/2, hover_name=labels, title="Logit Difference From Accumulate Residual Stream")
+# %% 
+clean_accumulated_residual, labels = clean_cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
+clean_accumulated_logit_diffs = residual_stack_to_logit_diff(clean_accumulated_residual, clean_cache)
+corrupted_accumulated_residual, labels = corrupted_cache.accumulated_resid(layer=-1, incl_mid=True, pos_slice=-1, return_labels=True)
+corrupted_accumulated_logit_diffs = residual_stack_to_logit_diff(corrupted_accumulated_residual, corrupted_cache)
+#%%
+line(
+    clean_accumulated_logit_diffs - corrupted_accumulated_logit_diffs, 
+    x=np.arange(model.cfg.n_layers*2+1)/2, 
+    hover_name=labels, 
+    title="Logit Difference From Accumulate Residual Stream (clean - corrupt)",
+    labels={"x":"Layer", "y":"Logit Difference"},
+)
+
 
 # %% [markdown] id="s60emfYIbTuT"
 # #### Layer Attribution
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 542} id="yGgAVYgIJi9Z" outputId="2d6b1ffe-b701-419d-a786-24f0d24d2b54"
-per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
-per_layer_logit_diffs = residual_stack_to_logit_diff(per_layer_residual, clean_cache)
+clean_per_layer_residual, labels = clean_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
+clean_per_layer_logit_diffs = residual_stack_to_logit_diff(clean_per_layer_residual, clean_cache)
+corrupted_per_layer_residual, labels = corrupted_cache.decompose_resid(layer=-1, pos_slice=-1, return_labels=True)
+corrupted_per_layer_logit_diffs = residual_stack_to_logit_diff(corrupted_per_layer_residual, corrupted_cache)
 
-line(per_layer_logit_diffs, hover_name=labels, title="Logit Difference From Each Layer")
+line(
+    clean_per_layer_logit_diffs - corrupted_per_layer_logit_diffs, 
+    hover_name=labels, 
+    title="Logit Difference From Each Layer (clean - corrupt)",
+    x=labels,
+)
 
 
 # %% [markdown]
@@ -364,11 +397,14 @@ line(per_layer_logit_diffs, hover_name=labels, title="Logit Difference From Each
 def imshow(tensor, renderer=None, **kwargs):
     px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, color_continuous_scale="RdBu", **kwargs).show(renderer)
 
-per_head_residual, labels = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
-per_head_logit_diffs = residual_stack_to_logit_diff(per_head_residual, clean_cache)
-per_head_logit_diffs = einops.rearrange(per_head_logit_diffs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
-per_head_logit_diffs_pct = per_head_logit_diffs/clean_logit_diff
-imshow(per_head_logit_diffs_pct, labels={"x":"Head", "y":"Layer"}, title="Logit Difference From Each Head")
+clean_per_head_residual, labels = clean_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
+clean_per_head_logit_diffs = residual_stack_to_logit_diff(clean_per_head_residual, clean_cache)
+clean_per_head_logit_diffs = einops.rearrange(clean_per_head_logit_diffs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
+corrupted_per_head_residual, labels = corrupted_cache.stack_head_results(layer=-1, pos_slice=-1, return_labels=True)
+corrupted_per_head_logit_diffs = residual_stack_to_logit_diff(corrupted_per_head_residual, corrupted_cache)
+corrupted_per_head_logit_diffs = einops.rearrange(corrupted_per_head_logit_diffs, "(layer head_index) -> layer head_index", layer=model.cfg.n_layers, head_index=model.cfg.n_heads)
+#%%
+imshow(clean_per_head_logit_diffs - corrupted_per_head_logit_diffs, labels={"x":"Head", "y":"Layer"}, title="Logit Difference From Each Head (clean - corrupt)")
 
 # %% [markdown]
 # ### Activation Patching
