@@ -15,18 +15,20 @@ from tqdm import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.store import save_array, load_array
 #%% # Model loading
-device = 'cpu' # torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
-    "gpt2-small",
+    MODEL_NAME,
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
     device=device,
 )
+model.name = MODEL_NAME
 model.cfg.use_attn_result = True
 #%% # Direction loading
 sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
-    'km_line_embed_and_mlp0'
+    'km_2c_line_embed_and_mlp0', model
 )
 sentiment_dir /= np.linalg.norm(sentiment_dir)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
@@ -73,7 +75,9 @@ def create_cache_for_dir_patching(
     corrupted_cache: ActivationCache, 
     sentiment_dir: Float[Tensor, "d_model"]
 ) -> ActivationCache:
-    # N.B. corrupt -> clean
+    '''
+    We patch the sentiment direction from corrupt to clean
+    '''
     cache_dict = dict()
     for act_name, clean_value in clean_cache.items():
         if act_name.endswith('q') or act_name.endswith('z'):
@@ -138,6 +142,10 @@ def create_cache_for_mean_ablation(
     corrupted_cache: ActivationCache, 
     sentiment_dir: Float[Tensor, "d_model"],
 ) -> ActivationCache:
+    '''
+    We mean ablate along the sentiment_dir
+    This only uses the corrupted cache
+    '''
     cache_dict = dict()
     for act_name, corrupt_value in corrupted_cache.items():
         if act_name.endswith('q') or act_name.endswith('z'):
@@ -201,6 +209,11 @@ def create_cache_for_resample_ablation(
     corrupted_cache: ActivationCache, 
     sentiment_dir: Float[Tensor, "d_model"],
 ) -> ActivationCache:
+    '''
+    We take a randperm of the projection of the corrupted value onto the
+    sentiment direction
+    This only uses the corrupted cache
+    '''
     cache_dict = dict()
     for act_name, corrupt_value in corrupted_cache.items():
         if act_name.endswith('q') or act_name.endswith('z'):
