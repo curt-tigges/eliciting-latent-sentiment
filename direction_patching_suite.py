@@ -1,5 +1,6 @@
 #%%
 import einops
+from fancy_einsum import einsum
 import numpy as np
 from jaxtyping import Float, Int
 import plotly.express as px
@@ -12,9 +13,9 @@ from transformer_lens import ActivationCache, HookedTransformer, HookedTransform
 from typing import Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
-from utils.store import save_array, load_array
+from utils.store import save_array, load_array, save_html
 #%%
 pio.renderers.default = "notebook"
 update_layout_set = {
@@ -23,7 +24,7 @@ update_layout_set = {
     "showlegend", "xaxis_tickmode", "yaxis_tickmode", "xaxis_tickangle", "yaxis_tickangle", "margin", "xaxis_visible", "yaxis_visible", "bargap", "bargroupgap"
 }
 
-def imshow_p(tensor, renderer=None, **kwargs):
+def imshow_p(tensor, **kwargs):
     kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
     kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
     facet_labels = kwargs_pre.pop("facet_labels", None)
@@ -47,7 +48,7 @@ def imshow_p(tensor, renderer=None, **kwargs):
             kwargs_post[f"xaxis{i}_{setting}"] = kwargs_post[f"xaxis_{setting}"]
             i += 1
     fig.update_layout(**kwargs_post)
-    fig.show(renderer=renderer)
+    return fig
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODEL_NAME = "gpt2-small"
@@ -60,22 +61,6 @@ model = HookedTransformer.from_pretrained(
 )
 model.set_use_attn_result(True)
 model.name = MODEL_NAME
-#%% # Direction loading
-sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
-    # 'km_2c_line_embed_and_mlp0', 
-    # 'rotation_direction0',
-    # 'pca_0_embed_and_mlp0',
-    # 'mean_ov_direction_10_4',
-    'ccs',
-    model
-)
-if sentiment_dir.ndim == 2:
-    sentiment_dir = sentiment_dir.squeeze(0)
-sentiment_dir /= np.linalg.norm(sentiment_dir)
-sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
-    device, dtype=torch.float32
-)
-print(sentiment_dir.shape)
 #%% # Data loading
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
 # positive -> negative
@@ -89,10 +74,7 @@ all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, 
 # answer_tokens = answer_tokens[1::2]
 # clean_tokens = clean_tokens[1::2]
 # corrupted_tokens = corrupted_tokens[1::2]
-
-#%%
-# ============================================================================ #
-# Directional activation patching
+#%% # Run model with cache
 def name_filter(name: str):
     return (
         name.endswith('result') or 
@@ -127,6 +109,42 @@ def logit_diff_denoising(
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
     return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
+#%% # Direction loading
+direction_labels = [
+    'km_2c_line_embed_and_mlp0',
+    'rotation_direction0',
+    'pca_0_embed_and_mlp0',
+    'mean_ov_direction_10_4',
+    'ccs',
+]
+directions = [
+    load_array(label, model) for label in direction_labels
+]
+for i, direction in enumerate(directions):
+    if direction.ndim == 2:
+        direction = direction.squeeze(0)
+    directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
+#%% # Logit attribution
+answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
+logit_diff_directions = answer_residual_directions[:, 0, 0] - answer_residual_directions[:, 0, 1]
+print(logit_diff_directions[0].norm())
+#%%
+for label, direction in zip(direction_labels, directions):
+    average_logit_diff = einsum(
+        "d_model, d_model -> ", direction, logit_diff_directions[0]
+    )
+    print(label, 'norm:', direction.norm().cpu().detach().item(), 'direct logit diff:', average_logit_diff.cpu().detach().item())
+#%%
+for label, direction in zip(direction_labels, directions):
+    direction = direction / direction.norm()
+    average_logit_diff = einsum(
+        "d_model, d_model -> ", direction, logit_diff_directions[0]
+    )
+    print(label, 'norm:', direction.norm().cpu().detach().item(), 'direct logit diff:', average_logit_diff.cpu().detach().item())
+
+#%%
+# ============================================================================ #
+# Directional activation patching
 #%% # Create new cache
 def create_cache_for_dir_patching(
     clean_cache: ActivationCache, 
@@ -197,84 +215,92 @@ def create_cache_for_dir_patching(
 
     return ActivationCache(cache_dict, model)
 #%%
-new_cache = create_cache_for_dir_patching(
-    clean_cache, corrupted_cache, sentiment_dir
-)
-#%%[markdown]
-#### Head patching
-#%%
-head_results: Float[Tensor, "layer head"] = act_patch(
-    model=model,
-    orig_input=corrupted_tokens,
-    new_cache=new_cache,
-    patching_nodes=IterNode(["result"]),
-    patching_metric=logit_diff_denoising,
-    verbose=True,
-)
-#%%
-fig = px.imshow(
+def run_act_patching(
+    model: HookedTransformer,
+    new_cache: ActivationCache,
+    label: str
+):
+    # head patching
+    head_results: Float[Tensor, "layer head"] = act_patch(
+        model=model,
+        orig_input=corrupted_tokens,
+        new_cache=new_cache,
+        patching_nodes=IterNode(["result"]),
+        patching_metric=logit_diff_denoising,
+        verbose=True,
+    )
+    fig = px.imshow(
     head_results['result'] * 100,
-    title="Patching sentiment component of attention heads (corrupted -> clean)",
+    title=f"Patching {label} component of attention heads (corrupted -> clean)",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
     color_continuous_scale="RdBu",
     color_continuous_midpoint=0,
     width=600,
 )
-fig.update_layout(dict(
-    coloraxis=dict(colorbar_ticksuffix = "%"),
-    # border=True,
-    margin={"r": 100, "l": 100}
-))
-#%%[markdown]
-#### Residual stream patching
+    fig.update_layout(dict(
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        # border=True,
+        margin={"r": 100, "l": 100}
+    ))
+    fig.show()
+    save_html(fig, f"head_patching_{label}", model)
+
+    # resid_post patching
+    layer_results: Float[Tensor, "layer"] = act_patch(
+        model=model,
+        orig_input=corrupted_tokens,
+        new_cache=new_cache,
+        patching_nodes=IterNode(["resid_post"]),
+        patching_metric=logit_diff_denoising,
+        verbose=True,
+    )['resid_post'] * 100
+    fig = px.line(
+        layer_results,
+        title=f"Patching {label} component of residual stream (corrupted -> clean)",
+        labels={"index": "Layer", "value": "Logit diff (%)"},
+        width=600,
+    )
+    fig.update_layout(dict(
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        margin={"r": 100, "l": 100},
+        showlegend=False,
+    ))
+    fig.show()
+    save_html(fig, f"resid_patching_{label}", model)
+
+    # attn-mlp patching
+    attn_mlp_results = act_patch(
+        model=model,
+        orig_input=corrupted_tokens,
+        new_cache=new_cache,
+        patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
+        patching_metric=logit_diff_denoising,
+        verbose=True,
+    )
+    assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
+    labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
+    fig = imshow_p(
+        torch.stack([r.T for r in attn_mlp_results.values()]) * 100, # we transpose so layer is on the y-axis
+        facet_col=0,
+        facet_labels=["resid_pre", "attn_out", "mlp_out"],
+        title=f"Patching {label} at resid stream & layer outputs (corrupted -> clean)",
+        labels={"x": "Sequence position", "y": "Layer", "color": "Logit diff variation"},
+        x=labels,
+        xaxis_tickangle=45,
+        coloraxis=dict(colorbar_ticksuffix = "%"),
+        border=True,
+        width=1300,
+        # zmin=-50,
+        # zmax=50,
+        margin={"r": 100, "l": 100}
+    )
+    fig.show()
+    save_html(fig, f"attn_mlp_patching_{label}", model)
 #%%
-layer_results: Float[Tensor, "layer"] = act_patch(
-    model=model,
-    orig_input=corrupted_tokens,
-    new_cache=new_cache,
-    patching_nodes=IterNode(["resid_post"]),
-    patching_metric=logit_diff_denoising,
-    verbose=True,
-)['resid_post'] * 100
-#%%
-fig = px.line(
-    layer_results,
-    title="Patching sentiment component of residual stream (corrupted -> clean)",
-    labels={"index": "Layer", "value": "Logit diff (%)"},
-    width=600,
-)
-fig.update_layout(dict(
-    coloraxis=dict(colorbar_ticksuffix = "%"),
-    margin={"r": 100, "l": 100},
-    showlegend=False,
-))
-#%%[markdown]
-#### Attn vs. MLP patching
-# %%
-attn_mlp_results = act_patch(
-    model=model,
-    orig_input=corrupted_tokens,
-    new_cache=new_cache,
-    patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
-    patching_metric=logit_diff_denoising,
-    verbose=True,
-)
-#%%
-assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
-labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
-imshow_p(
-    torch.stack([r.T for r in attn_mlp_results.values()]) * 100, # we transpose so layer is on the y-axis
-    facet_col=0,
-    facet_labels=["resid_pre", "attn_out", "mlp_out"],
-    title="Patching at resid stream & layer outputs (corrupted -> clean)",
-    labels={"x": "Sequence position", "y": "Layer", "color": "Logit diff variation"},
-    x=labels,
-    xaxis_tickangle=45,
-    coloraxis=dict(colorbar_ticksuffix = "%"),
-    border=True,
-    width=1300,
-    # zmin=-50,
-    # zmax=50,
-    margin={"r": 100, "l": 100}
-)
+for label, direction in tqdm(zip(direction_labels, directions), total=len(direction_labels)):
+    direction = direction / direction.norm()
+    new_cache = create_cache_for_dir_patching(
+        clean_cache, corrupted_cache, direction
+    )
+    run_act_patching(model, new_cache, label)
 #%%
