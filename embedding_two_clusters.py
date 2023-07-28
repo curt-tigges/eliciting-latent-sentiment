@@ -226,18 +226,38 @@ class EmbedType(Enum):
     EMBED = 'embed_only'
     UNEMBED = 'unembed_transpose'
     MLP = 'embed_and_mlp0'
+    ATTN = 'embed_and_attn0'
+    RESID = 'resid0'
 #%%
 _, train_cache = model.run_with_cache(train_adjectives, return_type=None)
 #%%
 def embed_and_mlp0(
     tokens: Int[Tensor, "batch 1"],
     transformer: HookedTransformer = model
-):
+) -> Float[Tensor, "batch 1 d_model"]:
     block0 = transformer.blocks[0]
     resid_mid = transformer.embed(tokens)
     mlp_out = block0.mlp((resid_mid))
     resid_post = resid_mid + mlp_out
     return block0.ln2(resid_post)
+#%%
+def embed_and_attn0(
+    tokens: Int[Tensor, "batch 1"],
+    transformer: HookedTransformer = model
+) -> Float[Tensor, "batch 1 d_model"]:
+    _, cache = transformer.run_with_cache(
+        tokens, return_type=None, names_filter = lambda name: 'attn_out' in name
+    )
+    return cache['attn_out', 0]
+#%%
+def resid0(
+    tokens: Int[Tensor, "batch 1"],
+    transformer: HookedTransformer = model
+) -> Float[Tensor, "batch 1 d_model"]:
+    _, cache = transformer.run_with_cache(
+        tokens, return_type=None, names_filter = lambda name: 'mlp_out' in name
+    )
+    return cache['mlp_out', 0]
 #%%
 def embed_str_tokens(
     str_tokens: List[str],
@@ -259,6 +279,10 @@ def embed_str_tokens(
         embeddings = oh_tokens @ wU.T
     elif embed_type == EmbedType.MLP:
         embeddings = embed_and_mlp0(tokens)
+    elif embed_type == EmbedType.ATTN:
+        embeddings = embed_and_attn0(tokens)
+    elif embed_type == EmbedType.RESID:
+        embeddings = resid0(tokens)
     else:
         raise ValueError(f'Unrecognised embed type: {embed_type}')
     embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
@@ -267,7 +291,7 @@ def embed_str_tokens(
     )
     return embeddings.detach()
 #%% # train, test embeddings
-embedding_type = EmbedType.MLP
+embedding_type = EmbedType.EMBED # CHANGEME !!!!!!!!!!!!!!!!!!!!!!!!!!!!
 train_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
     train_adjectives, embedding_type
 )
@@ -284,6 +308,7 @@ train_embeddings_centred: Float[Tensor, "batch d_model"] = ((
     train_embeddings - 
     train_embeddings.mean(dim=0)
 ).T / train_embeddings.norm(dim=-1)).T
+train_embeddings.shape, test_embeddings.shape, verb_embeddings.shape
 #%%
 # ============================================================================ #
 # K-means
@@ -354,6 +379,8 @@ km_line_normalised: Float[
 print(np.linalg.norm(km_positive_centroid))
 print(np.linalg.norm(km_negative_centroid))
 print(np.linalg.norm(train_embeddings[0, :]))
+#%%
+km_line.shape
 #%% # write k means line to file
 save_array(km_positive_centroid, f"km_2c_positive_{embedding_type.value}", model)
 save_array(km_negative_centroid, f"km_2c_negative_{embedding_type.value}", model)
