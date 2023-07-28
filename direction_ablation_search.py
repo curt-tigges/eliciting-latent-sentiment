@@ -10,7 +10,7 @@ from utils.circuit_analysis import get_logit_diff
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
-from typing import Union, List, Optional, Callable
+from typing import Iterable, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
 from tqdm.notebook import tqdm
@@ -122,10 +122,13 @@ for i, label in enumerate(['positive', 'negative']):
 fig.show()
 #%%
 # negative -> positive
-answer_tokens = all_answer_tokens[1::2]
-clean_tokens = all_clean_tokens[1::2]
-corrupted_tokens = all_corrupted_tokens[1::2]
-print(model.to_string(clean_tokens[0]), model.to_string(corrupted_tokens[0]))
+answer_tokens = all_answer_tokens[::2]
+clean_tokens = all_clean_tokens[::2]
+corrupted_tokens = all_corrupted_tokens[::2]
+print(model.to_string(corrupted_tokens[0]))
+#%%
+example_prompt_indexed = [f"{i}: {s}" for i, s in enumerate(model.to_str_tokens(corrupted_tokens[0]))]
+example_prompt_indexed
 #%%
 # N.B. corrupt -> clean
 clean_logits = model(
@@ -158,6 +161,7 @@ def logit_diff_denoising(
 def create_cache_for_dir_ablation(
     corrupted_cache: ActivationCache, 
     sentiment_dir: Float[Tensor, "d_model"],
+    positions: Iterable[int] = torch.arange(0, len(example_prompt_indexed)),
     clean_proj: float = 0.0,
 ) -> ActivationCache:
     '''
@@ -165,6 +169,8 @@ def create_cache_for_dir_ablation(
     '''
     cache_dict = dict()
     for act_name, corrupt_value in corrupted_cache.items():
+        corrupt_value = corrupt_value.to(device)
+        cache_dict[act_name] = corrupt_value
         is_result = act_name.endswith('result')
         is_resid = (
             act_name.endswith('resid_pre') or
@@ -173,14 +179,14 @@ def create_cache_for_dir_ablation(
             act_name.endswith('mlp_out')
         )
         if is_resid:
-            corrupt_value = corrupt_value.to(device)
+            corrupt_value: Float[Tensor, "batch pos d_model"]
             corrupt_proj = einops.einsum(
-                corrupt_value, sentiment_dir, 'b s d, d -> b s'
+                corrupt_value[:, positions, :], sentiment_dir, 'b s d, d -> b s'
             )
             sentiment_dir_broadcast = einops.repeat(
                 sentiment_dir, 'd -> b s d', 
-                b=corrupt_value.shape[0], 
-                s=corrupt_value.shape[1], 
+                b=corrupt_proj.shape[0], 
+                s=corrupt_proj.shape[1], 
             )
             proj_diff = einops.repeat(
                 clean_proj - corrupt_proj, 
@@ -188,19 +194,16 @@ def create_cache_for_dir_ablation(
                 d=corrupt_value.shape[-1]
             )
             sentiment_adjustment = proj_diff * sentiment_dir_broadcast
-            cache_dict[act_name] = (
-                corrupt_value + sentiment_adjustment
-            )
+            cache_dict[act_name][:, positions, :] += sentiment_adjustment
         elif is_result:
-            corrupt_value = corrupt_value.to(device)
-            corrupt_value = corrupted_cache[act_name].to(device)
+            corrupt_value: Float[Tensor, "batch pos head d_model"]
             corrupt_proj = einops.einsum(
-                corrupt_value, sentiment_dir, 'b s h d, d -> b s h'
+                corrupt_value[:, positions, :, :], sentiment_dir, 'b s h d, d -> b s h'
             )
             sentiment_dir_broadcast = einops.repeat(
                 sentiment_dir, 'd -> b s h d', 
                 b=corrupt_value.shape[0], 
-                s=corrupt_value.shape[1], 
+                s=corrupt_proj.shape[1], 
                 h=corrupt_value.shape[2]
             )
             proj_diff = einops.repeat(
@@ -209,11 +212,7 @@ def create_cache_for_dir_ablation(
                 d=corrupt_value.shape[3]
             )
             sentiment_adjustment = proj_diff * sentiment_dir_broadcast
-            cache_dict[act_name] = (
-                corrupt_value + sentiment_adjustment
-            )
-        else:
-            cache_dict[act_name] = corrupt_value
+            cache_dict[act_name][:, positions, :, :] += sentiment_adjustment
 
     return ActivationCache(cache_dict, model)
 #%%
@@ -257,7 +256,7 @@ def run_act_patching(
     )['resid_post'] * 100
     fig = px.line(
         layer_results,
-        title=f"Patching {label} component of residual stream (corrupted -> clean)",
+        title=f"Patching {label} to component of residual stream",
         labels={"index": "Layer", "value": "Logit diff (%)"},
         width=600,
     )
@@ -296,10 +295,14 @@ def run_act_patching(
     # )
     # fig.show()
 #%%
-for ablation_value in tqdm(range(-20, 20, 5)):
+token_positions = (6, 9)
+print([example_prompt_indexed[i] for i in token_positions])
+#%%
+for ablation_value in tqdm(range(-5, 25, 5)):
     new_cache = create_cache_for_dir_ablation(
-        corrupted_cache, sentiment_direction, ablation_value
+        corrupted_cache, sentiment_direction, token_positions, ablation_value
     )
     label = f"ablation_{ablation_value}".replace("-", "neg_")
     run_act_patching(model, new_cache, label)
 #%%
+
