@@ -36,6 +36,12 @@ sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
 )
 #%% # Data loading
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
+# negative -> positive
+all_prompts = all_prompts[::2]
+answer_tokens = answer_tokens[::2]
+clean_tokens = clean_tokens[::2]
+corrupted_tokens = corrupted_tokens[::2]
+model.to_string(corrupted_tokens[0])
 #%%
 # ============================================================================ #
 # Directional activation patching
@@ -139,24 +145,30 @@ fig.update_layout(dict(
 # ============================================================================ #
 # Mean ablation
 def create_cache_for_mean_ablation(
+    clean_cache: ActivationCache, 
     corrupted_cache: ActivationCache, 
     sentiment_dir: Float[Tensor, "d_model"],
 ) -> ActivationCache:
     '''
     We mean ablate along the sentiment_dir
-    This only uses the corrupted cache
+    We use the clean cache just to help get the mean projection
     '''
     cache_dict = dict()
     for act_name, corrupt_value in corrupted_cache.items():
         if act_name.endswith('q') or act_name.endswith('z'):
             cache_dict[act_name] = corrupt_value
             continue
+        clean_value: Float[Tensor, "b s h d"] = clean_cache[act_name].to(device)
         corrupt_value: Float[Tensor, "b s h d"] = corrupt_value.to(device)
         corrupt_proj = einops.einsum(
             corrupt_value, sentiment_dir, 'b s h d, d -> b s h'
         )
+        stacked_value = torch.cat([clean_value, corrupt_value], dim=0)
+        stacked_proj = einops.einsum(
+            stacked_value, sentiment_dir, 'b s h d, d -> b s h'
+        )
         mean_proj: Float[Tensor, ""] = einops.reduce(
-            corrupt_proj, 'b s h -> ', 'mean'
+            stacked_proj, 'b s h -> ', 'mean'
         )
         sentiment_dir_broadcast = einops.repeat(
             sentiment_dir, 'd -> b s h d', 
@@ -176,7 +188,7 @@ def create_cache_for_mean_ablation(
     return ActivationCache(cache_dict, model)
 #%%
 mean_cache = create_cache_for_mean_ablation(
-    corrupted_cache, sentiment_dir
+    clean_cache, corrupted_cache, sentiment_dir
 )
 print(mean_cache.keys())
 #%%
