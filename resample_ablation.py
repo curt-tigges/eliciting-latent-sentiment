@@ -35,7 +35,7 @@ from tqdm import tqdm
 from path_patching import act_patch, Node, IterNode
 # %% # Model loading
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-MODEL_NAME = 'EleutherAI/pythia-1.4b'
+MODEL_NAME = 'gpt2-small'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -48,7 +48,7 @@ model.name = MODEL_NAME
 # %%
 # corrupted to clean patching style
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
-    model, device, prompt_type='classification_4'
+    model, device, prompt_type='simple'
 )
 # %%
 example_prompt = model.to_str_tokens(clean_tokens[0])
@@ -74,8 +74,6 @@ corrupted_cache.to(device)
 clean_cache['blocks.0.attn.hook_z'].device
 
 # %%
-assert clean_cache['blocks.0.attn.hook_z'].device == device
-# %%
 #  tokenizer_heads = [
 #     (0, 4),
 # ]
@@ -97,11 +95,28 @@ assert clean_cache['blocks.0.attn.hook_z'].device == device
 #     (7, 5),
 # ]
 circuit_heads = [
-    (6, 11),
-    (11, 1),
-    (13, 13),
-    (18, 2),
-    (21, 0),
+    # gpt2-small
+    (0, 4),
+    (7, 1),
+    (9, 2),
+    (10, 1),
+    (10, 4),
+    (11, 9),
+    (8, 5),
+    (9, 2),
+    (9, 10),
+    (6, 4),
+    (7, 1),
+    (7, 5),
+
+
+
+    # pythia-1.4b
+#     (6, 11),
+#     (11, 1),
+#     (13, 13),
+#     (18, 2),
+#     (21, 0),
 ]
 non_circuit_heads = [
     (layer, head)
@@ -115,31 +130,34 @@ circuit_nodes = [
 non_circuit_nodes = [
     Node("result", layer, head) for layer, head in non_circuit_heads
 ]
+all_nodes = circuit_nodes + non_circuit_nodes
 # %%
-# circuit_heads_positions = [
-#     (0, 4, adj_token),
-#     (0, 4, verb_token),
-#     (7, 1, end_token),
-#     (9, 2, end_token),
-#     (10, 1, end_token),
-#     (10, 4, end_token),
-#     (11, 9, end_token),
-#     (8, 5, end_token),
-#     (9, 2, end_token),
-#     (9, 10, end_token),
-#     (6, 4, s2_token),
-#     (7, 1, s2_token),
-#     (7, 5, s2_token),
-# ]
+# gpt2-small
 circuit_heads_positions = [
-    (6, 11, 11),
-    (6, 11, 28),
-    (6, 11, 29),
-    (11, 1, end_token),
-    (13, 13, end_token),
-    (18, 2, end_token),
-    (21, 0, end_token),
+    (0, 4, adj_token),
+    (0, 4, verb_token),
+    (7, 1, end_token),
+    (9, 2, end_token),
+    (10, 1, end_token),
+    (10, 4, end_token),
+    (11, 9, end_token),
+    (8, 5, end_token),
+    (9, 2, end_token),
+    (9, 10, end_token),
+    (6, 4, s2_token),
+    (7, 1, s2_token),
+    (7, 5, s2_token),
 ]
+# pythia-1.4b
+# circuit_heads_positions = [
+#     (6, 11, 11),
+#     (6, 11, 28),
+#     (6, 11, 29),
+#     (11, 1, end_token),
+#     (13, 13, end_token),
+#     (18, 2, end_token),
+#     (21, 0, end_token),
+# ]
 non_circuit_heads_positions = [
     (layer, head, pos)
     for layer in range(model.cfg.n_layers)
@@ -225,12 +243,14 @@ def get_patch_results(
     non_circuit_nodes: List[Node],
     new_cache: ActivationCache = clean_cache,
 ):
+    # logit diff average
     get_patch_results_base(
         circuit_nodes=circuit_nodes,
         non_circuit_nodes=non_circuit_nodes,
         metric=logit_diff_denoising,
         new_cache=new_cache,
    )
+    # logit diff flips
     get_patch_results_base(
         circuit_nodes=circuit_nodes,
         non_circuit_nodes=non_circuit_nodes,
@@ -260,16 +280,23 @@ get_patch_results(
 
 # ============================================================================ #
 # Directional resample ablation
-pos_dir = load_array("km_2c_line_embed_and_mlp0", model)
-pos_dir /= np.linalg.norm(pos_dir)
-pos_dir = torch.tensor(pos_dir, device=device, dtype=torch.float32)
-neg_dir = load_array("rotation_direction0", model)
-neg_dir /= np.linalg.norm(neg_dir)
-neg_dir = torch.tensor(neg_dir, device=device, dtype=torch.float32)
-directions = [pos_dir, neg_dir]
-
+direction_labels = [
+    "km_2c_line_embed_and_mlp0",
+    # "rotation_direction0"
+]
+directions = []
+for direction_label in direction_labels:
+    direction = load_array(direction_label, model)
+    direction /= np.linalg.norm(direction)
+    direction = torch.tensor(direction, device=device, dtype=torch.float32)
+    directions.append(direction)
+assert len(directions) == len(direction_labels)
 # %%
 def create_directional_cache(directions: List[np.ndarray]) -> ActivationCache:
+    '''
+    Corrupted is original
+    Clean is new
+    '''
     cache = {}
     for act_name, orig_value in corrupted_cache.items():
         new_value = clean_cache[act_name]
@@ -312,7 +339,6 @@ get_patch_results(
     new_cache=direction_cache,
 )
 
-# %%
 # %%
 # ============================================================================ #
 # Position & direction resample ablation
