@@ -3,6 +3,7 @@ import einops
 import numpy as np
 from jaxtyping import Float, Int
 import plotly.express as px
+import plotly.io as pio
 from utils.prompts import get_dataset
 from utils.circuit_analysis import get_logit_diff
 import torch
@@ -15,6 +16,7 @@ from tqdm import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.store import save_array, load_array
 #%%
+pio.renderers.default = "notebook"
 update_layout_set = {
     "xaxis_range", "yaxis_range", "hovermode", "xaxis_title", "yaxis_title", "colorbar", "colorscale", "coloraxis", "title_x", "bargap", "bargroupgap", "xaxis_tickformat",
     "yaxis_tickformat", "title_y", "legend_title_text", "xaxis_showgrid", "xaxis_gridwidth", "xaxis_gridcolor", "yaxis_showgrid", "yaxis_gridwidth", "yaxis_gridcolor",
@@ -60,14 +62,34 @@ model.set_use_attn_result(True)
 model.name = MODEL_NAME
 #%% # Direction loading
 sentiment_dir: Float[np.ndarray, "d_model"] = load_array(
-    'km_2c_line_embed_and_mlp0', model
+    # 'km_2c_line_embed_and_mlp0', 
+    # 'rotation_direction0',
+    # 'pca_0_embed_and_mlp0',
+    # 'mean_ov_direction_10_4',
+    'ccs',
+    model
 )
+if sentiment_dir.ndim == 2:
+    sentiment_dir = sentiment_dir.squeeze(0)
 sentiment_dir /= np.linalg.norm(sentiment_dir)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
     device, dtype=torch.float32
 )
+print(sentiment_dir.shape)
 #%% # Data loading
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
+# positive -> negative
+# all_prompts = all_prompts[::2]
+# answer_tokens = answer_tokens[::2]
+# clean_tokens = clean_tokens[::2]
+# corrupted_tokens = corrupted_tokens[::2]
+
+# negative -> positive
+# all_prompts = all_prompts[1::2]
+# answer_tokens = answer_tokens[1::2]
+# clean_tokens = clean_tokens[1::2]
+# corrupted_tokens = corrupted_tokens[1::2]
+
 #%%
 # ============================================================================ #
 # Directional activation patching
@@ -192,7 +214,7 @@ head_results: Float[Tensor, "layer head"] = act_patch(
 #%%
 fig = px.imshow(
     head_results['result'] * 100,
-    title="Patching KM component of attention heads (corrupted -> clean)",
+    title="Patching sentiment component of attention heads (corrupted -> clean)",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
     color_continuous_scale="RdBu",
     color_continuous_midpoint=0,
@@ -223,7 +245,6 @@ fig = px.line(
 )
 fig.update_layout(dict(
     coloraxis=dict(colorbar_ticksuffix = "%"),
-    # border=True,
     margin={"r": 100, "l": 100},
     showlegend=False,
 ))
@@ -252,8 +273,8 @@ imshow_p(
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
     width=1300,
-    zmin=-50,
-    zmax=50,
+    # zmin=-50,
+    # zmax=50,
     margin={"r": 100, "l": 100}
 )
 #%%
