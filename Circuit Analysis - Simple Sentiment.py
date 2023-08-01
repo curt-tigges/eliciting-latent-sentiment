@@ -8,7 +8,8 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.11.2
 #   kernelspec:
-#     display_name: Python 3
+#     display_name: Python 3 (ipykernel)
+#     language: python
 #     name: python3
 # ---
 
@@ -201,7 +202,7 @@ answer_tokens
 #pos_answers = [" Positive", " amazing", " good"]
 #neg_answers = [" Negative", " terrible", " bad"]
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
-    model, device, 1, comparison=("positive", "neutral")
+    model, device, 1, comparison=("positive", "negative")
 )
 
 # %%
@@ -258,8 +259,11 @@ def logit_diff_noising(
 # %% [markdown] id="TfiWnZtelFMV"
 # ### Direct Logit Attribution
 
+# %%
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="bt_jzrazlMAK" outputId="39683745-1153-4a0f-bdbf-5f3be977abe3"
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
+answer_residual_directions = answer_residual_directions.mean(dim=1)
 print("Answer residual directions shape:", answer_residual_directions.shape)
 logit_diff_directions = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
 print("Logit difference directions shape:", logit_diff_directions.shape)
