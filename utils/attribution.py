@@ -159,6 +159,7 @@ def from_cache(
         labels.append("b_U")
 
     full_attribution_max = einops.reduce(full_attribution.abs(), "c sQ sK -> 1 1 1", "max") # or 1 sQ 1
+    print(f"Max attribution: {full_attribution_max}")
     full_attribution_scaled_positive = (full_attribution * (full_attribution > 0).float()) / full_attribution_max
     full_attribution_scaled_negative = (-full_attribution * (full_attribution < 0).float()) / full_attribution_max
 
