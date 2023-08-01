@@ -14,7 +14,7 @@ from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_ac
 from circuitsvis.activations import text_neuron_activations
 from tqdm.notebook import tqdm
 from IPython.display import display
-from utils.store import load_array
+from utils.store import load_array, save_html
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
@@ -86,8 +86,7 @@ harry_potter_start = """
 #%%
 harry_potter_neuroscope = plot_neuroscope(harry_potter_start)
 #%%
-with open("data/gpt2-small/harry_potter_neuroscope.html", "w") as f:
-    f.write(str(harry_potter_neuroscope))
+save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
 #%%
 harry_potter_neuroscope
 #%%

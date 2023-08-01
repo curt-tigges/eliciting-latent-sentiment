@@ -5,6 +5,7 @@ from transformer_lens import HookedTransformer
 from typing import Union
 import torch
 import plotly.graph_objects as go
+from circuitsvis.utils.render import RenderedHTML
 
 
 def clean_label(label: str) -> str:
@@ -52,7 +53,7 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
 
 
 def save_html(
-    fig: go.Figure,
+    html_data: Union[go.Figure, RenderedHTML],
     label: str, 
     model: Union[HookedTransformer, str]
 ):
@@ -62,7 +63,11 @@ def save_html(
     if not os.path.exists(model_path):
         os.mkdir(model_path)
     path = os.path.join(model_path, label + '.html')
-    fig.write_html(path)
+    if isinstance(html_data, go.Figure):
+        html_data.write_html(path)
+    else:
+        with open(path, 'w') as f:
+            f.write(str(html_data))
     return path
 
 
