@@ -157,10 +157,10 @@ with ClearCache():
     all_activations = get_activations_from_data(sample_tokenized, batch_size=64)
 all_activations.shape
 #%%
-def plot_example(batch: int, pos: int, window_size: int = 10):
+def extract_example(batch: int, pos: int, window_size: int = 10):
     lb = max(0, pos - window_size)
     ub = min(len(sample_tokenized[batch]['tokens']), pos + window_size)
-    display(plot_neuroscope(sample_tokenized[batch]['tokens'][lb:ub].unsqueeze(0)))
+    return model.to_string(sample_tokenized[batch]['tokens'][lb:ub])
 #%%
 def _plot_topk(k: int = 10, largest: bool = True):
     label = "positive" if largest else "negative"
@@ -171,10 +171,13 @@ def _plot_topk(k: int = 10, largest: bool = True):
     topk_pos_activations = [all_activations[b, s].item() for b, s in topk_pos_indices]
     # Print the top 10 most positive and negative examples and their activations
     print(f"Top 10 most {label} examples:")
+    texts = []
     for index, example, activation in zip(topk_pos_indices, topk_pos_examples, topk_pos_activations):
         batch, pos = index
         print(f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}")
-        plot_example(batch, pos)
+        texts.append(extract_example(batch, pos))
+    texts_cat = '\n'.join(texts)
+    display(plot_neuroscope(texts_cat))
 #%%
 def plot_topk(k: int = 10):
    _plot_topk(k=k, largest=True)
