@@ -3,6 +3,8 @@ import gc
 import numpy as np
 import torch
 from torch import Tensor
+from torch.utils.data import DataLoader
+from datasets import load_dataset
 import einops
 from jaxtyping import Float, Int
 from typing import List, Union
@@ -114,17 +116,21 @@ plot_neuroscope(clo_text)
 #%%
 # ============================================================================ #
 # Max activating examples on training data
+#%%
+def get_dataloader():
+    owt_data = load_dataset("stas/openwebtext-10k", split="train")
+    dataset = tokenize_and_concatenate(owt_data, model.tokenizer)
+    data_loader = DataLoader(
+        dataset, batch_size=64, shuffle=False, drop_last=True
+    )
+    return data_loader
 
 #%%
-sample_data  = model.load_sample_training_dataset()
-sample_data[0]['text']
+dataloader = get_dataloader()
 #%%
-sample_tokenized = tokenize_and_concatenate(sample_data, tokenizer=model.tokenizer)
-sample_tokenized[0]['tokens']
-#%%
-def get_activations_from_data(data, batch_size=1, max_batches = None):
+def get_activations_from_data(data: torch.utils.data.dataloader.DataLoader):
     all_activations = []
-    for batch_idx, batch_value in tqdm(enumerate(data.iter(batch_size=batch_size)), total=len(data) // batch_size):
+    for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
         embeddings: Int[Tensor, "batch pos d_model"] = embed_and_mlp0(
             batch_value['tokens'], model
         )
@@ -135,9 +141,6 @@ def get_activations_from_data(data, batch_size=1, max_batches = None):
         ).to(device="cpu")
         all_activations.append(activations)
         del embeddings
-        if max_batches is not None and batch_idx > max_batches:
-            break
-
     # Concatenate the activations into a single tensor
     all_activations: Float[Tensor, "full_batch pos"] = torch.cat(all_activations, dim=0)
     return all_activations
@@ -154,20 +157,20 @@ class ClearCache:
         torch.cuda.empty_cache()
 #%%
 with ClearCache():
-    all_activations = get_activations_from_data(sample_tokenized, batch_size=64)
+    all_activations = get_activations_from_data(dataloader)
 all_activations.shape
 #%%
 def extract_example(batch: int, pos: int, window_size: int = 10):
     lb = max(0, pos - window_size)
-    ub = min(len(sample_tokenized[batch]['tokens']), pos + window_size)
-    return model.to_string(sample_tokenized[batch]['tokens'][lb:ub])
+    ub = min(len(dataloader.dataset[batch]['tokens']), pos + window_size)
+    return model.to_string(dataloader.dataset[batch]['tokens'][lb:ub])
 #%%
 def _plot_topk(k: int = 10, largest: bool = True):
     label = "positive" if largest else "negative"
     topk_pos_indices = torch.topk(all_activations.flatten(), k=k, largest=largest).indices
     topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), all_activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the top 10 most positive and negative activations
-    topk_pos_examples = [sample_tokenized[b]['tokens'][s].item() for b, s in topk_pos_indices]
+    topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
     topk_pos_activations = [all_activations[b, s].item() for b, s in topk_pos_indices]
     # Print the top 10 most positive and negative examples and their activations
     print(f"Top 10 most {label} examples:")
