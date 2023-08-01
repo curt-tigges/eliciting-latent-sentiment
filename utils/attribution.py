@@ -158,7 +158,13 @@ def from_cache(
         full_attribution = t.concat([full_attribution, b_U_attribution])
         labels.append("b_U")
 
-    full_attribution_max = einops.reduce(full_attribution.abs(), "c sQ sK -> 1 1 1", "max") # or 1 sQ 1
+    # get number of MLPs, attn biases, and attn heads
+    n_mlp = len(mlp_labels)
+    n_attn_bias = len(attn_bias_labels)
+    n_attn_heads = len(attn_labels)
+    n_embed = 2 if 'hook_pos_embed' in cache.keys() else 0
+
+    full_attribution_max = einops.reduce(full_attribution[(n_embed+n_mlp+n_attn_bias):].abs(), "c sQ sK -> 1 1 1", "max") # or 1 sQ 1
     print(f"Max attribution: {full_attribution_max}")
     full_attribution_scaled_positive = (full_attribution * (full_attribution > 0).float()) / full_attribution_max
     full_attribution_scaled_negative = (-full_attribution * (full_attribution < 0).float()) / full_attribution_max
@@ -175,10 +181,7 @@ def from_cache(
 
     # Include only specific heads if we want
     if heads is not None:
-        # get number of MLPs, attn biases, and attn heads
-        n_mlp = len(mlp_labels)
-        n_attn_bias = len(attn_bias_labels)
-        n_attn_heads = len(attn_labels)
+        
 
         # get the number of heads per layer
         heads_per_layer = n_attn_heads // model.cfg.n_layers
@@ -188,7 +191,6 @@ def from_cache(
         head_indices = [head[1] for head in heads]
 
         # get the indices of the heads in the full attribution matrix
-        n_embed = 2 if 'hook_pos_embed' in cache.keys() else 0
         head_indices = [layer * heads_per_layer + head + n_mlp + n_attn_bias + n_embed for layer, head in heads]
         #head_indices = [layer * heads_per_layer + head for layer, head in heads]
         print(labels)
