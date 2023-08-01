@@ -1,4 +1,5 @@
 #%%
+import gc
 import numpy as np
 import torch
 from torch import Tensor
@@ -12,8 +13,9 @@ from circuitsvis.activations import text_neuron_activations
 from tqdm.notebook import tqdm
 from IPython.display import display
 from utils.store import load_array
-# from utils.prompts import embed_and_mlp0
+from utils.prompts import embed_and_mlp0
 #%%
+torch.set_grad_enabled(False)
 device = "cuda"
 MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
@@ -30,25 +32,11 @@ sentiment_dir = load_array("km_2c_line_embed_and_mlp0", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
-def embed_and_mlp0(
-    tokens: Union[str, List[str], Int[Tensor, "batch pos"]],
-    transformer: HookedTransformer,
-):
-    if isinstance(tokens, str):
-        tokens = transformer.to_tokens(tokens)
-    elif isinstance(tokens, list) and isinstance(tokens[0], str):
-        tokens = transformer.to_tokens(tokens)
-    block0 = transformer.blocks[0]
-    resid_mid = transformer.embed(tokens)
-    mlp_out = block0.mlp((resid_mid))
-    resid_post = resid_mid + mlp_out
-    return block0.ln2(resid_post)
-#%%
 def plot_neuroscope(text: str):
-    embeddings: Int[Tensor, "1 pos d_model"] = embed_and_mlp0(text, model)
+    embeddings: Int[Tensor, "batch pos d_model"] = embed_and_mlp0(text, model)
     embeddings /= embeddings.norm(dim=-1, keepdim=True)
     activations = einops.einsum(
-        embeddings, sentiment_dir,
+        embeddings.to(device), sentiment_dir.to(device),
         "batch pos d_model, d_model -> batch pos"
     )
     activations = einops.repeat(
@@ -131,36 +119,55 @@ plot_neuroscope(clo_text)
 sample_data  = model.load_sample_training_dataset()
 sample_data[0]['text']
 #%%
-tokenized = tokenize_and_concatenate(sample_data, tokenizer=model.tokenizer)
-tokenized[0]['tokens']
-# %%
-# Get all the activations for the dataset
-all_activations = []
-for batch_idx, batch_value in tqdm(enumerate(tokenized.iter(batch_size=2))):
-    embeddings: Int[Tensor, "batch pos d_model"] = embed_and_mlp0(batch_value['tokens'], model)
-    embeddings /= embeddings.norm(dim=-1, keepdim=True)
-    activations: Float[Tensor, "batch pos"] = einops.einsum(
-        embeddings, sentiment_dir,
-        "batch pos d_model, d_model -> batch pos"
-    )
-    all_activations.append(activations)
-    if batch_idx > 10:
-        break
+sample_tokenized = tokenize_and_concatenate(sample_data, tokenizer=model.tokenizer)
+sample_tokenized[0]['tokens']
+#%%
+def get_activations_from_data(data, batch_size=1, max_batches = None):
+    all_activations = []
+    for batch_idx, batch_value in tqdm(enumerate(data.iter(batch_size=batch_size)), total=len(data) // batch_size):
+        embeddings: Int[Tensor, "batch pos d_model"] = embed_and_mlp0(
+            batch_value['tokens'], model
+        )
+        embeddings /= embeddings.norm(dim=-1, keepdim=True)
+        activations: Float[Tensor, "batch pos"] = einops.einsum(
+            embeddings, sentiment_dir,
+            "batch pos d_model, d_model -> batch pos"
+        ).to(device="cpu")
+        all_activations.append(activations)
+        del embeddings
+        if max_batches is not None and batch_idx > max_batches:
+            break
 
-# Concatenate the activations into a single tensor
-all_activations: Float[Tensor, "full_batch pos"] = torch.cat(all_activations, dim=0)
+    # Concatenate the activations into a single tensor
+    all_activations: Float[Tensor, "full_batch pos"] = torch.cat(all_activations, dim=0)
+    return all_activations
+#%%
+class ClearCache:
+    def __enter__(self):
+        gc.collect()
+        torch.cuda.empty_cache()
+        model.cuda()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        model.cpu()
+        gc.collect()
+        torch.cuda.empty_cache()
+#%%
+with ClearCache():
+    all_activations = get_activations_from_data(sample_tokenized, batch_size=64)
+all_activations.shape
 #%%
 def plot_example(batch: int, pos: int, window_size: int = 10):
     lb = max(0, pos - window_size)
-    ub = min(len(tokenized[batch]['tokens']), pos + window_size)
-    display(plot_neuroscope(tokenized[batch]['tokens'][lb:ub].unsqueeze(0)))
+    ub = min(len(sample_tokenized[batch]['tokens']), pos + window_size)
+    display(plot_neuroscope(sample_tokenized[batch]['tokens'][lb:ub].unsqueeze(0)))
 #%%
 def _plot_topk(k: int = 10, largest: bool = True):
     label = "positive" if largest else "negative"
-    topk_pos_indices = torch.topk(all_activations.flatten(), k=k, largest=True).indices
+    topk_pos_indices = torch.topk(all_activations.flatten(), k=k, largest=largest).indices
     topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), all_activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the top 10 most positive and negative activations
-    topk_pos_examples = [tokenized[b]['tokens'][s].item() for b, s in topk_pos_indices]
+    topk_pos_examples = [sample_tokenized[b]['tokens'][s].item() for b, s in topk_pos_indices]
     topk_pos_activations = [all_activations[b, s].item() for b, s in topk_pos_indices]
     # Print the top 10 most positive and negative examples and their activations
     print(f"Top 10 most {label} examples:")

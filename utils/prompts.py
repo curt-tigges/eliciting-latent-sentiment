@@ -2,7 +2,7 @@ from transformer_lens import HookedTransformer
 import torch
 from torch import Tensor
 from jaxtyping import Float, Int, Bool
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import einops
 
 # deprecated for now--those with the weakest positive response are eliminated
@@ -359,3 +359,18 @@ def get_ccs_dataset(
     ]
     assert len(pos_prompts) == len(pos_tokens)
     return neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, truncated
+
+
+def embed_and_mlp0(
+    tokens: Union[str, List[str], Int[Tensor, "batch pos"]],
+    transformer: HookedTransformer,
+):
+    if isinstance(tokens, str):
+        tokens = transformer.to_tokens(tokens)
+    elif isinstance(tokens, list) and isinstance(tokens[0], str):
+        tokens = transformer.to_tokens(tokens)
+    block0 = transformer.blocks[0]
+    resid_mid = transformer.embed(tokens)
+    mlp_out = block0.mlp((resid_mid))
+    resid_post = resid_mid + mlp_out
+    return block0.ln2(resid_post)
