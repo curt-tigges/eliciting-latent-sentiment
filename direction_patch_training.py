@@ -181,22 +181,6 @@ def hook_fn_base(
     if hook.layer() != layer:
         return input
     input[:, position] = new_value
-    # position_index = einops.repeat(
-    #     torch.arange(input.shape[1], device=device), 
-    #     "seq -> batch seq d_model", 
-    #     batch=input.shape[0], 
-    #     d_model=input.shape[2]
-    # )
-    # input_replaced = torch.where(
-    #     position_index == position,
-    #     new_value,
-    #     input,
-    # )
-    # print(
-    #     "input", input.requires_grad,
-    #     "new_value", new_value.requires_grad,
-    #     "input_replaced", input_replaced.requires_grad,
-    # )
     return input
     
 #%%
