@@ -295,9 +295,9 @@ class TrainingConfig:
 def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     # Initialize wandb
     config_dict = {
-        "num_seeds": config_dict.get("num_seeds", 5),
+        "seeds": config_dict.get("seeds", 5),
         "lr": config_dict.get("lr", 1e-3),
-        "n_epochs": config_dict.get("n_epochs", 50),
+        "epochs": config_dict.get("epochs", 50),
         "n_directions": config_dict.get("n_directions", 1),
         "layer": config_dict.get("layer", 0),
         "position": config_dict.get("position", 0),
@@ -313,7 +313,10 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     losses = []
     models = []
     directions = []
-    random_seeds = np.arange(config.num_seeds)
+    if isinstance(config.seeds, int):
+        random_seeds = np.arange(config.seeds)
+    else:
+        random_seeds = config.seeds
     step = 0
     for seed in random_seeds:
         print(f"Training seed {seed}")
@@ -335,7 +338,7 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
         optimizer = torch.optim.Adam(rotation_module.parameters(), lr=config.lr)
         print([f"Param={name}, requires_grad={param.requires_grad}" for name, param in rotation_module.named_parameters()])
 
-        for epoch in range(config.n_epochs):
+        for epoch in range(config.epochs):
             optimizer.zero_grad()
             loss = rotation_module(
                 orig_cache["resid_post", config.layer][:, config.position, :],
@@ -368,20 +371,19 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
 
 #%%
 SEEDS = 5
+EPOCHS = 60
 rotation_module_end, directions_end = train_rotation(
-    num_seeds=SEEDS, 
-    num_epochs=50, 
+    seeds=SEEDS, 
+    epochs=EPOCHS, 
     position=new_tokens.shape[1] - 1, 
     layer=model.cfg.n_layers - 1,
-    wandb_enabled=False
 )
 #%%
 rotation_module_adj, directions_adj = train_rotation(
-    num_seeds=SEEDS, 
-    num_epochs=50, 
+    seeds=SEEDS, 
+    epochs=EPOCHS, 
     position=adj_position, 
     layer=0,
-    wandb_enabled=False
 )
 #%%
 for seed in range(SEEDS):
