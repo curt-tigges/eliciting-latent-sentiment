@@ -33,7 +33,6 @@ from transformer_lens.hook_points import (
 )  # Hooking utilities
 import wandb
 from utils.store import save_array, save_html
-from utils.prompts import remove_pythia_double_token_words
 # ============================================================================ #
 # model loading
 
@@ -227,7 +226,7 @@ class EmbedType(Enum):
     UNEMBED = 'unembed_transpose'
     MLP = 'embed_and_mlp0'
     ATTN = 'embed_and_attn0'
-    RESID = 'resid0'
+    RESID = 'resid_post'
 #%%
 _, train_cache = model.run_with_cache(train_adjectives, return_type=None)
 #%%
@@ -242,47 +241,54 @@ def embed_and_mlp0(
     return block0.ln2(resid_post)
 #%%
 def embed_and_attn0(
-    tokens: Int[Tensor, "batch 1"],
+    tokens: Int[Tensor, "batch 2"],
     transformer: HookedTransformer = model
 ) -> Float[Tensor, "batch 1 d_model"]:
+    assert tokens.shape[1] == 2
     _, cache = transformer.run_with_cache(
         tokens, return_type=None, names_filter = lambda name: 'attn_out' in name
     )
-    return cache['attn_out', 0]
+    out: Float[Tensor, "batch pos d_model"] = cache['attn_out', 0]
+    return out[:, 1, :]
 #%%
-def resid0(
-    tokens: Int[Tensor, "batch 1"],
+def resid_layer(
+    tokens: Int[Tensor, "batch 2"],
+    layer: int,
     transformer: HookedTransformer = model
 ) -> Float[Tensor, "batch 1 d_model"]:
+    assert tokens.shape[1] == 2
     _, cache = transformer.run_with_cache(
-        tokens, return_type=None, names_filter = lambda name: 'mlp_out' in name
+        tokens, return_type=None, names_filter = lambda name: 'resid_post' in name
     )
-    return cache['mlp_out', 0]
+    out: Float[Tensor, "batch pos d_model"] = cache['resid_post', layer]
+    return out[:, 1, :]
 #%%
 def embed_str_tokens(
     str_tokens: List[str],
     embed_type: EmbedType,
+    layer: int = None,
     transformer: HookedTransformer = model,
 ) -> Float[Tensor, "batch d_model"]:
-    tokens: Int[Tensor, "batch 1"] = transformer.to_tokens(
-        str_tokens, prepend_bos=False
+    tokens: Int[Tensor, "batch 2"] = transformer.to_tokens(
+        str_tokens, prepend_bos=True
     )
+    non_bos_tokens: Int[Tensor, "batch 1"] = tokens[:, 1:]
     embeddings: Float[Tensor, "batch 1 d_model"]
     if embed_type == EmbedType.EMBED:
-        embeddings = transformer.embed(tokens)
+        embeddings = transformer.embed(non_bos_tokens)
     elif embed_type == EmbedType.UNEMBED:
         # one-hot encode tokens
         oh_tokens: Int[Tensor, "batch 1 vocab"] = F.one_hot(
-            tokens, num_classes=transformer.cfg.d_vocab
+            non_bos_tokens, num_classes=transformer.cfg.d_vocab
         ).to(torch.float32)
         wU: Float[Tensor, "model vocab"] = transformer.W_U
         embeddings = oh_tokens @ wU.T
     elif embed_type == EmbedType.MLP:
-        embeddings = embed_and_mlp0(tokens)
+        embeddings = embed_and_mlp0(non_bos_tokens)
     elif embed_type == EmbedType.ATTN:
         embeddings = embed_and_attn0(tokens)
     elif embed_type == EmbedType.RESID:
-        embeddings = resid0(tokens)
+        embeddings = resid_layer(tokens, layer)
     else:
         raise ValueError(f'Unrecognised embed type: {embed_type}')
     embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
@@ -290,36 +296,7 @@ def embed_str_tokens(
         f"Expected embeddings to be 2D, got {embeddings.shape}"
     )
     return embeddings.detach()
-#%% # train, test embeddings
-embedding_type = EmbedType.EMBED # CHANGEME !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-train_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
-    train_adjectives, embedding_type
-)
-test_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
-    test_adjectives, embedding_type
-)
-verb_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
-    all_verbs, embedding_type
-)
-train_embeddings_normalised: Float[Tensor, "batch d_model"] = F.normalize(
-    train_embeddings, dim=-1
-)
-train_embeddings_centred: Float[Tensor, "batch d_model"] = ((
-    train_embeddings - 
-    train_embeddings.mean(dim=0)
-).T / train_embeddings.norm(dim=-1)).T
-train_embeddings.shape, test_embeddings.shape, verb_embeddings.shape
-#%%
-# ============================================================================ #
-# K-means
-kmeans = KMeans(n_clusters=2, n_init=10)
-kmeans.fit(train_embeddings)
-train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
-test_km_labels = kmeans.predict(test_embeddings)
-verb_km_labels = kmeans.predict(verb_embeddings)
-km_centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
-
-#%%
+#%% # helper functions
 def split_by_label(
     adjectives: List[str], labels: Int[np.ndarray, "batch"]
 ) -> Tuple[List[str], List[str]]:
@@ -334,158 +311,8 @@ def split_by_label(
         if labels[i] == 1
     ]
     return first_cluster, second_cluster
-#%%
-km_first_cluster, km_second_cluster = split_by_label(
-    train_adjectives, train_km_labels
-)
-pos_first = (
-    len(set(km_first_cluster) & set(train_positive_adjectives)) >
-    len(set(km_second_cluster) & set(train_positive_adjectives))
-)
-if pos_first:
-    train_positive_cluster = km_first_cluster
-    train_negative_cluster = km_second_cluster
-    km_positive_centroid = km_centroids[0, :]
-    km_negative_centroid = km_centroids[1, :]
-    test_positive_cluster, test_negative_cluster = split_by_label(
-        test_adjectives, test_km_labels
-    )
-    verb_positive_cluster, verb_negative_cluster = split_by_label(
-        all_verbs, verb_km_labels
-    )
-else:
-    train_positive_cluster = km_second_cluster
-    train_negative_cluster = km_first_cluster
-    km_positive_centroid = km_centroids[1, :]
-    km_negative_centroid = km_centroids[0, :]
-    test_negative_cluster, test_positive_cluster = split_by_label(
-        test_adjectives, test_km_labels
-    )
-    verb_negative_cluster, verb_positive_cluster = split_by_label(
-        all_verbs, verb_km_labels
-    )
-    train_km_labels = 1 - train_km_labels
-    test_km_labels = 1 - test_km_labels
-    verb_km_labels = 1 - verb_km_labels
-km_line: Float[np.ndarray, "d_model"] = (
-    km_positive_centroid - km_negative_centroid
-)
-km_line_normalised: Float[
-    Tensor, "d_model"
-] = torch.tensor(
-    km_line / np.linalg.norm(km_line), dtype=torch.float32, device=device
-)
-#%%
-print(np.linalg.norm(km_positive_centroid))
-print(np.linalg.norm(km_negative_centroid))
-print(np.linalg.norm(train_embeddings[0, :]))
-#%%
-km_line.shape
-#%% # write k means line to file
-save_array(km_positive_centroid, f"km_2c_positive_{embedding_type.value}", model)
-save_array(km_negative_centroid, f"km_2c_negative_{embedding_type.value}", model)
-save_array(km_line, f"km_2c_line_{embedding_type.value}", model)
-#%%
-# project adjectives onto k-means line
-train_km_projected = einops.einsum(
-    train_embeddings, km_line_normalised, "b d, d->b"
-).numpy()
-# sort adjectives by projection with k-means line
-train_km_projected_sorted = sorted(
-    zip(train_km_projected, train_adjectives), key=lambda x: x[0]
-)
-print(
-    "Most negative: ", 
-    train_km_projected_sorted[:10], 
-    "\nMost positive: ",
-    train_km_projected_sorted[-10:]
-)
 
-# %%
-# ============================================================================ #
-# PCA
-pca = PCA(n_components=2)
-train_pcs = pca.fit_transform(train_embeddings.numpy())
-test_pcs = pca.transform(test_embeddings.numpy())
-verb_pcs = pca.transform(verb_embeddings.numpy())
-kmeans.fit(train_pcs)
-train_pca_labels: Int[np.ndarray, "batch"] = kmeans.labels_
-test_pca_labels = kmeans.predict(test_pcs)
-verb_pca_labels = kmeans.predict(verb_pcs)
-pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
-#%% # bar of % variance explained by each component
-fig = px.bar(
-    pca.explained_variance_ratio_, 
-    title=f"% variance explained by PCA ({model.name})", 
-    labels={'index': 'component', 'value': '% variance'},
-)
-fig.update_layout(showlegend=False, title_x=0.5)
-fig.show()
-#%% # similarity of PCs and k-means line
-for comp in range(pca.n_components_):
-    # PCA components should already be normalised, but just in case
-    comp_unit = pca.components_[comp, :] / np.linalg.norm(pca.components_[comp, :])
 
-    save_array(comp_unit, f"pca_{comp}_{embedding_type.value}", model)
-    print(
-        f"Component {comp}: {np.dot(comp_unit, km_line_normalised)}"
-    )
-#%%
-pca_first_cluster, pca_second_cluster = split_by_label(
-    train_adjectives, train_pca_labels
-)
-# %%
-pca_pos_first = (
-    len(set(pca_first_cluster) & set(train_positive_adjectives)) >
-    len(set(pca_second_cluster) & set(train_positive_adjectives))
-)
-if pca_pos_first:
-    # positive first
-    train_pca_positive_cluster = pca_first_cluster
-    train_pca_negative_cluster = pca_second_cluster
-    test_pca_positive_cluster, test_pca_negative_cluster = split_by_label(
-        test_adjectives, test_pca_labels
-    )
-    verb_pca_positive_cluster, verb_pca_negative_cluster = split_by_label(
-        all_verbs, verb_pca_labels
-    )
-    pca_positive_centroid = pca_centroids[0, :]
-    pca_negative_centroid = pca_centroids[1, :]
-else:
-    # negative first
-    train_pca_positive_cluster = pca_second_cluster
-    train_pca_negative_cluster = pca_first_cluster
-    test_pca_negative_cluster, test_pca_positive_cluster = split_by_label(
-        test_adjectives, test_pca_labels
-    )
-    verb_pca_negative_cluster, verb_pca_positive_cluster = split_by_label(
-        all_verbs, verb_pca_labels
-    )
-    pca_negative_centroid = pca_centroids[0, :]
-    pca_positive_centroid = pca_centroids[1, :]
-    train_pca_labels = 1 - train_pca_labels
-    test_pca_labels = 1 - test_pca_labels
-    verb_pca_labels = 1 - verb_pca_labels
-pca_line: Float[np.ndarray, "2"] = (
-    pca_positive_centroid - pca_negative_centroid
-)
-pca_line_normalised: Float[
-    Tensor, "2"
-] = torch.tensor(pca_line / np.linalg.norm(pca_line), dtype=torch.float32)
-#%%
-# project adjectives onto PCA line
-train_pca_projected = einops.einsum(
-    train_pcs, pca_line_normalised, "b d, d->b"
-)
-# sort adjectives by projection with k-means line
-train_pca_projected_sorted = sorted(
-    zip(train_pca_projected, train_adjectives), key=lambda x: x[0]
-)
-train_pca_projected_sorted[:10]
-
-# %%
-# ============================================================================ #
-# Classification accuracy
 
 def print_accuracy(
     predicted_positive: Iterable[str],
@@ -502,79 +329,8 @@ def print_accuracy(
     accuracy = correct / total
     print(f"{label} accuracy: {correct}/{total} = {accuracy:.0%}")
 
-# ============================================================================ #
-# KMeans accuracy
 
-print_accuracy(
-    train_positive_cluster,
-    train_negative_cluster,
-    train_positive_adjectives,
-    train_negative_adjectives,
-    "In-sample KMeans",
-)
-print_accuracy(
-    test_positive_cluster,
-    test_negative_cluster,
-    test_positive_adjectives,
-    test_negative_adjectives,
-    "Out-of-sample KMeans",
-)
-print_accuracy(
-    verb_positive_cluster,
-    verb_negative_cluster,
-    positive_verbs,
-    negative_verbs,
-    "Out-of-sample KMeans verbs",
-)
-# ============================================================================ #
-# PCA accuracy
-
-print_accuracy(
-    train_pca_positive_cluster,
-    train_pca_negative_cluster,
-    train_positive_adjectives,
-    train_negative_adjectives,
-    "In-sample PCA",
-)
-print_accuracy(
-    test_pca_positive_cluster,
-    test_pca_negative_cluster,
-    test_positive_adjectives,
-    test_negative_adjectives,
-    "Out-of-sample PCA",
-)
-print_accuracy(
-    verb_pca_positive_cluster,
-    verb_pca_negative_cluster,
-    positive_verbs,
-    negative_verbs,
-    "Out-of-sample PCA verbs",
-)
-#%% # compute euclidean distance between centroids and each point
-positive_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
-    train_pcs - pca_positive_centroid, axis=-1
-)
-negative_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
-    train_pcs - pca_negative_centroid, axis=-1
-)
-# print the adjectives closest to each centroid
-positive_closest = np.array(train_adjectives)[
-    np.argsort(positive_distances)[:5]
-]
-negative_closest = np.array(train_adjectives)[
-    np.argsort(negative_distances)[:10]
-]
-negative_closest_distances = [
-    f"{d:.2f}" for d in np.sort(negative_distances)[:10]
-]
-print(f"Positive centroid nearest adjectives: {positive_closest}")
-print(f"Negative centroid nearest adjectives: {negative_closest}")
-print(f"Negative centroid distances: {negative_closest_distances}")
-#%% # 
-# ============================================================================ #
-# Plotting
-#%%
-def plot_pca_1d():
+def plot_pca_1d(train_pcs, train_adjectives, train_pca_labels, pca_centroids):
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -633,13 +389,9 @@ def plot_pca_1d():
         showlegend=True,
     )
     return fig
-#%%
-if pca.n_components_== 1:
-    fig = plot_pca_1d()
-    fig.show()
-# %%
-# plot the PCA
-def plot_pca_2d():
+
+
+def plot_pca_2d(train_pcs, test_pcs, verb_pcs, pca_centroids, label):
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -724,7 +476,7 @@ def plot_pca_2d():
     )
     fig.update_layout(
         title=(
-            f"PCA on {embedding_type.value} of single-token adjectives "
+            f"PCA on {label} of single-token adjectives "
             f"({model.name})"
         ),
         xaxis_title="PC1",
@@ -732,171 +484,423 @@ def plot_pca_2d():
     )
     print(save_html(fig, f"PCA_{embedding_type.value}", model))
     return fig
+#%%
+def get_embed_label(embedding_type: EmbedType, layer: int = None):
+    layer_suffix = f"_layer_{layer}" if embedding_type == EmbedType.RESID else ""
+    return f"{embedding_type.value}{layer_suffix}"
+#%%
+# ============================================================================ #
+# K-means
+#%%
+def train_kmeans(train_embeddings, test_embeddings, verb_embeddings, layer):
+    kmeans = KMeans(n_clusters=2, n_init=10)
+    kmeans.fit(train_embeddings)
+    train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
+    test_km_labels = kmeans.predict(test_embeddings)
+    verb_km_labels = kmeans.predict(verb_embeddings)
+    km_centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
+
+    km_first_cluster, km_second_cluster = split_by_label(
+        train_adjectives, train_km_labels
+    )
+    pos_first = (
+        len(set(km_first_cluster) & set(train_positive_adjectives)) >
+        len(set(km_second_cluster) & set(train_positive_adjectives))
+    )
+    if pos_first:
+        train_positive_cluster = km_first_cluster
+        train_negative_cluster = km_second_cluster
+        km_positive_centroid = km_centroids[0, :]
+        km_negative_centroid = km_centroids[1, :]
+        test_positive_cluster, test_negative_cluster = split_by_label(
+            test_adjectives, test_km_labels
+        )
+        verb_positive_cluster, verb_negative_cluster = split_by_label(
+            all_verbs, verb_km_labels
+        )
+    else:
+        train_positive_cluster = km_second_cluster
+        train_negative_cluster = km_first_cluster
+        km_positive_centroid = km_centroids[1, :]
+        km_negative_centroid = km_centroids[0, :]
+        test_negative_cluster, test_positive_cluster = split_by_label(
+            test_adjectives, test_km_labels
+        )
+        verb_negative_cluster, verb_positive_cluster = split_by_label(
+            all_verbs, verb_km_labels
+        )
+        train_km_labels = 1 - train_km_labels
+        test_km_labels = 1 - test_km_labels
+        verb_km_labels = 1 - verb_km_labels
+    km_line: Float[np.ndarray, "d_model"] = (
+        km_positive_centroid - km_negative_centroid
+    )
+    km_line_normalised: Float[
+        Tensor, "d_model"
+    ] = torch.tensor(
+        km_line / np.linalg.norm(km_line), dtype=torch.float32, device=device
+    )
+    # write k means line to file
+    embed_label = get_embed_label(embedding_type, layer)
+    save_array(km_positive_centroid, f"km_2c_positive_{embed_label}", model)
+    save_array(km_negative_centroid, f"km_2c_negative_{embed_label}", model)
+    save_array(km_line, f"km_2c_line_{embed_label}", model)
+    # project adjectives onto k-means line
+    train_km_projected = einops.einsum(
+        train_embeddings, km_line_normalised, "b d, d->b"
+    ).numpy()
+    # sort adjectives by projection with k-means line
+    train_km_projected_sorted = sorted(
+        zip(train_km_projected, train_adjectives), key=lambda x: x[0]
+    )
+    print(
+        "Most negative: ", 
+        train_km_projected_sorted[:10], 
+        "\nMost positive: ",
+        train_km_projected_sorted[-10:]
+    )
+    print_accuracy(
+        train_positive_cluster,
+        train_negative_cluster,
+        train_positive_adjectives,
+        train_negative_adjectives,
+        "In-sample KMeans",
+    )
+    print_accuracy(
+        test_positive_cluster,
+        test_negative_cluster,
+        test_positive_adjectives,
+        test_negative_adjectives,
+        "Out-of-sample KMeans",
+    )
+    print_accuracy(
+        verb_positive_cluster,
+        verb_negative_cluster,
+        positive_verbs,
+        negative_verbs,
+        "Out-of-sample KMeans verbs",
+    )
+    return kmeans, km_line_normalised
+
 # %%
-if pca.n_components_ == 2:
-    fig = plot_pca_2d()
+# ============================================================================ #
+# PCA
+def train_pca(
+        train_embeddings, test_embeddings, verb_embeddings, layer, kmeans: KMeans, km_line_normalised: Float[Tensor, "d_model"]
+    ):
+    embed_label = get_embed_label(embedding_type, layer)
+    pca = PCA(n_components=2)
+    train_pcs = pca.fit_transform(train_embeddings.numpy())
+    test_pcs = pca.transform(test_embeddings.numpy())
+    verb_pcs = pca.transform(verb_embeddings.numpy())
+    kmeans.fit(train_pcs)
+    train_pca_labels: Int[np.ndarray, "batch"] = kmeans.labels_
+    test_pca_labels = kmeans.predict(test_pcs)
+    verb_pca_labels = kmeans.predict(verb_pcs)
+    pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
+    # bar of % variance explained by each component
+    fig = px.bar(
+        pca.explained_variance_ratio_, 
+        title=f"% variance explained by PCA ({model.name})", 
+        labels={'index': 'component', 'value': '% variance'},
+    )
+    fig.update_layout(showlegend=False, title_x=0.5)
     fig.show()
+    # similarity of PCs and k-means line
+    for comp in range(pca.n_components_):
+        # PCA components should already be normalised, but just in case
+        comp_unit = pca.components_[comp, :] / np.linalg.norm(pca.components_[comp, :])
+
+        save_array(comp_unit, f"pca_{comp}_{embed_label}", model)
+        print(
+            f"Component {comp}: {np.dot(comp_unit, km_line_normalised)}"
+        )
+    pca_first_cluster, pca_second_cluster = split_by_label(
+        train_adjectives, train_pca_labels
+    )
+    pca_pos_first = (
+        len(set(pca_first_cluster) & set(train_positive_adjectives)) >
+        len(set(pca_second_cluster) & set(train_positive_adjectives))
+    )
+    if pca_pos_first:
+        # positive first
+        train_pca_positive_cluster = pca_first_cluster
+        train_pca_negative_cluster = pca_second_cluster
+        test_pca_positive_cluster, test_pca_negative_cluster = split_by_label(
+            test_adjectives, test_pca_labels
+        )
+        verb_pca_positive_cluster, verb_pca_negative_cluster = split_by_label(
+            all_verbs, verb_pca_labels
+        )
+        pca_positive_centroid = pca_centroids[0, :]
+        pca_negative_centroid = pca_centroids[1, :]
+    else:
+        # negative first
+        train_pca_positive_cluster = pca_second_cluster
+        train_pca_negative_cluster = pca_first_cluster
+        test_pca_negative_cluster, test_pca_positive_cluster = split_by_label(
+            test_adjectives, test_pca_labels
+        )
+        verb_pca_negative_cluster, verb_pca_positive_cluster = split_by_label(
+            all_verbs, verb_pca_labels
+        )
+        pca_negative_centroid = pca_centroids[0, :]
+        pca_positive_centroid = pca_centroids[1, :]
+        train_pca_labels = 1 - train_pca_labels
+        test_pca_labels = 1 - test_pca_labels
+        verb_pca_labels = 1 - verb_pca_labels
+    pca_line: Float[np.ndarray, "2"] = (
+        pca_positive_centroid - pca_negative_centroid
+    )
+    pca_line_normalised: Float[
+        Tensor, "2"
+    ] = torch.tensor(pca_line / np.linalg.norm(pca_line), dtype=torch.float32)
+    # project adjectives onto PCA line
+    train_pca_projected = einops.einsum(
+        train_pcs, pca_line_normalised, "b d, d->b"
+    )
+    # sort adjectives by projection with k-means line
+    print_accuracy(
+        train_pca_positive_cluster,
+        train_pca_negative_cluster,
+        train_positive_adjectives,
+        train_negative_adjectives,
+        "In-sample PCA",
+    )
+    print_accuracy(
+        test_pca_positive_cluster,
+        test_pca_negative_cluster,
+        test_positive_adjectives,
+        test_negative_adjectives,
+        "Out-of-sample PCA",
+    )
+    print_accuracy(
+        verb_pca_positive_cluster,
+        verb_pca_negative_cluster,
+        positive_verbs,
+        negative_verbs,
+        "Out-of-sample PCA verbs",
+    )
+
+    # compute euclidean distance between centroids and each point
+    positive_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
+        train_pcs - pca_positive_centroid, axis=-1
+    )
+    negative_distances: Float[np.ndarray, "batch"] = np.linalg.norm(
+        train_pcs - pca_negative_centroid, axis=-1
+    )
+    # print the adjectives closest to each centroid
+    positive_closest = np.array(train_adjectives)[
+        np.argsort(positive_distances)[:5]
+    ]
+    negative_closest = np.array(train_adjectives)[
+        np.argsort(negative_distances)[:10]
+    ]
+    negative_closest_distances = [
+        f"{d:.2f}" for d in np.sort(negative_distances)[:10]
+    ]
+    print(f"Positive centroid nearest adjectives: {positive_closest}")
+    print(f"Negative centroid nearest adjectives: {negative_closest}")
+    print(f"Negative centroid distances: {negative_closest_distances}")
+
+    if pca.n_components_== 1:
+        fig = plot_pca_1d()
+        fig.show()
+    elif pca.n_components_ == 2:
+        fig = plot_pca_2d(
+            train_pcs, test_pcs, verb_pcs, pca_centroids, embed_label
+        )
+        fig.show()
+#%%
+def run_for_embedding(embedding_type: EmbedType, layer: int = None):
+    train_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
+        train_adjectives, embedding_type, layer=layer
+    )
+    test_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
+        test_adjectives, embedding_type, layer=layer
+    )
+    verb_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
+        all_verbs, embedding_type, layer=layer
+    )
+    train_embeddings_normalised: Float[Tensor, "batch d_model"] = F.normalize(
+        train_embeddings, dim=-1
+    )
+    train_embeddings_centred: Float[Tensor, "batch d_model"] = ((
+        train_embeddings - 
+        train_embeddings.mean(dim=0)
+    ).T / train_embeddings.norm(dim=-1)).T
+    train_embeddings.shape, test_embeddings.shape, verb_embeddings.shape
+    kmeans, km_line_normalised = train_kmeans(
+        train_embeddings, test_embeddings, verb_embeddings, layer
+    )
+    train_pca(train_embeddings, test_embeddings, verb_embeddings, layer, kmeans, km_line_normalised)
+#%% # train, test embeddings
+embedding_type = EmbedType.RESID # CHANGEME !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+for layer in range(12):
+    run_for_embedding(embedding_type=embedding_type, layer=layer)
+
+# %%
 #%%
 # ============================================================================ #
 # Correlation between measures of negativity
-fig = go.Figure()
-fig.add_trace(
-    go.Scatter(
-        x=train_pca_projected,
-        y=train_km_projected,
-        mode="markers",
-        marker=dict(
-            color=train_pca_labels,
-            colorscale="RdBu",
-            opacity=0.8,
-        ),
-        name="Kmeans vs PCA scores",
-        text=train_adjectives,
-    )
-)
-fig.update_layout(
-    title=(
-        "Correlation between KM and PCA scores using " + 
-        embedding_type.value
-    ),
-    yaxis_title="Kmeans scores",
-    xaxis_title="PCA scores",
-)
-fig.show()
-# %%
-# write the results to a csv
-df = pd.DataFrame({
-        "adjective": train_pca_projected,
-        "kmeans": train_km_projected,
-        "pca": train_pcs[:, 0],
-        "binary_label": train_pca_labels,
-})
-# df.to_csv("data/negativity_scores.csv", index=False)
-# %%
-# ============================================================================ #
-# Histogram of dot product of embeddings and km_line
+# fig = go.Figure()
+# fig.add_trace(
+#     go.Scatter(
+#         x=train_pca_projected,
+#         y=train_km_projected,
+#         mode="markers",
+#         marker=dict(
+#             color=train_pca_labels,
+#             colorscale="RdBu",
+#             opacity=0.8,
+#         ),
+#         name="Kmeans vs PCA scores",
+#         text=train_adjectives,
+#     )
+# )
+# fig.update_layout(
+#     title=(
+#         "Correlation between KM and PCA scores using " + 
+#         embedding_type.value
+#     ),
+#     yaxis_title="Kmeans scores",
+#     xaxis_title="PCA scores",
+# )
+# fig.show()
+# # %%
+# # write the results to a csv
+# df = pd.DataFrame({
+#         "adjective": train_pca_projected,
+#         "kmeans": train_km_projected,
+#         "pca": train_pcs[:, 0],
+#         "binary_label": train_pca_labels,
+# })
+# # df.to_csv("data/negativity_scores.csv", index=False)
+# # %%
+# # ============================================================================ #
+# # Histogram of dot product of embeddings and km_line
 
-fig = go.Figure()
-fig.add_trace(
-    go.Histogram(
-        x=train_embeddings[:len(train_positive_adjectives)].numpy().dot(km_line),
-        hovertext=train_positive_adjectives,
-        marker=dict(
-            color="red",
-            opacity=0.5,
-        ),
-        name="positive adj in-sample",
-        nbinsx=20,
-        showlegend=True,
-    )
-)
-fig.add_trace(
-    go.Histogram(
-        x=train_embeddings[len(train_positive_adjectives):].numpy().dot(km_line),
-        hovertext=train_negative_adjectives,
-        marker=dict(
-            color="blue",
-            opacity=0.5,
-        ),
-        name="negative adj in-sample",
-        nbinsx=20,
-        showlegend=True,
-    )
-)
-fig.add_trace(
-    go.Histogram(
-        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
-        hovertext=test_positive_adjectives,
-        marker=dict(
-            color="darkred",
-            opacity=0.5,
-        ),
-        name="positive adj out-of-sample",
-        nbinsx=20,
-        showlegend=True,
-    )
-)
-fig.add_trace(
-    go.Histogram(
-        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
-        hovertext=test_negative_adjectives,
-        marker=dict(
-            color="darkblue",
-            opacity=0.5,
-        ),
-        name="negative adj out-of-sample",
-        nbinsx=20,
-        showlegend=True,
-    )
-)
-fig.add_trace(
-    go.Histogram(
-        x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
-        hovertext=positive_verbs,
-        marker=dict(
-            color="pink",
-            opacity=0.5,
-        ),
-        name="positive verb out-of-sample",
-        nbinsx=20,
-        showlegend=True,
-    )
-)
-fig.add_trace(
-    go.Histogram(
-        x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
-        hovertext=negative_verbs,
-        marker=dict(
-            color="teal",
-            opacity=0.5,
-        ),
-        name="negative verb out-of-sample",
-        nbinsx=20,
-        showlegend=True,
-    )
-)
-fig.update_layout(
-    title="Histogram of dot product of embeddings and KM line",
-    barmode="overlay",
-    bargap=0.1,
-)
+# fig = go.Figure()
+# fig.add_trace(
+#     go.Histogram(
+#         x=train_embeddings[:len(train_positive_adjectives)].numpy().dot(km_line),
+#         hovertext=train_positive_adjectives,
+#         marker=dict(
+#             color="red",
+#             opacity=0.5,
+#         ),
+#         name="positive adj in-sample",
+#         nbinsx=20,
+#         showlegend=True,
+#     )
+# )
+# fig.add_trace(
+#     go.Histogram(
+#         x=train_embeddings[len(train_positive_adjectives):].numpy().dot(km_line),
+#         hovertext=train_negative_adjectives,
+#         marker=dict(
+#             color="blue",
+#             opacity=0.5,
+#         ),
+#         name="negative adj in-sample",
+#         nbinsx=20,
+#         showlegend=True,
+#     )
+# )
+# fig.add_trace(
+#     go.Histogram(
+#         x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+#         hovertext=test_positive_adjectives,
+#         marker=dict(
+#             color="darkred",
+#             opacity=0.5,
+#         ),
+#         name="positive adj out-of-sample",
+#         nbinsx=20,
+#         showlegend=True,
+#     )
+# )
+# fig.add_trace(
+#     go.Histogram(
+#         x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+#         hovertext=test_negative_adjectives,
+#         marker=dict(
+#             color="darkblue",
+#             opacity=0.5,
+#         ),
+#         name="negative adj out-of-sample",
+#         nbinsx=20,
+#         showlegend=True,
+#     )
+# )
+# fig.add_trace(
+#     go.Histogram(
+#         x=test_embeddings[:len(test_positive_adjectives)].numpy().dot(km_line),
+#         hovertext=positive_verbs,
+#         marker=dict(
+#             color="pink",
+#             opacity=0.5,
+#         ),
+#         name="positive verb out-of-sample",
+#         nbinsx=20,
+#         showlegend=True,
+#     )
+# )
+# fig.add_trace(
+#     go.Histogram(
+#         x=test_embeddings[len(test_positive_adjectives):].numpy().dot(km_line),
+#         hovertext=negative_verbs,
+#         marker=dict(
+#             color="teal",
+#             opacity=0.5,
+#         ),
+#         name="negative verb out-of-sample",
+#         nbinsx=20,
+#         showlegend=True,
+#     )
+# )
+# fig.update_layout(
+#     title="Histogram of dot product of embeddings and KM line",
+#     barmode="overlay",
+#     bargap=0.1,
+# )
 #%%
-pile_loader = evals.make_pile_data_loader(model.tokenizer, batch_size=8)
-#%%
-sample_size = 10_000
-dot_data = []
-for x in pile_loader:
-    batch_embed: Float[Tensor, "batch pos d_model"] = embed_and_mlp0(
-        x['tokens']
-    )
-    batch_dots: Float[np.ndarray, "batch pos"] = einops.einsum(
-        batch_embed, 
-        km_line_normalised,
-        "batch pos d_model, d_model -> batch pos",
-    )
-    flattened_dots = batch_dots.flatten()
-    list_of_str_tokens = [
-        s 
-        for i in range(len(x['tokens']))
-        for s in model.to_str_tokens(x['tokens'][i]) 
-    ]
-    dot_df = pd.DataFrame({
-        "dot": flattened_dots.detach().cpu().numpy(),
-        "token": list_of_str_tokens,
-    })
-    dot_data.append(dot_df)
-    sample_size -= len(flattened_dots)
-    if sample_size <= 0:
-        break
-#%%
-dots_df = pd.concat(dot_data)
-len(dots_df)
-#%%
-fig = px.histogram(
-    data_frame=dots_df, x='dot', hover_data=['token'], marginal="rug",
-    title="Histogram of dot product of embeddings and KM line on pile",
-)
-save_html(fig, "pile_histogram", model)
-fig.show()
+# pile_loader = evals.make_pile_data_loader(model.tokenizer, batch_size=8)
+# #%%
+# sample_size = 10_000
+# dot_data = []
+# for x in pile_loader:
+#     batch_embed: Float[Tensor, "batch pos d_model"] = embed_and_mlp0(
+#         x['tokens']
+#     )
+#     batch_dots: Float[np.ndarray, "batch pos"] = einops.einsum(
+#         batch_embed, 
+#         km_line_normalised,
+#         "batch pos d_model, d_model -> batch pos",
+#     )
+#     flattened_dots = batch_dots.flatten()
+#     list_of_str_tokens = [
+#         s 
+#         for i in range(len(x['tokens']))
+#         for s in model.to_str_tokens(x['tokens'][i]) 
+#     ]
+#     dot_df = pd.DataFrame({
+#         "dot": flattened_dots.detach().cpu().numpy(),
+#         "token": list_of_str_tokens,
+#     })
+#     dot_data.append(dot_df)
+#     sample_size -= len(flattened_dots)
+#     if sample_size <= 0:
+#         break
+# #%%
+# dots_df = pd.concat(dot_data)
+# len(dots_df)
+# #%%
+# fig = px.histogram(
+#     data_frame=dots_df, x='dot', hover_data=['token'], marginal="rug",
+#     title="Histogram of dot product of embeddings and KM line on pile",
+# )
+# save_html(fig, "pile_histogram", model)
+# fig.show()
 
 # %%
