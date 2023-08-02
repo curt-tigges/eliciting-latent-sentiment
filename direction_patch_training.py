@@ -65,10 +65,10 @@ model = HookedTransformer.from_pretrained(
     fold_ln=True,
     device=device,
 )
-model.set_use_attn_result(True)
 model.name = MODEL_NAME
+model = model.requires_grad_(False)
 #%% # Data loading
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
+all_prompts, answer_tokens, new_tokens, orig_tokens = get_dataset(model, device)
 #%% # Run model with cache
 def name_filter(name: str):
     return (
@@ -80,30 +80,30 @@ def name_filter(name: str):
         (name == 'blocks.0.attn.hook_q') or 
         (name == 'blocks.0.attn.hook_z')
     )
-# N.B. corrupt -> clean
-clean_logits, clean_cache = model.run_with_cache(
-    clean_tokens,
+orig_logits, orig_cache = model.run_with_cache(
+    orig_tokens
 )
-clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
-print('clean logit diff', clean_logit_diff)
-corrupted_logits, corrupted_cache = model.run_with_cache(
-    corrupted_tokens
+orig_cache.to(device)
+orig_logit_diff = get_logit_diff(orig_logits, answer_tokens, per_prompt=False)
+print('original logit diff', orig_logit_diff)
+new_logits, new_cache = model.run_with_cache(
+    new_tokens,
 )
-corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
-print('corrupted logit diff', corrupted_logit_diff)
+new_cache.to(device)
+new_logit_diff = get_logit_diff(new_logits, answer_tokens, per_prompt=False)
+print('new logit diff', new_logit_diff)
 #%%
-def logit_diff_denoising(
+def logit_diff_denoising_loss(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    flipped_logit_diff: float = corrupted_logit_diff,
-    clean_logit_diff: float = clean_logit_diff,
 ) -> Float[Tensor, ""]:
     '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
-    same as on flipped input, and 1 when performance is same as on clean input.
+    Linear function of logit diff, calibrated so that it equals 
+    0 on new
+    and 1 on old
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
+    return (patched_logit_diff - new_logit_diff) / (orig_logit_diff - new_logit_diff)
 
 #%%
 # ============================================================================ #
@@ -113,24 +113,29 @@ def train_logistic_regression(
     position: int,
     layer: int,
 ) -> Float[np.ndarray, "d_model"]:
-    X_train = clean_cache['resid_post', layer][:, position].detach().cpu().numpy()
-    layers_test = [l for l in model.cfg.n_layers if l != layer]
-    seq_len = clean_cache['resid_post', layer].shape[1]
+    X_train: Float[Tensor, "batch d_model"] = new_cache['resid_post', layer][:, position].detach().cpu().numpy()
+    layers_test = [l for l in range(model.cfg.n_layers) if l != layer]
+    seq_len = new_cache['resid_post', layer].shape[1]
     positions_test = [p for p in range(seq_len) if p != position]
     # define out of sample test set
-    X_test = clean_cache['resid_post', layers_test][:, positions_test].detach().cpu().numpy()
+    resid_test = torch.cat([new_cache['resid_post', l] for l in layers_test], dim=0)
+    X_test: Float[Tensor, "layer_batch pos d_model"] = resid_test[:, positions_test].detach().cpu().numpy()
+    X_test: Float[Tensor, "layer_batch_pos d_model"] = einops.rearrange(
+        X_test, "batch pos d_model -> (batch pos) d_model"
+    )
     # set y_train to alternating 0s and 1s
     y_train = np.zeros(X_train.shape[0])
     y_train[::2] = 1
+    y_test = einops.repeat(y_train, "batch -> (layer batch pos)", layer=model.cfg.n_layers - 1, pos=seq_len - 1)
     logreg_model = LogisticRegression()
     logreg_model.fit(X_train, y_train)
-    print(f"LR in-sample accuracy on layer {layer}, position {position}: {logreg_model.score(X_train, y_train)}")
-    print(f"LR out-of-sample accuracy on layer {layer}, position {position}: {logreg_model.score(X_test, y_train)}")
+    print(f"LR in-sample accuracy on layer {layer}, position {position}: {logreg_model.score(X_train, y_train):.1%}")
+    print(f"LR out-of-sample accuracy on layer {layer}, position {position}: {logreg_model.score(X_test, y_test):.1%}")
     return logreg_model.coef_
 #%%
 adj_position = 6
 adj_token_lr = train_logistic_regression(position=adj_position, layer=0)
-end_token_lr = train_logistic_regression(position=clean_tokens.shape[1] - 1, layer=model.cfg.n_layers - 1)
+end_token_lr = train_logistic_regression(position=new_tokens.shape[1] - 1, layer=model.cfg.n_layers - 1)
 save_array(adj_token_lr, 'adj_token_lr', model)
 save_array(end_token_lr, 'end_token_lr', model)
 #%%
@@ -173,9 +178,25 @@ def hook_fn_base(
     new_value: Float[Tensor, "d_model"],
 ):
     assert 'resid_post' in hook.name
-    if hook.layer != layer:
+    if hook.layer() != layer:
         return input
     input[:, position] = new_value
+    # position_index = einops.repeat(
+    #     torch.arange(input.shape[1], device=device), 
+    #     "seq -> batch seq d_model", 
+    #     batch=input.shape[0], 
+    #     d_model=input.shape[2]
+    # )
+    # input_replaced = torch.where(
+    #     position_index == position,
+    #     new_value,
+    #     input,
+    # )
+    # print(
+    #     "input", input.requires_grad,
+    #     "new_value", new_value.requires_grad,
+    #     "input_replaced", input_replaced.requires_grad,
+    # )
     return input
     
 #%%
@@ -185,21 +206,25 @@ def act_patch_simple(
     new_value: Float[Tensor, "d_model"],
     layer: int,
     position: int,
+    patching_metric: Callable,
 ) -> Float[Tensor, ""]:
     model.reset_hooks()
     hook_fn = partial(hook_fn_base, layer=layer, position=position, new_value=new_value)
     logits = model.run_with_hooks(
         orig_input,
-        fwd_hooks=[(f'blocks.{layer}.resid_post', hook_fn)],
+        fwd_hooks=[(f'blocks.{layer}.hook_resid_post', hook_fn)],
     )
-    return logit_diff_denoising(logits)
+    assert logits.requires_grad, (
+        "logits should require grad, otherwise we can't backpropagate through them"
+    )
+    return patching_metric(logits)
 #%%
 class RotationModule(torch.nn.Module):
     def __init__(
         self, 
-        model: HookedTransformer, 
+        model,
         orig_tokens: Int[Tensor, "batch pos"],
-        orig_z: Float[Tensor, "batch d_model"],
+        orig_z: Float[Tensor, "batch pos head d_head"],
         layer: int,
         position: int,
         n_directions: int = 1,
@@ -224,7 +249,7 @@ class RotationModule(torch.nn.Module):
         new_resid_post: Float[Tensor, "batch d_model"],
     ) -> Float[Tensor, "batch d_model"]:
         rotated_orig_act: Float[
-            Tensor, "batc d_model"
+            Tensor, "batch d_model"
         ] = self.rotate_layer(orig_resid_post)
         rotated_new_act: Float[
             Tensor, "batch d_model"
@@ -244,22 +269,28 @@ class RotationModule(torch.nn.Module):
 
     def forward(
         self, 
-        orig_resid_post: Float[Tensor, "batch d_model"],
-        new_resid_post: Float[Tensor, "batch d_model"],
-
-    ) -> float:
+        orig_resid_post: Float[Tensor, "batch pos d_model"],
+        new_resid_post: Float[Tensor, "batch pos d_model"],
+    ) -> Float[Tensor, ""]:
         patched_resid_post: Float[Tensor, "batch d_model"] = self.apply_rotation(
             orig_resid_post=orig_resid_post,
             new_resid_post=new_resid_post,
         )
-        metric: float = act_patch_simple(
+        metric: Float[Tensor, ""] = act_patch_simple(
             model=self.model,
-            orig_input=corrupted_tokens,
+            orig_input=orig_tokens,
             new_value=patched_resid_post,
+            patching_metric=logit_diff_denoising_loss,
             layer=self.layer,
             position=self.position,
         )
         return metric
+#%%
+class TrainingConfig:
+
+    def __init__(self, config_dict: dict):
+        for k, v in config_dict.items():
+            setattr(self, k, v)
 #%%
 def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     # Initialize wandb
@@ -270,16 +301,13 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
         "n_directions": config_dict.get("n_directions", 1),
         "layer": config_dict.get("layer", 0),
         "position": config_dict.get("position", 0),
+        "wandb_enabled": config_dict.get("wandb_enabled", True),
     }
-    wandb.init(project='train_rotation', config=config_dict)
-    config = wandb.config
-
-    corrupted_resid: Float[Tensor, "batch d_model"] = corrupted_cache[
-        "resid_post", config.layer
-    ][:, config.position, :]
-    clean_resid: Float[Tensor, "batch d_model"] = clean_cache[
-        "resid_post", config.layer
-    ][:, config.position, :]
+    if config_dict["wandb_enabled"]:
+        wandb.init(project='train_rotation', config=config_dict)
+        config = wandb.config
+    else:
+        config = TrainingConfig(config_dict)
 
     # Create a list to store the losses and models
     losses = []
@@ -288,26 +316,35 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     random_seeds = np.arange(config.num_seeds)
     step = 0
     for seed in random_seeds:
-        wandb.log({"Seed": seed})
+        print(f"Training seed {seed}")
+        if config.wandb_enabled:
+            wandb.log({"Seed": seed})
         torch.manual_seed(seed)
         
         # Create the rotation module
         rotation_module = RotationModule(
-            model,
-            orig_hook_z=corrupted_cache['blocks.0.attn.hook_z'],
-            orig_tokens=corrupted_tokens,
+            model=model,
+            orig_z=orig_cache["blocks.0.attn.hook_z"],
+            orig_tokens=orig_tokens,
             n_directions=config.n_directions,
+            layer=config.layer,
+            position=config.position,
         )
 
         # Define the optimizer
         optimizer = torch.optim.Adam(rotation_module.parameters(), lr=config.lr)
+        print([f"Param={name}, requires_grad={param.requires_grad}" for name, param in rotation_module.named_parameters()])
 
         for epoch in range(config.n_epochs):
             optimizer.zero_grad()
-            loss = rotation_module(corrupted_resid, clean_resid)
+            loss = rotation_module(
+                orig_cache["resid_post", config.layer][:, config.position, :],
+                new_cache["resid_post", config.layer][:, config.position, :],
+            )
             loss.backward()
             optimizer.step()
-            wandb.log({"Loss": loss.item()}, step=step)
+            if config.wandb_enabled:
+                wandb.log({"Loss": loss.item()}, step=step)
 
             # Store the loss and model for this seed
             losses.append(loss.item())
@@ -319,9 +356,10 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     best_model_idx = min(range(len(losses)), key=losses.__getitem__)
 
     # Log the best model's loss and save the model
-    wandb.log({"Best Loss": losses[best_model_idx]})
-    wandb.save("best_rotation.pt")
-    wandb.finish()
+    if config.wandb_enabled:
+        wandb.log({"Best Loss": losses[best_model_idx]})
+        wandb.save("best_rotation.pt")
+        wandb.finish()
 
     # Load the best model
     best_model_state_dict = models[best_model_idx]
@@ -333,14 +371,17 @@ SEEDS = 5
 rotation_module_end, directions_end = train_rotation(
     num_seeds=SEEDS, 
     num_epochs=50, 
-    position=clean_tokens.shape[1] - 1, 
-    layer=model.cfg.n_layers - 1
+    position=new_tokens.shape[1] - 1, 
+    layer=model.cfg.n_layers - 1,
+    wandb_enabled=False
 )
+#%%
 rotation_module_adj, directions_adj = train_rotation(
     num_seeds=SEEDS, 
     num_epochs=50, 
     position=adj_position, 
-    layer=0
+    layer=0,
+    wandb_enabled=False
 )
 #%%
 for seed in range(SEEDS):
