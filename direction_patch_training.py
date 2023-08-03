@@ -69,6 +69,11 @@ model.name = MODEL_NAME
 model = model.requires_grad_(False)
 #%% # Data loading
 all_prompts, answer_tokens, new_tokens, orig_tokens = get_dataset(model, device)
+adjective_position = 6
+verb_position = 9
+#%%
+example_prompt = [f"{i}:{tok}" for i, tok in enumerate(model.to_str_tokens(all_prompts[0]))]
+example_prompt
 #%% # Run model with cache
 def name_filter(name: str):
     return (
@@ -198,8 +203,9 @@ def act_patch_simple(
         orig_input,
         fwd_hooks=[(f'blocks.{layer}.hook_resid_post', hook_fn)],
     )
-    assert logits.requires_grad, (
-        "logits should require grad, otherwise we can't backpropagate through them"
+    assert logits.requires_grad or not model.training, (
+        "logits should require grad, otherwise we can't backpropagate through them. "
+        f"Layer: {layer}, position: {position}, new_value: {new_value.requires_grad}"
     )
     return patching_metric(logits)
 #%%
@@ -209,8 +215,6 @@ class RotationModule(torch.nn.Module):
         model,
         orig_tokens: Int[Tensor, "batch pos"],
         orig_z: Float[Tensor, "batch pos head d_head"],
-        layer: int,
-        position: int,
         n_directions: int = 1,
     ):
         super().__init__()
@@ -218,8 +222,6 @@ class RotationModule(torch.nn.Module):
         self.register_buffer('orig_z', orig_z)
         self.register_buffer('orig_tokens', orig_tokens)
         self.d_model = model.cfg.d_model
-        self.layer = layer
-        self.position = position
         self.n_directions = n_directions
         rotate_layer = RotateLayer(model.cfg.d_model)
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(
@@ -255,6 +257,8 @@ class RotationModule(torch.nn.Module):
         self, 
         orig_resid_post: Float[Tensor, "batch pos d_model"],
         new_resid_post: Float[Tensor, "batch pos d_model"],
+        layer: int,
+        position: int,
     ) -> Float[Tensor, ""]:
         patched_resid_post: Float[Tensor, "batch d_model"] = self.apply_rotation(
             orig_resid_post=orig_resid_post,
@@ -265,8 +269,8 @@ class RotationModule(torch.nn.Module):
             orig_input=orig_tokens,
             new_value=patched_resid_post,
             patching_metric=logit_diff_denoising_loss,
-            layer=self.layer,
-            position=self.position,
+            layer=layer,
+            position=position,
         )
         return metric
 #%%
@@ -276,17 +280,20 @@ class TrainingConfig:
         for k, v in config_dict.items():
             setattr(self, k, v)
 #%%
-def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
+def train_rotation(**given_config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     # Initialize wandb
-    config_dict = {
-        "seeds": config_dict.get("seeds", 5),
-        "lr": config_dict.get("lr", 1e-3),
-        "epochs": config_dict.get("epochs", 50),
-        "n_directions": config_dict.get("n_directions", 1),
-        "layer": config_dict.get("layer", 0),
-        "position": config_dict.get("position", 0),
-        "wandb_enabled": config_dict.get("wandb_enabled", True),
-    }
+    config_dict = dict(
+        seeds=5,
+        lr=1e-3,
+        epochs=50,
+        n_directions=1,
+        train_layer=0,
+        eval_layer=1,
+        train_position=adjective_position,
+        eval_position=verb_position,
+        wandb_enabled=True,
+    )
+    config_dict.update(given_config_dict)
     if config_dict["wandb_enabled"]:
         wandb.init(project='train_rotation', config=config_dict)
         config = wandb.config
@@ -314,24 +321,32 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
             orig_z=orig_cache["blocks.0.attn.hook_z"],
             orig_tokens=orig_tokens,
             n_directions=config.n_directions,
-            layer=config.layer,
-            position=config.position,
         )
 
         # Define the optimizer
         optimizer = torch.optim.Adam(rotation_module.parameters(), lr=config.lr)
-        print([f"Param={name}, requires_grad={param.requires_grad}" for name, param in rotation_module.named_parameters()])
 
         for epoch in range(config.epochs):
+            rotation_module.train()
             optimizer.zero_grad()
             loss = rotation_module(
-                orig_cache["resid_post", config.layer][:, config.position, :],
-                new_cache["resid_post", config.layer][:, config.position, :],
+                orig_cache["resid_post", config.train_layer][:, config.train_position, :],
+                new_cache["resid_post", config.train_layer][:, config.train_position, :],
+                layer=config.train_layer,
+                position=config.train_position,
             )
             loss.backward()
             optimizer.step()
+            rotation_module.eval()
+            with torch.inference_mode():
+                eval_loss = rotation_module(
+                    orig_cache["resid_post", config.eval_layer][:, config.eval_position, :],
+                    new_cache["resid_post", config.eval_layer][:, config.eval_position, :],
+                    layer=config.eval_layer,
+                    position=config.eval_position,
+                )
             if config.wandb_enabled:
-                wandb.log({"Loss": loss.item()}, step=step)
+                wandb.log({"Training Loss": loss.item(), "Evaluation Loss": eval_loss.item()}, step=step)
 
             # Store the loss and model for this seed
             losses.append(loss.item())
@@ -354,29 +369,31 @@ def train_rotation(**config_dict) -> Tuple[HookedTransformer, List[Tensor]]:
     return rotation_module, directions
 
 #%%
-SEEDS = 5
-EPOCHS = 60
-rotation_module_end, directions_end = train_rotation(
-    seeds=SEEDS, 
-    epochs=EPOCHS, 
-    position=new_tokens.shape[1] - 1, 
-    layer=model.cfg.n_layers - 1,
-)
-#%%
 rotation_module_adj, directions_adj = train_rotation(
-    seeds=SEEDS, 
-    epochs=EPOCHS, 
-    position=adj_position, 
-    layer=0,
+    seeds=1, 
+    epochs=2000, 
+    lr=1e-4,
+    train_position=adj_position, 
+    train_layer=0,
+    eval_position=verb_position,
+    eval_layer=1,
+    wandb_enabled=True,
 )
 #%%
-for seed in range(SEEDS):
+rotation_module_end, directions_end = train_rotation(
+    seeds=5, 
+    epochs=60, 
+    train_position=new_tokens.shape[1] - 1, 
+    train_layer=model.cfg.n_layers - 1,
+)
+#%%
+for seed in range(rotation_module_end.rotate_layer.shape[0]):
     save_array(
         rotation_module_end.rotate_layer.weight[seed, :].cpu().detach().numpy(), 
         f"rotation_direction_end_{seed}", model
     )
 #%%
-for seed in range(SEEDS):
+for seed in range(rotation_module_adj.rotate_layer.shape[0]):
     save_array(
         rotation_module_adj.rotate_layer.weight[seed, :].cpu().detach().numpy(), 
         f"rotation_direction_adj_{seed}", model
