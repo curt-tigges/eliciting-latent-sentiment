@@ -811,6 +811,8 @@ def act_patch(
     new_cache: Optional[ActivationCache] = None,
     apply_metric_to_cache: bool = False,
     verbose: bool = False,
+    leave: bool = True,
+    disable: bool = False,
 ) -> Float[Tensor, "..."]:
 
     assert (new_input is not None) or (new_cache is not None), "Must specify either new_input or new_cache."
@@ -837,7 +839,7 @@ def act_patch(
     # If we're iterating over nodes:
     results_dict = defaultdict(list)
     nodes_dict = patching_nodes.get_node_dict(model, new_cache["q", 0])
-    progress_bar = tqdm(total=sum(len(node_list) for node_list in nodes_dict.values()))
+    progress_bar = tqdm(total=sum(len(node_list) for node_list in nodes_dict.values()), leave=leave, disable=disable)
     for node_name, node_list in nodes_dict.items():
         progress_bar.set_description(f"Patching {node_name!r}")
         for (seq_pos, node) in node_list:
