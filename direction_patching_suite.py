@@ -515,6 +515,6 @@ def get_results_for_metric(prompt_type: str, patching_metric_base: Callable):
     display(max_layer_style)
 # %%
 for metric in (logit_diff_denoising_base, logit_flip_metric_base, prob_diff_denoising_base):
-    for prompt_type in ("simple", "completion"):
+    for prompt_type in ("simple_mood", "completion", "simple"):
         get_results_for_metric(prompt_type, metric)
 #%%
