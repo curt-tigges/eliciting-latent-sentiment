@@ -64,6 +64,43 @@ model = HookedTransformer.from_pretrained(
 )
 model.set_use_attn_result(True)
 model.name = MODEL_NAME
+#%%
+def get_prob_diff(
+    logits: Float[Tensor, "batch pos vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs 2"], 
+    per_prompt: bool = False,
+):
+    """
+    Gets the difference between the softmax probabilities of the provided tokens 
+    e.g., the correct and incorrect tokens in IOI
+
+    Args:
+        logits (torch.Tensor): Logits to use.
+        answer_tokens (torch.Tensor): Indices of the tokens to compare.
+
+    Returns:
+        torch.Tensor: Difference between the logits of the provided tokens.
+    """
+    n_pairs = answer_tokens.shape[1]
+    if len(logits.shape) == 3:
+        # Get final logits only
+        logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
+    logits = einops.repeat(
+        logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
+    )
+    probs: Float[Tensor, "batch n_pairs vocab"] = logits.softmax(dim=-1)
+    left_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
+        -1, answer_tokens[:, :, 0].unsqueeze(-1)
+    )
+    right_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
+        -1, answer_tokens[:, :, 1].unsqueeze(-1)
+    )
+    left_probs: Float[Tensor, "batch"] = left_probs.mean(dim=1)
+    right_probs: Float[Tensor, "batch"] = right_probs.mean(dim=1)
+    if per_prompt:
+        return left_probs - right_probs
+
+    return (left_probs - right_probs).mean()
 #%% # Data loading
 all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
 # positive -> negative
@@ -94,16 +131,20 @@ clean_logits, clean_cache = model.run_with_cache(
 )
 clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
 print('clean logit diff', clean_logit_diff)
+clean_prob_diff = get_prob_diff(clean_logits, answer_tokens, per_prompt=False)
+print('clean prob diff', clean_prob_diff)
 corrupted_logits, corrupted_cache = model.run_with_cache(
     corrupted_tokens
 )
 corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
 print('corrupted logit diff', corrupted_logit_diff)
+corrupted_prob_diff = get_prob_diff(corrupted_logits, answer_tokens, per_prompt=False)
+print('corrupted prob diff', corrupted_prob_diff)
 #%%
 def logit_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    flipped_logit_diff: float = corrupted_logit_diff,
+    corrupted_logit_diff: float = corrupted_logit_diff,
     clean_logit_diff: float = clean_logit_diff,
 ) -> Float[Tensor, ""]:
     '''
@@ -111,7 +152,37 @@ def logit_diff_denoising(
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
+    return ((patched_logit_diff - corrupted_logit_diff) / (clean_logit_diff  - corrupted_logit_diff)).item()
+#%%
+def prob_diff_denoising(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
+    corrupted_prob_diff: float = corrupted_prob_diff,
+    clean_prob_diff: float = clean_prob_diff,
+) -> Float[Tensor, ""]:
+    '''
+    Linear function of logit diff, calibrated so that it equals 0 when performance is
+    same as on flipped input, and 1 when performance is same as on clean input.
+    '''
+    
+    patched_logit_diff = get_prob_diff(logits, answer_tokens)
+    return ((patched_logit_diff - corrupted_prob_diff) / (clean_prob_diff  - corrupted_prob_diff)).item()
+#%%
+def logit_flip_metric(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
+    corrupted_logit_diff: float = corrupted_logit_diff,
+    clean_logit_diff: float = clean_logit_diff,
+) -> Float[Tensor, ""]:
+    '''
+    Linear function of logit diff, calibrated so that it equals 0 when performance is
+    same as on flipped input, and 1 when performance is same as on clean input.
+    '''
+    patched_logit_diff = get_logit_diff(logits, answer_tokens, per_prompt=True)
+    clean_distances = (clean_logit_diff - patched_logit_diff).abs()
+    corrupt_distances = (corrupted_logit_diff - patched_logit_diff).abs()
+    return (clean_distances < corrupt_distances).float().mean().item()
+
 #%% # Logit attribution
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
 logit_diff_directions = answer_residual_directions[:, 0, 0] - answer_residual_directions[:, 0, 1]
@@ -168,7 +239,7 @@ for label, direction in zip(direction_labels, directions):
     )
     dot_products.append([label, direction.norm().cpu().detach().item(), average_logit_diff.cpu().detach().item()])
 dot_df = pd.DataFrame(dot_products, columns=['label', 'norm', 'dot_product'])
-dot_df.style.background_gradient(cmap='Reds')
+dot_df.style.background_gradient(cmap='Reds').format({'norm': "{:.2f}", 'dot_product': "{:.2f}"})
 #%% # cosine similarity
 cosine_similarities = []
 for label, direction in zip(direction_labels, directions):
@@ -177,7 +248,7 @@ for label, direction in zip(direction_labels, directions):
     )
     cosine_similarities.append([label, average_logit_diff.cpu().detach().item()])
 sim_df = pd.DataFrame(cosine_similarities, columns=['label', 'cosine_similarity'])
-sim_df.style.background_gradient(cmap='Reds', axis=0)
+sim_df.style.background_gradient(cmap='Reds', axis=0).format({'cosine_similarity': "{:.2f}"})
 #%%
 # ============================================================================ #
 # Directional activation patching
@@ -254,6 +325,7 @@ def create_cache_for_dir_patching(
 def run_head_patching(
     model: HookedTransformer,
     new_cache: ActivationCache,
+    patching_metric: Callable,
     label: str
 ) -> Tuple[Float[Tensor, "layer head"], go.Figure]:
     head_results: Float[Tensor, "layer head"] = act_patch(
@@ -261,13 +333,13 @@ def run_head_patching(
         orig_input=corrupted_tokens,
         new_cache=new_cache,
         patching_nodes=IterNode(["result"]),
-        patching_metric=logit_diff_denoising,
+        patching_metric=patching_metric,
         verbose=True,
     )['result'] * 100
     fig = px.imshow(
         head_results,
         title=f"Patching {label} component of attention heads (corrupted -> clean)",
-        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+        labels={"x": "Head", "y": "Layer", "color": patching_metric.__name__},
         color_continuous_scale="RdBu",
         color_continuous_midpoint=0,
         width=600,
@@ -282,6 +354,7 @@ def run_head_patching(
 def run_layer_patching(
     model: HookedTransformer,
     new_cache: ActivationCache,
+    patching_metric: Callable,
     label: str
 ) -> Tuple[Float[Tensor, "layer"], go.Figure]:
     layer_results: Float[Tensor, "layer"] = act_patch(
@@ -289,7 +362,7 @@ def run_layer_patching(
         orig_input=corrupted_tokens,
         new_cache=new_cache,
         patching_nodes=IterNode(["resid_post"]),
-        patching_metric=logit_diff_denoising,
+        patching_metric=patching_metric,
         verbose=True,
     )['resid_post'] * 100
     fig = px.line(
@@ -308,6 +381,7 @@ def run_layer_patching(
 def run_attn_mlp_patching(
     model: HookedTransformer,
     new_cache: ActivationCache,
+    patching_metric: Callable,
     label: str
 ) -> Tuple[Float[Tensor, "attn_mlp layer pos"], go.Figure]:
     attn_mlp_results = act_patch(
@@ -315,7 +389,7 @@ def run_attn_mlp_patching(
         orig_input=corrupted_tokens,
         new_cache=new_cache,
         patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
-        patching_metric=logit_diff_denoising,
+        patching_metric=patching_metric,
         verbose=True,
     )
     result_data = torch.stack([r.T for r in attn_mlp_results.values()]) * 100
@@ -326,7 +400,7 @@ def run_attn_mlp_patching(
         facet_col=0,
         facet_labels=["resid_pre", "attn_out", "mlp_out"],
         title=f"Patching {label} at resid stream & layer outputs (corrupted -> clean)",
-        labels={"x": "Sequence position", "y": "Layer", "color": "Logit diff variation"},
+        labels={"x": "Sequence position", "y": "Layer", "color": patching_metric.__name__},
         x=labels,
         xaxis_tickangle=45,
         coloraxis=dict(colorbar_ticksuffix = "%"),
@@ -336,6 +410,7 @@ def run_attn_mlp_patching(
     )
     return result_data, fig
 #%%
+PATCHING_METRIC = logit_flip_metric
 bar = tqdm(zip(direction_labels, directions), total=len(direction_labels))
 figures = []
 data = []
@@ -344,7 +419,7 @@ for label, direction in bar:
     new_cache = create_cache_for_dir_patching(
         clean_cache, corrupted_cache, direction
     )
-    results, fig = run_layer_patching(model, new_cache, label)
+    results, fig = run_layer_patching(model, new_cache, PATCHING_METRIC, label)
     data.append(results.numpy())
     figures.append(fig)
 #%%
@@ -366,18 +441,21 @@ fig.update_layout(
     showlegend=False,
     margin={"r": 100, "l": 100}
 )
-fig.update_yaxes(title_text="Logit diff %")
-save_html(fig, "layer_direction_patching", model)
+fig.update_yaxes(title_text=PATCHING_METRIC.__name__)
+save_html(fig, f"layer_direction_patching_{PATCHING_METRIC.__name__}", model)
 fig.show()
 #%%
 layers_df = pd.DataFrame(data)
 layers_df.columns.name = "layer"
 layers_df.index = direction_labels
-layers_df.style.background_gradient(cmap="RdBu", axis=None).format("{:.1f}%")
+layers_style = layers_df.style.background_gradient(cmap="RdBu", axis=None).format("{:.1f}%")
+save_html(layers_style, f"layer_direction_patching_{PATCHING_METRIC.__name__}", model)
+layers_style
 
 # %%
 max_layer_df = layers_df.max(axis=1).sort_values(ascending=False).reset_index()
 max_layer_df.columns = ["direction", "max_layer"]
-max_layer_df.style.background_gradient(cmap="RdBu", axis=None).format({"max_layer": "{:.1f}%"}).hide()
-
+max_layer_style = max_layer_df.style.background_gradient(cmap="RdBu", axis=None).format({"max_layer": "{:.1f}%"}).hide()
+save_html(max_layer_style, f"layer_direction_patching_{PATCHING_METRIC.__name__}_max_layer", model)
+max_layer_style
 # %%
