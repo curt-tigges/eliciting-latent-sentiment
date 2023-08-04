@@ -2,15 +2,18 @@
 import einops
 from fancy_einsum import einsum
 import numpy as np
+import pandas as pd
 from jaxtyping import Float, Int
 import plotly.express as px
 import plotly.io as pio
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from utils.prompts import get_dataset
 from utils.circuit_analysis import get_logit_diff
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
-from typing import Union, List, Optional, Callable
+from typing import Tuple, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
 from tqdm.notebook import tqdm
@@ -109,39 +112,72 @@ def logit_diff_denoising(
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
     return ((patched_logit_diff - flipped_logit_diff) / (clean_logit_diff  - flipped_logit_diff)).item()
-#%% # Direction loading
-direction_labels = [
-    'km_2c_line_embed_and_mlp0',
-    'rotation_direction0',
-    'pca_0_embed_and_mlp0',
-    'mean_ov_direction_10_4',
-    'ccs',
-]
-directions = [
-    load_array(label, model) for label in direction_labels
-]
-for i, direction in enumerate(directions):
-    if direction.ndim == 2:
-        direction = direction.squeeze(0)
-    directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
 #%% # Logit attribution
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
 logit_diff_directions = answer_residual_directions[:, 0, 0] - answer_residual_directions[:, 0, 1]
 print(logit_diff_directions[0].norm())
+#%% # Direction loading
+direction_labels = [
+    'km_2c_line_embed_and_attn0',
+    'km_2c_line_embed_and_mlp0',
+    'km_2c_line_resid_post_layer_0',
+    'km_2c_line_resid_post_layer_1',
+    'km_2c_line_resid_post_layer_2',
+    'km_2c_line_resid_post_layer_3',
+    'km_2c_line_resid_post_layer_4',
+    'km_2c_line_resid_post_layer_5',
+    'km_2c_line_resid_post_layer_6',
+    'km_2c_line_resid_post_layer_7',
+    'km_2c_line_resid_post_layer_8',
+    'km_2c_line_resid_post_layer_9',
+    'km_2c_line_resid_post_layer_10',
+    'km_2c_line_resid_post_layer_11',
+    'km_2c_line_context_layer_0',
+    'km_2c_line_context_layer_1',
+    'km_2c_line_context_layer_2',
+    'km_2c_line_context_layer_3',
+    'km_2c_line_context_layer_4',
+    'km_2c_line_context_layer_5',
+    'km_2c_line_context_layer_6',
+    'km_2c_line_context_layer_7',
+    'km_2c_line_context_layer_8',
+    'km_2c_line_context_layer_9',
+    'km_2c_line_context_layer_10',
+    'km_2c_line_context_layer_11',
+    'mean_ov_direction_10_4',
+    'ccs',
+    'adj_token_lr',
+    'end_token_lr',
+    'rotation_direction_adj_0',
+    'rotation_direction_end_0',
+]
+directions = [
+    load_array(label, model) for label in direction_labels
+]
+directions.append(logit_diff_directions[0])
+direction_labels.append('logit_diff_direction')
+for i, direction in enumerate(directions):
+    if direction.ndim == 2:
+        direction = direction.squeeze(0)
+    directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
 #%%
+dot_products = []
 for label, direction in zip(direction_labels, directions):
     average_logit_diff = einsum(
         "d_model, d_model -> ", direction, logit_diff_directions[0]
     )
-    print(label, 'norm:', direction.norm().cpu().detach().item(), 'direct logit diff:', average_logit_diff.cpu().detach().item())
-#%%
+    dot_products.append([label, direction.norm().cpu().detach().item(), average_logit_diff.cpu().detach().item()])
+dot_df = pd.DataFrame(dot_products, columns=['label', 'norm', 'dot_product'])
+dot_df.style.background_gradient(cmap='Reds')
+#%% # cosine similarity
+cosine_similarities = []
 for label, direction in zip(direction_labels, directions):
-    direction = direction / direction.norm()
     average_logit_diff = einsum(
-        "d_model, d_model -> ", direction, logit_diff_directions[0]
+        "d_model, d_model -> ", direction / direction.norm(), logit_diff_directions[0] / logit_diff_directions[0].norm()
     )
-    print(label, 'norm:', direction.norm().cpu().detach().item(), 'direct logit diff:', average_logit_diff.cpu().detach().item())
-
+    cosine_similarities.append([label, average_logit_diff.cpu().detach().item()])
+sim_df = pd.DataFrame(cosine_similarities, columns=['label', 'cosine_similarity'])
+sim_df.style.background_gradient(cmap='Reds', axis=0)
 #%%
 # ============================================================================ #
 # Directional activation patching
@@ -215,12 +251,11 @@ def create_cache_for_dir_patching(
 
     return ActivationCache(cache_dict, model)
 #%%
-def run_act_patching(
+def run_head_patching(
     model: HookedTransformer,
     new_cache: ActivationCache,
     label: str
-):
-    # head patching
+) -> Tuple[Float[Tensor, "layer head"], go.Figure]:
     head_results: Float[Tensor, "layer head"] = act_patch(
         model=model,
         orig_input=corrupted_tokens,
@@ -228,24 +263,27 @@ def run_act_patching(
         patching_nodes=IterNode(["result"]),
         patching_metric=logit_diff_denoising,
         verbose=True,
-    )
+    )['result'] * 100
     fig = px.imshow(
-    head_results['result'] * 100,
-    title=f"Patching {label} component of attention heads (corrupted -> clean)",
-    labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
-    color_continuous_scale="RdBu",
-    color_continuous_midpoint=0,
-    width=600,
-)
+        head_results,
+        title=f"Patching {label} component of attention heads (corrupted -> clean)",
+        labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
+        color_continuous_scale="RdBu",
+        color_continuous_midpoint=0,
+        width=600,
+    )
     fig.update_layout(dict(
         coloraxis=dict(colorbar_ticksuffix = "%"),
         # border=True,
         margin={"r": 100, "l": 100}
     ))
-    fig.show()
-    save_html(fig, f"head_patching_{label}", model)
-
-    # resid_post patching
+    return head_results, fig
+#%%
+def run_layer_patching(
+    model: HookedTransformer,
+    new_cache: ActivationCache,
+    label: str
+) -> Tuple[Float[Tensor, "layer"], go.Figure]:
     layer_results: Float[Tensor, "layer"] = act_patch(
         model=model,
         orig_input=corrupted_tokens,
@@ -265,10 +303,13 @@ def run_act_patching(
         margin={"r": 100, "l": 100},
         showlegend=False,
     ))
-    fig.show()
-    save_html(fig, f"resid_patching_{label}", model)
-
-    # attn-mlp patching
+    return layer_results, fig
+#%%
+def run_attn_mlp_patching(
+    model: HookedTransformer,
+    new_cache: ActivationCache,
+    label: str
+) -> Tuple[Float[Tensor, "attn_mlp layer pos"], go.Figure]:
     attn_mlp_results = act_patch(
         model=model,
         orig_input=corrupted_tokens,
@@ -277,10 +318,11 @@ def run_act_patching(
         patching_metric=logit_diff_denoising,
         verbose=True,
     )
+    result_data = torch.stack([r.T for r in attn_mlp_results.values()]) * 100
     assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
     labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
     fig = imshow_p(
-        torch.stack([r.T for r in attn_mlp_results.values()]) * 100, # we transpose so layer is on the y-axis
+        result_data,
         facet_col=0,
         facet_labels=["resid_pre", "attn_out", "mlp_out"],
         title=f"Patching {label} at resid stream & layer outputs (corrupted -> clean)",
@@ -290,18 +332,52 @@ def run_act_patching(
         coloraxis=dict(colorbar_ticksuffix = "%"),
         border=True,
         width=1300,
-        # zmin=-50,
-        # zmax=50,
         margin={"r": 100, "l": 100}
     )
-    fig.show()
-    save_html(fig, f"attn_mlp_patching_{label}", model)
+    return result_data, fig
 #%%
 bar = tqdm(zip(direction_labels, directions), total=len(direction_labels))
+figures = []
+data = []
 for label, direction in bar:
     direction = direction / direction.norm()
     new_cache = create_cache_for_dir_patching(
         clean_cache, corrupted_cache, direction
     )
-    run_act_patching(model, new_cache, label)
+    results, fig = run_layer_patching(model, new_cache, label)
+    data.append(results.numpy())
+    figures.append(fig)
 #%%
+# create figure with subplot for each direction
+fig = make_subplots(
+    rows=len(direction_labels), cols=1,
+    subplot_titles=direction_labels,
+    shared_yaxes=False,
+    shared_xaxes=False,
+)
+for i, (label, direction) in enumerate(zip(direction_labels, directions)):
+    fig.add_trace(figures[i].data[0], row=i + 1, col=1)
+    if i == len(direction_labels) - 1:
+        fig.update_xaxes(title_text="Layer", row=i + 1, col=1)
+fig.update_layout(
+    title="Patching residual stream by layer",
+    height=6600,
+    width=1000,
+    showlegend=False,
+    margin={"r": 100, "l": 100}
+)
+fig.update_yaxes(title_text="Logit diff %")
+save_html(fig, "layer_direction_patching", model)
+fig.show()
+#%%
+layers_df = pd.DataFrame(data)
+layers_df.columns.name = "layer"
+layers_df.index = direction_labels
+layers_df.style.background_gradient(cmap="RdBu", axis=None).format("{:.1f}%")
+
+# %%
+max_layer_df = layers_df.max(axis=1).sort_values(ascending=False).reset_index()
+max_layer_df.columns = ["direction", "max_layer"]
+max_layer_df.style.background_gradient(cmap="RdBu", axis=None).format({"max_layer": "{:.1f}%"}).hide()
+
+# %%
