@@ -16,6 +16,7 @@ from transformer_lens import ActivationCache, HookedTransformer, HookedTransform
 from typing import Tuple, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
+from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.store import save_array, load_array, save_html
@@ -102,7 +103,9 @@ def get_prob_diff(
 
     return (left_probs - right_probs).mean()
 #%% # Data loading
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
+PROMPT_TYPE = "completion"
+all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=PROMPT_TYPE)
+all_prompts[:5]
 # positive -> negative
 # all_prompts = all_prompts[::2]
 # answer_tokens = answer_tokens[::2]
@@ -410,52 +413,51 @@ def run_attn_mlp_patching(
     )
     return result_data, fig
 #%%
-PATCHING_METRIC = logit_flip_metric
-bar = tqdm(zip(direction_labels, directions), total=len(direction_labels))
-figures = []
-data = []
-for label, direction in bar:
-    direction = direction / direction.norm()
-    new_cache = create_cache_for_dir_patching(
-        clean_cache, corrupted_cache, direction
+def get_results_for_metric(patching_metric: Callable):
+    bar = tqdm(zip(direction_labels, directions), total=len(direction_labels))
+    figures = []
+    data = []
+    for label, direction in bar:
+        direction = direction / direction.norm()
+        new_cache = create_cache_for_dir_patching(
+            clean_cache, corrupted_cache, direction
+        )
+        results, fig = run_layer_patching(model, new_cache, patching_metric, label)
+        data.append(results.numpy())
+        figures.append(fig)
+    fig = make_subplots(
+        rows=len(direction_labels), cols=1,
+        subplot_titles=direction_labels,
+        shared_yaxes=False,
+        shared_xaxes=False,
     )
-    results, fig = run_layer_patching(model, new_cache, PATCHING_METRIC, label)
-    data.append(results.numpy())
-    figures.append(fig)
-#%%
-# create figure with subplot for each direction
-fig = make_subplots(
-    rows=len(direction_labels), cols=1,
-    subplot_titles=direction_labels,
-    shared_yaxes=False,
-    shared_xaxes=False,
-)
-for i, (label, direction) in enumerate(zip(direction_labels, directions)):
-    fig.add_trace(figures[i].data[0], row=i + 1, col=1)
-    if i == len(direction_labels) - 1:
-        fig.update_xaxes(title_text="Layer", row=i + 1, col=1)
-fig.update_layout(
-    title="Patching residual stream by layer",
-    height=6600,
-    width=1000,
-    showlegend=False,
-    margin={"r": 100, "l": 100}
-)
-fig.update_yaxes(title_text=PATCHING_METRIC.__name__)
-save_html(fig, f"layer_direction_patching_{PATCHING_METRIC.__name__}", model)
-fig.show()
-#%%
-layers_df = pd.DataFrame(data)
-layers_df.columns.name = "layer"
-layers_df.index = direction_labels
-layers_style = layers_df.style.background_gradient(cmap="RdBu", axis=None).format("{:.1f}%")
-save_html(layers_style, f"layer_direction_patching_{PATCHING_METRIC.__name__}", model)
-layers_style
+    for i, (label, direction) in enumerate(zip(direction_labels, directions)):
+        fig.add_trace(figures[i].data[0], row=i + 1, col=1)
+        if i == len(direction_labels) - 1:
+            fig.update_xaxes(title_text="Layer", row=i + 1, col=1)
+    fig.update_layout(
+        title="Patching residual stream by layer",
+        height=6600,
+        width=1000,
+        showlegend=False,
+        margin={"r": 100, "l": 100}
+    )
+    fig.update_yaxes(title_text=patching_metric.__name__)
+    save_html(fig, f"layer_direction_patching_{patching_metric.__name__}", model)
+    fig.show()
+    layers_df = pd.DataFrame(data)
+    layers_df.columns.name = "layer"
+    layers_df.index = direction_labels
+    layers_style = layers_df.style.background_gradient(cmap="RdBu", axis=None).format("{:.1f}%")
+    save_html(layers_style, f"layer_direction_patching_{patching_metric.__name__}", model)
+    display(layers_style)
 
+    max_layer_df = layers_df.max(axis=1).sort_values(ascending=False).reset_index()
+    max_layer_df.columns = ["direction", "max_layer"]
+    max_layer_style = max_layer_df.style.background_gradient(cmap="RdBu", axis=None).format({"max_layer": "{:.1f}%"}).hide()
+    save_html(max_layer_style, f"layer_direction_patching_{patching_metric.__name__}_max_layer", model)
+    display(max_layer_style)
 # %%
-max_layer_df = layers_df.max(axis=1).sort_values(ascending=False).reset_index()
-max_layer_df.columns = ["direction", "max_layer"]
-max_layer_style = max_layer_df.style.background_gradient(cmap="RdBu", axis=None).format({"max_layer": "{:.1f}%"}).hide()
-save_html(max_layer_style, f"layer_direction_patching_{PATCHING_METRIC.__name__}_max_layer", model)
-max_layer_style
-# %%
+for metric in (logit_diff_denoising, logit_flip_metric, prob_diff_denoising):
+    get_results_for_metric(metric)
+#%%
