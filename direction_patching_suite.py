@@ -21,6 +21,7 @@ from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.store import save_array, load_array, save_html
 #%%
+torch.set_grad_enabled(False)
 pio.renderers.default = "notebook"
 update_layout_set = {
     "xaxis_range", "yaxis_range", "hovermode", "xaxis_title", "yaxis_title", "colorbar", "colorscale", "coloraxis", "title_x", "bargap", "bargroupgap", "xaxis_tickformat",
@@ -103,21 +104,6 @@ def get_prob_diff(
 
     return (left_probs - right_probs).mean()
 #%% # Data loading
-PROMPT_TYPE = "completion"
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=PROMPT_TYPE)
-all_prompts[:5]
-# positive -> negative
-# all_prompts = all_prompts[::2]
-# answer_tokens = answer_tokens[::2]
-# clean_tokens = clean_tokens[::2]
-# corrupted_tokens = corrupted_tokens[::2]
-
-# negative -> positive
-# all_prompts = all_prompts[1::2]
-# answer_tokens = answer_tokens[1::2]
-# clean_tokens = clean_tokens[1::2]
-# corrupted_tokens = corrupted_tokens[1::2]
-#%% # Run model with cache
 def name_filter(name: str):
     return (
         name.endswith('result') or 
@@ -128,40 +114,71 @@ def name_filter(name: str):
         (name == 'blocks.0.attn.hook_q') or 
         (name == 'blocks.0.attn.hook_z')
     )
-# N.B. corrupt -> clean
-clean_logits, clean_cache = model.run_with_cache(
-    clean_tokens,
-)
-clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
-print('clean logit diff', clean_logit_diff)
-clean_prob_diff = get_prob_diff(clean_logits, answer_tokens, per_prompt=False)
-print('clean prob diff', clean_prob_diff)
-corrupted_logits, corrupted_cache = model.run_with_cache(
-    corrupted_tokens
-)
-corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
-print('corrupted logit diff', corrupted_logit_diff)
-corrupted_prob_diff = get_prob_diff(corrupted_logits, answer_tokens, per_prompt=False)
-print('corrupted prob diff', corrupted_prob_diff)
+def load_data(prompt_type: str):
+    all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
+    print(all_prompts[:5])
+    print(clean_tokens.shape)
+    # positive -> negative
+    # all_prompts = all_prompts[::2]
+    # answer_tokens = answer_tokens[::2]
+    # clean_tokens = clean_tokens[::2]
+    # corrupted_tokens = corrupted_tokens[::2]
+
+    # negative -> positive
+    # all_prompts = all_prompts[1::2]
+    # answer_tokens = answer_tokens[1::2]
+    # clean_tokens = clean_tokens[1::2]
+    # corrupted_tokens = corrupted_tokens[1::2]
+    
+    # Run model with cache
+    # N.B. corrupt -> clean
+    clean_logits, clean_cache = model.run_with_cache(
+        clean_tokens,
+    )
+    clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
+    print('clean logit diff', clean_logit_diff)
+    clean_prob_diff = get_prob_diff(clean_logits, answer_tokens, per_prompt=False)
+    print('clean prob diff', clean_prob_diff)
+    corrupted_logits, corrupted_cache = model.run_with_cache(
+        corrupted_tokens
+    )
+    corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
+    print('corrupted logit diff', corrupted_logit_diff)
+    corrupted_prob_diff = get_prob_diff(corrupted_logits, answer_tokens, per_prompt=False)
+    print('corrupted prob diff', corrupted_prob_diff)
+    return {
+        "all_prompts": all_prompts,
+        "answer_tokens": answer_tokens,
+        "clean_tokens": clean_tokens,
+        "corrupted_tokens": corrupted_tokens,
+        "clean_logits": clean_logits,
+        "clean_cache": clean_cache,
+        "clean_logit_diff": clean_logit_diff,
+        "clean_prob_diff": clean_prob_diff,
+        "corrupted_logits": corrupted_logits,
+        "corrupted_cache": corrupted_cache,
+        "corrupted_logit_diff": corrupted_logit_diff,
+        "corrupted_prob_diff": corrupted_prob_diff,
+    }
 #%%
-def logit_diff_denoising(
+def logit_diff_denoising_base(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    corrupted_logit_diff: float = corrupted_logit_diff,
-    clean_logit_diff: float = clean_logit_diff,
+    answer_tokens: Float[Tensor, "batch 2"],
+    corrupted_diff: float,
+    clean_diff: float,
 ) -> Float[Tensor, ""]:
     '''
     Linear function of logit diff, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - corrupted_logit_diff) / (clean_logit_diff  - corrupted_logit_diff)).item()
+    return ((patched_logit_diff - corrupted_diff) / (clean_diff  - corrupted_diff)).item()
 #%%
-def prob_diff_denoising(
+def prob_diff_denoising_base(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    corrupted_prob_diff: float = corrupted_prob_diff,
-    clean_prob_diff: float = clean_prob_diff,
+    answer_tokens: Float[Tensor, "batch 2"],
+    corrupted_diff: float,
+    clean_diff: float,
 ) -> Float[Tensor, ""]:
     '''
     Linear function of logit diff, calibrated so that it equals 0 when performance is
@@ -169,89 +186,88 @@ def prob_diff_denoising(
     '''
     
     patched_logit_diff = get_prob_diff(logits, answer_tokens)
-    return ((patched_logit_diff - corrupted_prob_diff) / (clean_prob_diff  - corrupted_prob_diff)).item()
+    return ((patched_logit_diff - corrupted_diff) / (clean_diff  - corrupted_diff)).item()
 #%%
-def logit_flip_metric(
+def logit_flip_metric_base(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"] = answer_tokens,
-    corrupted_logit_diff: float = corrupted_logit_diff,
-    clean_logit_diff: float = clean_logit_diff,
+    answer_tokens: Float[Tensor, "batch pair 2"] ,
+    corrupted_diff: float,
+    clean_diff: float,
 ) -> Float[Tensor, ""]:
     '''
     Linear function of logit diff, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
     patched_logit_diff = get_logit_diff(logits, answer_tokens, per_prompt=True)
-    clean_distances = (clean_logit_diff - patched_logit_diff).abs()
-    corrupt_distances = (corrupted_logit_diff - patched_logit_diff).abs()
+    clean_distances = (clean_diff - patched_logit_diff).abs()
+    corrupt_distances = (corrupted_diff - patched_logit_diff).abs()
     return (clean_distances < corrupt_distances).float().mean().item()
 
-#%% # Logit attribution
-answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
-logit_diff_directions = answer_residual_directions[:, 0, 0] - answer_residual_directions[:, 0, 1]
-print(logit_diff_directions[0].norm())
 #%% # Direction loading
-direction_labels = [
-    'km_2c_line_embed_and_attn0',
-    'km_2c_line_embed_and_mlp0',
-    'km_2c_line_resid_post_layer_0',
-    'km_2c_line_resid_post_layer_1',
-    'km_2c_line_resid_post_layer_2',
-    'km_2c_line_resid_post_layer_3',
-    'km_2c_line_resid_post_layer_4',
-    'km_2c_line_resid_post_layer_5',
-    'km_2c_line_resid_post_layer_6',
-    'km_2c_line_resid_post_layer_7',
-    'km_2c_line_resid_post_layer_8',
-    'km_2c_line_resid_post_layer_9',
-    'km_2c_line_resid_post_layer_10',
-    'km_2c_line_resid_post_layer_11',
-    'km_2c_line_context_layer_0',
-    'km_2c_line_context_layer_1',
-    'km_2c_line_context_layer_2',
-    'km_2c_line_context_layer_3',
-    'km_2c_line_context_layer_4',
-    'km_2c_line_context_layer_5',
-    'km_2c_line_context_layer_6',
-    'km_2c_line_context_layer_7',
-    'km_2c_line_context_layer_8',
-    'km_2c_line_context_layer_9',
-    'km_2c_line_context_layer_10',
-    'km_2c_line_context_layer_11',
-    'mean_ov_direction_10_4',
-    'ccs',
-    'adj_token_lr',
-    'end_token_lr',
-    'rotation_direction_adj_0',
-    'rotation_direction_end_0',
-]
-directions = [
-    load_array(label, model) for label in direction_labels
-]
-directions.append(logit_diff_directions[0])
-direction_labels.append('logit_diff_direction')
-for i, direction in enumerate(directions):
-    if direction.ndim == 2:
-        direction = direction.squeeze(0)
-    directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
-#%%
-dot_products = []
-for label, direction in zip(direction_labels, directions):
-    average_logit_diff = einsum(
-        "d_model, d_model -> ", direction, logit_diff_directions[0]
-    )
-    dot_products.append([label, direction.norm().cpu().detach().item(), average_logit_diff.cpu().detach().item()])
-dot_df = pd.DataFrame(dot_products, columns=['label', 'norm', 'dot_product'])
-dot_df.style.background_gradient(cmap='Reds').format({'norm': "{:.2f}", 'dot_product': "{:.2f}"})
-#%% # cosine similarity
-cosine_similarities = []
-for label, direction in zip(direction_labels, directions):
-    average_logit_diff = einsum(
-        "d_model, d_model -> ", direction / direction.norm(), logit_diff_directions[0] / logit_diff_directions[0].norm()
-    )
-    cosine_similarities.append([label, average_logit_diff.cpu().detach().item()])
-sim_df = pd.DataFrame(cosine_similarities, columns=['label', 'cosine_similarity'])
-sim_df.style.background_gradient(cmap='Reds', axis=0).format({'cosine_similarity': "{:.2f}"})
+def get_directions(answer_tokens: Int[Tensor, "batch pair 2"]) -> Tuple[List[np.ndarray], List[str]]:
+    answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
+    logit_diff_directions = answer_residual_directions[:, 0, 0] - answer_residual_directions[:, 0, 1]
+    direction_labels = [
+        'km_2c_line_embed_and_attn0',
+        'km_2c_line_embed_and_mlp0',
+        'km_2c_line_resid_post_layer_0',
+        'km_2c_line_resid_post_layer_1',
+        'km_2c_line_resid_post_layer_2',
+        'km_2c_line_resid_post_layer_3',
+        'km_2c_line_resid_post_layer_4',
+        'km_2c_line_resid_post_layer_5',
+        'km_2c_line_resid_post_layer_6',
+        'km_2c_line_resid_post_layer_7',
+        'km_2c_line_resid_post_layer_8',
+        'km_2c_line_resid_post_layer_9',
+        'km_2c_line_resid_post_layer_10',
+        'km_2c_line_resid_post_layer_11',
+        'km_2c_line_context_layer_0',
+        'km_2c_line_context_layer_1',
+        'km_2c_line_context_layer_2',
+        'km_2c_line_context_layer_3',
+        'km_2c_line_context_layer_4',
+        'km_2c_line_context_layer_5',
+        'km_2c_line_context_layer_6',
+        'km_2c_line_context_layer_7',
+        'km_2c_line_context_layer_8',
+        'km_2c_line_context_layer_9',
+        'km_2c_line_context_layer_10',
+        'km_2c_line_context_layer_11',
+        'mean_ov_direction_10_4',
+        'ccs',
+        'adj_token_lr',
+        'end_token_lr',
+        'rotation_direction_adj_0',
+        'rotation_direction_end_0',
+    ]
+    directions = [
+        load_array(label, model) for label in direction_labels
+    ]
+    for i, direction in enumerate(directions):
+        if direction.ndim == 2:
+            direction = direction.squeeze(0)
+        directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
+    directions.append(logit_diff_directions[0])
+    direction_labels.append('logit_diff_direction')
+    dot_products = []
+    for label, direction in zip(direction_labels, directions):
+        average_logit_diff = einsum(
+            "d_model, d_model -> ", direction, logit_diff_directions[0]
+        )
+        dot_products.append([label, direction.norm().cpu().detach().item(), average_logit_diff.cpu().detach().item()])
+    dot_df = pd.DataFrame(dot_products, columns=['label', 'norm', 'dot_product'])
+    display(dot_df.style.background_gradient(cmap='Reds').format({'norm': "{:.2f}", 'dot_product': "{:.2f}"}))
+    # cosine similarity
+    cosine_similarities = []
+    for label, direction in zip(direction_labels, directions):
+        average_logit_diff = einsum(
+            "d_model, d_model -> ", direction / direction.norm(), logit_diff_directions[0] / logit_diff_directions[0].norm()
+        )
+        cosine_similarities.append([label, average_logit_diff.cpu().detach().item()])
+    sim_df = pd.DataFrame(cosine_similarities, columns=['label', 'cosine_similarity'])
+    display(sim_df.style.background_gradient(cmap='Reds', axis=0).format({'cosine_similarity': "{:.2f}"}))
+    return directions, direction_labels
 #%%
 # ============================================================================ #
 # Directional activation patching
@@ -327,17 +343,18 @@ def create_cache_for_dir_patching(
 #%%
 def run_head_patching(
     model: HookedTransformer,
+    orig_input: Float[Tensor, "batch seq"],
     new_cache: ActivationCache,
     patching_metric: Callable,
     label: str
 ) -> Tuple[Float[Tensor, "layer head"], go.Figure]:
     head_results: Float[Tensor, "layer head"] = act_patch(
         model=model,
-        orig_input=corrupted_tokens,
+        orig_input=orig_input,
         new_cache=new_cache,
         patching_nodes=IterNode(["result"]),
         patching_metric=patching_metric,
-        verbose=True,
+        verbose=False,
     )['result'] * 100
     fig = px.imshow(
         head_results,
@@ -356,17 +373,19 @@ def run_head_patching(
 #%%
 def run_layer_patching(
     model: HookedTransformer,
+    orig_input: Float[Tensor, "batch seq"],
     new_cache: ActivationCache,
     patching_metric: Callable,
     label: str
 ) -> Tuple[Float[Tensor, "layer"], go.Figure]:
     layer_results: Float[Tensor, "layer"] = act_patch(
         model=model,
-        orig_input=corrupted_tokens,
+        orig_input=orig_input,
         new_cache=new_cache,
         patching_nodes=IterNode(["resid_post"]),
         patching_metric=patching_metric,
-        verbose=True,
+        verbose=False,
+        disable=True,
     )['resid_post'] * 100
     fig = px.line(
         layer_results,
@@ -383,21 +402,22 @@ def run_layer_patching(
 #%%
 def run_attn_mlp_patching(
     model: HookedTransformer,
+    orig_input: Float[Tensor, "batch seq"],
     new_cache: ActivationCache,
     patching_metric: Callable,
     label: str
 ) -> Tuple[Float[Tensor, "attn_mlp layer pos"], go.Figure]:
     attn_mlp_results = act_patch(
         model=model,
-        orig_input=corrupted_tokens,
+        orig_input=orig_input,
         new_cache=new_cache,
         patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
         patching_metric=patching_metric,
-        verbose=True,
+        verbose=False,
     )
     result_data = torch.stack([r.T for r in attn_mlp_results.values()]) * 100
     assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
-    labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
+    labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(orig_input[0]))]
     fig = imshow_p(
         result_data,
         facet_col=0,
@@ -413,16 +433,39 @@ def run_attn_mlp_patching(
     )
     return result_data, fig
 #%%
-def get_results_for_metric(patching_metric: Callable):
+def get_results_for_metric(prompt_type: str, patching_metric_base: Callable):
+    model.reset_hooks()
+    prompt_metric_label = (
+        "prompt_" + 
+        prompt_type + 
+        "_" + 
+        "metric_" + 
+        patching_metric_base.__name__.replace("_base", "").replace("_denoising", "")
+    )
+    data_dict = load_data(prompt_type)
+    directions, direction_labels = get_directions(data_dict["answer_tokens"])
+    if "logit" in patching_metric_base.__name__:
+        clean_diff = data_dict["clean_logit_diff"]
+        corrupt_diff = data_dict["corrupted_logit_diff"]
+    else:
+        clean_diff = data_dict["clean_prob_diff"]
+        corrupt_diff = data_dict["corrupted_prob_diff"]
+    patching_metric = partial(
+        patching_metric_base, 
+        answer_tokens=data_dict["answer_tokens"],
+        corrupted_diff=corrupt_diff,
+        clean_diff=clean_diff,
+    )
+
     bar = tqdm(zip(direction_labels, directions), total=len(direction_labels))
     figures = []
     data = []
     for label, direction in bar:
         direction = direction / direction.norm()
         new_cache = create_cache_for_dir_patching(
-            clean_cache, corrupted_cache, direction
+            data_dict["clean_cache"], data_dict["corrupted_cache"], direction
         )
-        results, fig = run_layer_patching(model, new_cache, patching_metric, label)
+        results, fig = run_layer_patching(model, data_dict["corrupted_tokens"], new_cache, patching_metric, label)
         data.append(results.numpy())
         figures.append(fig)
     fig = make_subplots(
@@ -436,28 +479,42 @@ def get_results_for_metric(patching_metric: Callable):
         if i == len(direction_labels) - 1:
             fig.update_xaxes(title_text="Layer", row=i + 1, col=1)
     fig.update_layout(
-        title="Patching residual stream by layer",
+        title=f"Patching residual stream by layer ({prompt_metric_label})",
         height=6600,
         width=1000,
         showlegend=False,
         margin={"r": 100, "l": 100}
     )
-    fig.update_yaxes(title_text=patching_metric.__name__)
-    save_html(fig, f"layer_direction_patching_{patching_metric.__name__}", model)
+    fig.update_yaxes(title_text=patching_metric_base.__name__)
+    save_html(fig, f"layer_direction_patching_{prompt_metric_label}", model)
     fig.show()
     layers_df = pd.DataFrame(data)
     layers_df.columns.name = "layer"
     layers_df.index = direction_labels
-    layers_style = layers_df.style.background_gradient(cmap="RdBu", axis=None).format("{:.1f}%")
-    save_html(layers_style, f"layer_direction_patching_{patching_metric.__name__}", model)
+    layers_style = (
+        layers_df
+        .style
+        .background_gradient(cmap="RdBu", axis=None)
+        .format("{:.1f}%")
+        .set_caption(f"Layer direction patching ({prompt_metric_label})")
+    )
+    save_html(layers_style, f"layer_direction_patching_{prompt_metric_label}", model)
     display(layers_style)
 
     max_layer_df = layers_df.max(axis=1).sort_values(ascending=False).reset_index()
     max_layer_df.columns = ["direction", "max_layer"]
-    max_layer_style = max_layer_df.style.background_gradient(cmap="RdBu", axis=None).format({"max_layer": "{:.1f}%"}).hide()
-    save_html(max_layer_style, f"layer_direction_patching_{patching_metric.__name__}_max_layer", model)
+    max_layer_style = (
+        max_layer_df
+        .style
+        .background_gradient(cmap="RdBu", axis=None)
+        .format({"max_layer": "{:.1f}%"})
+        .hide()
+        .set_caption(f"Layer direction patching max ({prompt_metric_label})")
+    )
+    save_html(max_layer_style, f"layer_direction_patching_{prompt_metric_label}_max_layer", model)
     display(max_layer_style)
 # %%
-for metric in (logit_diff_denoising, logit_flip_metric, prob_diff_denoising):
-    get_results_for_metric(metric)
+for metric in (logit_diff_denoising_base, logit_flip_metric_base, prob_diff_denoising_base):
+    for prompt_type in ("simple", "completion"):
+        get_results_for_metric(prompt_type, metric)
 #%%
