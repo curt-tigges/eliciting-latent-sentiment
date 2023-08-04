@@ -6,6 +6,7 @@ from typing import Union
 import torch
 import plotly.graph_objects as go
 from circuitsvis.utils.render import RenderedHTML
+from pandas.io.formats.style import Styler
 
 
 def clean_label(label: str) -> str:
@@ -53,7 +54,7 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
 
 
 def save_html(
-    html_data: Union[go.Figure, RenderedHTML],
+    html_data: Union[go.Figure, RenderedHTML, Styler],
     label: str, 
     model: Union[HookedTransformer, str]
 ):
@@ -65,9 +66,12 @@ def save_html(
     path = os.path.join(model_path, label + '.html')
     if isinstance(html_data, go.Figure):
         html_data.write_html(path)
-    else:
+    elif isinstance(html_data, RenderedHTML):
         with open(path, 'w') as f:
             f.write(str(html_data))
+    elif isinstance(html_data, Styler):
+        with open(path, 'w') as f:
+            f.write(html_data.to_html())
     return path
 
 
