@@ -33,7 +33,7 @@ sentiment_dir = load_array("km_2c_line_embed_and_mlp0", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
-def plot_neuroscope(text: str):
+def plot_neuroscope(text: str, centred):
     activations_by_layer = []
     for layer in range(model.cfg.n_layers):
         act_name = get_act_name('resid_post', layer)
@@ -46,6 +46,8 @@ def plot_neuroscope(text: str):
             embeddings.to(device), sentiment_dir.to(device),
             "batch pos d_model, d_model -> batch pos"
         )
+        if centred:
+            activations -= activations.mean()
         activations = einops.rearrange(activations, "batch pos -> pos batch")
         activations_by_layer.append(activations)
     text_activations: Float[Tensor, "pos layer 1"] = torch.stack(activations_by_layer, dim=1)
@@ -84,7 +86,7 @@ harry_potter_start = """
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
 """
 #%%
-harry_potter_neuroscope = plot_neuroscope(harry_potter_start)
+harry_potter_neuroscope = plot_neuroscope(harry_potter_start, centred=True)
 #%%
 save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
 #%%
@@ -95,7 +97,7 @@ harry_potter_neuroscope
 
 #%%
 common_words_cr = [
-    ' crony', ' crump', ' crinkle', ' craggy', ' cramp', ' crumb', ' crayon'
+    ' crony', ' crump', ' crinkle', ' craggy', ' cramp', ' crumb', ' crayon', ' cringing', ' cramping'
 ]
 cr_single_tokens = []
 for word in common_words_cr:
@@ -106,10 +108,10 @@ cr_single_tokens = list(set(cr_single_tokens))
 cr_single_tokens
 #%%
 cr_text = "\n".join(cr_single_tokens)
-plot_neuroscope(cr_text)
+plot_neuroscope(cr_text, centred=False)
 #%%
 common_words_clo = [
-    ' clopped', ' cloze', ' cloistered', ' clopping', ' cloacal', ' cloister'
+    ' clopped', ' cloze', ' cloistered', ' clopping', ' cloacal', ' cloister', ' cloaca',
 ]
 clo_single_tokens = []
 for word in common_words_clo:
@@ -120,7 +122,7 @@ clo_single_tokens = list(set(clo_single_tokens))
 clo_single_tokens
 #%%
 clo_text = "\n".join(clo_single_tokens)
-plot_neuroscope(clo_text)
+plot_neuroscope(clo_text, centred=False)
 #%%
 # ============================================================================ #
 # Max activating examples on training data
@@ -167,7 +169,7 @@ class ClearCache:
         torch.cuda.empty_cache()
 #%%
 with ClearCache():
-    all_activations = get_activations_from_data(dataloader)
+    all_activations = get_activations_from_data(dataloader, layer=0)
 all_activations.shape
 #%%
 def extract_example(batch: int, pos: int, window_size: int = 10):
@@ -190,7 +192,7 @@ def _plot_topk(k: int = 10, largest: bool = True):
         print(f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}")
         texts.append(extract_example(batch, pos))
     texts_cat = '\n'.join(texts)
-    display(plot_neuroscope(texts_cat))
+    display(plot_neuroscope(texts_cat, centred=False))
 #%%
 def plot_topk(k: int = 10):
    _plot_topk(k=k, largest=True)
