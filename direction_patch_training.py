@@ -346,7 +346,7 @@ def train_rotation(**given_config_dict) -> Tuple[HookedTransformer, List[Tensor]
                     position=config.eval_position,
                 )
             if config.wandb_enabled:
-                wandb.log({"Training Loss": loss.item(), "Evaluation Loss": eval_loss.item()}, step=step)
+                wandb.log({"training_loss": loss.item(), "validation_loss": eval_loss.item()}, step=step)
 
             # Store the loss and model for this seed
             losses.append(loss.item())
@@ -369,10 +369,30 @@ def train_rotation(**given_config_dict) -> Tuple[HookedTransformer, List[Tensor]
     return rotation_module, directions
 
 #%%
+# run a wandb sweep over n_directions from 1 to 10
+sweep_config = {
+    "method": "grid",
+    "metric": {"name": "validation_loss", "goal": "minimize"},
+    "parameters": {
+        "n_directions": {"values": list(range(1, 11))},
+        "seeds": {"values": [1]},
+        "lr": {"values": [1e-3]},
+        "epochs": {"values": [200]},
+        "model": {"values": [model.name]},
+        "train_position": {"values": [adj_position]},
+        "train_layer": {"values": [0]},
+        "eval_position": {"values": [verb_position]},
+        "eval_layer": {"values": [1]},
+    }
+}
+sweep_id = wandb.sweep(sweep_config)
+wandb.agent(sweep_id, function=train_rotation)
+
+#%%
 rotation_module_adj, directions_adj = train_rotation(
     seeds=1, 
-    epochs=2000, 
-    lr=1e-4,
+    epochs=200, 
+    lr=1e-3,
     train_position=adj_position, 
     train_layer=0,
     eval_position=verb_position,
@@ -380,22 +400,27 @@ rotation_module_adj, directions_adj = train_rotation(
     wandb_enabled=True,
 )
 #%%
+if rotation_module_adj.n_directions == 1:
+    save_array(
+        rotation_module_adj.rotate_layer.weight[0, :].cpu().detach().numpy(), 
+        f"rotation_direction_adj", model
+    )
+#%%
+final_token = new_tokens.shape[1] - 1
+final_layer = model.cfg.n_layers - 1
 rotation_module_end, directions_end = train_rotation(
-    seeds=5, 
+    seeds=1, 
     epochs=60, 
-    train_position=new_tokens.shape[1] - 1, 
-    train_layer=model.cfg.n_layers - 1,
+    train_position=final_token, 
+    train_layer=final_layer,
+    eval_position=final_token,
+    eval_layer=final_layer,
 )
 #%%
-for seed in range(rotation_module_end.rotate_layer.shape[0]):
+if rotation_module_end.n_directions == 1:
     save_array(
-        rotation_module_end.rotate_layer.weight[seed, :].cpu().detach().numpy(), 
-        f"rotation_direction_end_{seed}", model
+        rotation_module_end.rotate_layer.weight[0, :].cpu().detach().numpy(), 
+        f"rotation_direction_end", model
     )
-#%%
-for seed in range(rotation_module_adj.rotate_layer.shape[0]):
-    save_array(
-        rotation_module_adj.rotate_layer.weight[seed, :].cpu().detach().numpy(), 
-        f"rotation_direction_adj_{seed}", model
-    )
+    
 #%%
