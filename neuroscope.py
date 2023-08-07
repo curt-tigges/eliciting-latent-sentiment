@@ -14,7 +14,7 @@ from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_ac
 from circuitsvis.activations import text_neuron_activations
 from tqdm.notebook import tqdm
 from IPython.display import display
-from utils.store import load_array, save_html
+from utils.store import load_array, save_html, save_array, is_file
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
@@ -138,24 +138,32 @@ def get_dataloader():
 #%%
 dataloader = get_dataloader()
 #%%
-def get_activations_from_data(data: torch.utils.data.dataloader.DataLoader, layer: int = 0):
-    all_activations = []
+def get_activations_from_data(
+    data: torch.utils.data.dataloader.DataLoader,
+    max_batches: int = None,
+) -> Float[Tensor, "row pos"]:
+    all_acts = []
     for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
-        act_name = get_act_name('resid_post', layer)
         _, cache = model.run_with_cache(
-            batch_value['tokens'], names_filter=lambda name: name == act_name
+            batch_value['tokens'], 
+            names_filter=lambda name: name.endswith('resid_post')
         )
-        embeddings: Int[Tensor, "batch pos d_model"] = cache[act_name]
-        embeddings /= embeddings.norm(dim=-1, keepdim=True)
-        activations: Float[Tensor, "batch pos"] = einops.einsum(
-            embeddings, sentiment_dir,
-            "batch pos d_model, d_model -> batch pos"
-        ).to(device="cpu")
-        all_activations.append(activations)
-        del embeddings
+        batch_acts = []
+        for layer in range(model.cfg.n_layers):
+            emb: Int[Tensor, "batch pos d_model"] = cache["resid_post", layer]
+            emb /= emb.norm(dim=-1, keepdim=True)
+            act: Float[Tensor, "batch pos"] = einops.einsum(
+                emb, sentiment_dir,
+                "batch pos d_model, d_model -> batch pos"
+            ).to(device="cpu")
+            batch_acts.append(act)
+        batch_acts: Float[Tensor, "batch pos layer"] = torch.stack(batch_acts, dim=2)
+        all_acts.append(batch_acts)
+        if max_batches is not None and batch_idx >= max_batches:
+            break
     # Concatenate the activations into a single tensor
-    all_activations: Float[Tensor, "full_batch pos"] = torch.cat(all_activations, dim=0)
-    return all_activations
+    all_acts: Float[Tensor, "row pos layer"] = torch.cat(all_acts, dim=0)
+    return all_acts
 #%%
 class ClearCache:
     def __enter__(self):
@@ -168,22 +176,28 @@ class ClearCache:
         gc.collect()
         torch.cuda.empty_cache()
 #%%
-with ClearCache():
-    all_activations = get_activations_from_data(dataloader, layer=0)
-all_activations.shape
+if is_file("sentiment_activations", model):
+    sentiment_activations = load_array("sentiment_activations", model)
+else:
+    with ClearCache():
+        sentiment_activations = get_activations_from_data(dataloader)
+    save_array(sentiment_activations, "sentiment_activations", model)
+sentiment_activations.shape
 #%%
 def extract_example(batch: int, pos: int, window_size: int = 10):
     lb = max(0, pos - window_size)
     ub = min(len(dataloader.dataset[batch]['tokens']), pos + window_size)
     return model.to_string(dataloader.dataset[batch]['tokens'][lb:ub])
 #%%
-def _plot_topk(k: int = 10, largest: bool = True):
+def _plot_topk(
+    activations: Float[Tensor, "row pos"], k: int = 10, largest: bool = True
+):
     label = "positive" if largest else "negative"
-    topk_pos_indices = torch.topk(all_activations.flatten(), k=k, largest=largest).indices
-    topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), all_activations.shape)).T.tolist()
+    topk_pos_indices = torch.topk(activations.flatten(), k=k, largest=largest).indices
+    topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the most positive and negative activations
     topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
-    topk_pos_activations = [all_activations[b, s].item() for b, s in topk_pos_indices]
+    topk_pos_activations = [activations[b, s].item() for b, s in topk_pos_indices]
     # Print the  most positive and negative examples and their activations
     print(f"Top {k} most {label} examples:")
     texts = []
@@ -194,9 +208,11 @@ def _plot_topk(k: int = 10, largest: bool = True):
     texts_cat = '\n'.join(texts)
     display(plot_neuroscope(texts_cat, centred=False))
 #%%
-def plot_topk(k: int = 10):
-   _plot_topk(k=k, largest=True)
-   _plot_topk(k=k, largest=False)
+def plot_topk(activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0):
+   _plot_topk(activations[:, :, layer], k=k, largest=True)
+   _plot_topk(activations[:, :, layer], k=k, largest=False)
 # %%
-plot_topk(k=50)
+plot_topk(sentiment_activations, k=50, layer=0)
+# %%
+plot_topk(sentiment_activations, k=50, layer=11)
 # %%

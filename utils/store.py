@@ -80,3 +80,9 @@ def get_labels(glob_str: str, model: Union[HookedTransformer, str]) -> list:
     model_path = os.path.join('data', model)
     labels = [os.path.split(p)[-1] for p in glob.iglob(os.path.join(model_path, glob_str))]
     return labels
+
+
+def is_file(name: str, model: Union[HookedTransformer, str]) -> list:
+    model: str = get_model_name(model)
+    model_path = os.path.join('data', model)
+    return os.path.exists(os.path.join(model_path, name))
