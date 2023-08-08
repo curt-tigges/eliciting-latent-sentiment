@@ -34,11 +34,16 @@ sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=
 sentiment_dir /= sentiment_dir.norm()
 #%%
 def plot_neuroscope(
-    tokens: Union[str, List[str]], centred: bool, activations: Float[Tensor, "pos layer 1"] = None,
+    text: Union[str, List[str]], centred: bool, activations: Float[Tensor, "pos layer 1"] = None,
     verbose=False,
 ):
-    if isinstance(tokens, str):
-        tokens = model.to_str_tokens(tokens)
+    tokens: Int[Tensor, "batch pos"] = model.to_tokens(text)
+    if isinstance(text, str):
+        str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
+    else:
+        str_tokens = text
+    if verbose:
+        print(f"Tokens shape: {tokens.shape}")
     if activations is None:
         if verbose:
             print("Computing activations")
@@ -59,24 +64,27 @@ def plot_neuroscope(
             acts = einops.rearrange(acts, "batch pos -> pos batch")
             acts_by_layer.append(acts)
         activations: Float[Tensor, "pos layer 1"] = torch.stack(acts_by_layer, dim=1)
+        if verbose:
+            print(f"Activations shape: {activations.shape}")
     elif centred:
         if verbose:
             print("Centering activations")
         layer_means = einops.reduce(activations, "pos layer 1 -> 1 layer 1", reduction="mean")
-        layer_means = einops.rearrange(layer_means, "1 layer 1 -> pos layer 1", pos=activations.shape[0])
+        layer_means = einops.repeat(layer_means, "1 layer 1 -> pos layer 1", pos=activations.shape[0])
         activations -= layer_means
     elif verbose:
         print("Activations already centered")
     assert (
         activations.ndim == 3
     ), f"activations must be of shape [tokens x layers x neurons], found {activations.shape}"
-    assert len(tokens) == activations.shape[0], (
-        f"tokens and activations must have the same length, found tokens={len(tokens)} and acts={activations.shape[0]}, "
-        f"tokens={tokens}"
+    assert len(str_tokens) == activations.shape[0], (
+        f"tokens and activations must have the same length, found tokens={len(str_tokens)} and acts={activations.shape[0]}, "
+        f"tokens={str_tokens}, "
+        f"activations={activations.shape}"
 
     )
     return text_neuron_activations(
-        tokens=tokens, 
+        tokens=str_tokens, 
         activations=activations,
         second_dimension_name="Model",
         second_dimension_labels=["gpt2-small"],
@@ -108,7 +116,7 @@ harry_potter_start = """
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
 """
 #%%
-harry_potter_neuroscope = plot_neuroscope(harry_potter_start, centred=True)
+harry_potter_neuroscope = plot_neuroscope(harry_potter_start, centred=True, verbose=False)
 #%%
 save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
 #%%
@@ -124,10 +132,10 @@ common_words_cr = [
 cr_single_tokens = []
 for word in common_words_cr:
     if model.to_str_tokens(word, prepend_bos=False)[0] == " cr":
-        print(word, model.to_str_tokens(word, prepend_bos=False))
+        # print(word, model.to_str_tokens(word, prepend_bos=False))
         cr_single_tokens.append(word)
 cr_single_tokens = list(set(cr_single_tokens))
-cr_single_tokens
+# cr_single_tokens
 #%%
 cr_text = "\n".join(cr_single_tokens)
 plot_neuroscope(cr_text, centred=False)
@@ -138,10 +146,10 @@ common_words_clo = [
 clo_single_tokens = []
 for word in common_words_clo:
     if model.to_str_tokens(word, prepend_bos=False)[0] == " clo":
-        print(word, model.to_str_tokens(word, prepend_bos=False))
+        # print(word, model.to_str_tokens(word, prepend_bos=False))
         clo_single_tokens.append(word)
 clo_single_tokens = list(set(clo_single_tokens))
-clo_single_tokens
+# clo_single_tokens
 #%%
 clo_text = "\n".join(clo_single_tokens)
 plot_neuroscope(clo_text, centred=False)
@@ -226,7 +234,7 @@ def extract_activations_window(
 #%%
 def _plot_topk(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
-    window_size: int = 10,
+    window_size: int = 10, centred: bool = False,
 ):
     label = "positive" if largest else "negative"
     activations = all_activations[:, :, layer]
@@ -259,13 +267,21 @@ def _plot_topk(
         acts.append(activation_window)
     acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
     assert acts_cat.shape[0] == len(texts)
-    display(plot_neuroscope(texts, centred=False, activations=acts_cat, verbose=False))
+    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
+    save_html(html, f"top_{k}_most_{label}_layer_{layer}_sentiment.html", model)
+    display(html)
 #%%
-def plot_topk(activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0):
-   _plot_topk(activations, layer=layer, k=k, largest=True)
-   _plot_topk(activations, layer=layer, k=k, largest=False)
+def plot_topk(
+    activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0,
+    window_size: int = 10, centred: bool = False,
+):
+   _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred)
+   _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred)
 # %%
 # plot_topk(sentiment_activations, k=50, layer=0)
 # %%
-plot_topk(sentiment_activations, k=50, layer=11)
+plot_topk(sentiment_activations, k=50, layer=11, window_size=20, centred=True)
 # %%
+#FIXME
+# Point out nice results like negation "avoid being banned" and "Don't attack" and "forbids, "
+# Asymmetry between positive and negative examples
