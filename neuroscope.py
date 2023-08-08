@@ -33,6 +33,31 @@ sentiment_dir = load_array("km_2c_line_embed_and_mlp0", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
+def names_filter(name: str):
+    return name.endswith('resid_post') or name == get_act_name('resid_pre', 0)
+#%%
+def get_activations_for_input(
+    tokens: Int[Tensor, "batch pos"],
+) -> Float[Tensor, "batch pos layer"]:
+    _, cache = model.run_with_cache(
+        tokens, 
+        names_filter=names_filter
+    )
+    acts_by_layer = []
+    for layer in range(-1, model.cfg.n_layers):
+        if layer >= 0:
+            emb: Int[Tensor, "batch pos d_model"] = cache["resid_post", layer]
+        else:
+            emb: Int[Tensor, "batch pos d_model"] = cache["resid_pre", 0]
+        emb /= emb.norm(dim=-1, keepdim=True)
+        act: Float[Tensor, "batch pos"] = einops.einsum(
+            emb, sentiment_dir,
+            "batch pos d_model, d_model -> batch pos"
+        ).to(device="cpu")
+        acts_by_layer.append(act)
+    acts_by_layer: Float[Tensor, "batch pos layer"] = torch.stack(acts_by_layer, dim=2)
+    return acts_by_layer
+#%%
 def plot_neuroscope(
     text: Union[str, List[str]], centred: bool, activations: Float[Tensor, "pos layer 1"] = None,
     verbose=False,
@@ -47,23 +72,10 @@ def plot_neuroscope(
     if activations is None:
         if verbose:
             print("Computing activations")
-        acts_by_layer = []
-        for layer in range(model.cfg.n_layers):
-            act_name = get_act_name('resid_post', layer)
-            _, cache = model.run_with_cache(
-                tokens, names_filter=lambda name: name == act_name
-            )
-            embeddings: Int[Tensor, "batch pos d_model"] = cache[act_name]
-            embeddings /= embeddings.norm(dim=-1, keepdim=True)
-            acts = einops.einsum(
-                embeddings.to(device), sentiment_dir.to(device),
-                "batch pos d_model, d_model -> batch pos"
-            )
-            if centred:
-                acts -= acts.mean()
-            acts = einops.rearrange(acts, "batch pos -> pos batch")
-            acts_by_layer.append(acts)
-        activations: Float[Tensor, "pos layer 1"] = torch.stack(acts_by_layer, dim=1)
+        activations: Float[Tensor, "batch pos layer"] = get_activations_for_input(tokens)
+        activations: Float[Tensor, "pos layer 1"] = einops.rearrange(
+            activations, "batch pos layer -> pos layer batch"
+        )
         if verbose:
             print(f"Activations shape: {activations.shape}")
     elif centred:
@@ -86,6 +98,7 @@ def plot_neuroscope(
     return text_neuron_activations(
         tokens=str_tokens, 
         activations=activations,
+        first_dimension_name="Layer (resid_pre)",
         second_dimension_name="Model",
         second_dimension_labels=["gpt2-small"],
     )
@@ -138,7 +151,7 @@ cr_single_tokens = list(set(cr_single_tokens))
 # cr_single_tokens
 #%%
 cr_text = "\n".join(cr_single_tokens)
-plot_neuroscope(cr_text, centred=False)
+plot_neuroscope(cr_text, centred=True)
 #%%
 common_words_clo = [
     ' clopped', ' cloze', ' cloistered', ' clopping', ' cloacal', ' cloister', ' cloaca',
@@ -152,7 +165,7 @@ clo_single_tokens = list(set(clo_single_tokens))
 # clo_single_tokens
 #%%
 clo_text = "\n".join(clo_single_tokens)
-plot_neuroscope(clo_text, centred=False)
+plot_neuroscope(clo_text, centred=True)
 #%%
 # ============================================================================ #
 # Max activating examples on training data
@@ -168,26 +181,14 @@ def get_dataloader():
 #%%
 dataloader = get_dataloader()
 #%%
-def get_activations_from_data(
+def get_activations_from_dataloader(
     data: torch.utils.data.dataloader.DataLoader,
     max_batches: int = None,
 ) -> Float[Tensor, "row pos"]:
     all_acts = []
     for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
-        _, cache = model.run_with_cache(
-            batch_value['tokens'], 
-            names_filter=lambda name: name.endswith('resid_post')
-        )
-        batch_acts = []
-        for layer in range(model.cfg.n_layers):
-            emb: Int[Tensor, "batch pos d_model"] = cache["resid_post", layer]
-            emb /= emb.norm(dim=-1, keepdim=True)
-            act: Float[Tensor, "batch pos"] = einops.einsum(
-                emb, sentiment_dir,
-                "batch pos d_model, d_model -> batch pos"
-            ).to(device="cpu")
-            batch_acts.append(act)
-        batch_acts: Float[Tensor, "batch pos layer"] = torch.stack(batch_acts, dim=2)
+        batch_tokens = batch_value['tokens'].to(device)
+        batch_acts: Float[Tensor, "batch pos layer"] = get_activations_for_input(batch_tokens)
         all_acts.append(batch_acts)
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -211,9 +212,9 @@ if is_file("sentiment_activations.npy", model):
     sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(sentiment_activations, device=device, dtype=torch.float32)
 else:
     with ClearCache():
-        sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_data(dataloader)
+        sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(dataloader)
     save_array(sentiment_activations, "sentiment_activations", model)
-sentiment_activations.shape
+sentiment_activations.shape, sentiment_activations.device
 #%%
 def get_window(batch: int, pos: int, window_size: int = 10) -> Tuple[int, int]:
     lb = max(0, pos - window_size)
@@ -234,7 +235,7 @@ def extract_activations_window(
 #%%
 def _plot_topk(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
-    window_size: int = 10, centred: bool = False,
+    window_size: int = 10, centred: bool = True,
 ):
     label = "positive" if largest else "negative"
     activations = all_activations[:, :, layer]
@@ -273,15 +274,12 @@ def _plot_topk(
 #%%
 def plot_topk(
     activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0,
-    window_size: int = 10, centred: bool = False,
+    window_size: int = 10, centred: bool = True,
 ):
    _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred)
    _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred)
 # %%
 # plot_topk(sentiment_activations, k=50, layer=0)
 # %%
-plot_topk(sentiment_activations, k=50, layer=11, window_size=20, centred=True)
+plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
 # %%
-#FIXME
-# Point out nice results like negation "avoid being banned" and "Don't attack" and "forbids, "
-# Asymmetry between positive and negative examples
