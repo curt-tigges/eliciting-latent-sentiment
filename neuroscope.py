@@ -173,7 +173,7 @@ negation_text = "\nText 1: Please don't plague me with your nonsense. I can't be
 plot_neuroscope(negation_text, centred=True, verbose=False)
 #%%
 # ============================================================================ #
-# Max activating examples on training data
+# Openwebtext-10k
 #%%
 def get_dataloader():
     owt_data = load_dataset("stas/openwebtext-10k", split="train")
@@ -220,6 +220,10 @@ else:
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(dataloader)
     save_array(sentiment_activations, "sentiment_activations", model)
 sentiment_activations.shape, sentiment_activations.device
+#%%
+# ============================================================================ #
+# Top k max activating examples
+
 #%%
 def get_window(batch: int, pos: int, window_size: int = 10) -> Tuple[int, int]:
     lb = max(0, pos - window_size)
@@ -295,3 +299,66 @@ plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
 # %%
 plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
 # %%
+# ============================================================================ #
+# Top p sampling
+#%%
+#%%
+def _plot_top_p(
+    all_activations: Float[Tensor, "row pos layer"], layer: int = 0, p: float = 0.1, k: int = 10, largest: bool = True,
+    window_size: int = 10, centred: bool = True,
+):
+    label = "positive" if largest else "negative"
+    activations: Float[Tensor, "batch pos"] = all_activations[:, :, layer]
+    activations_flat: Float[Tensor, "(batch pos)"] = activations.flatten()
+    sample_size = int(p * len(activations_flat))
+    top_p_indices = torch.topk(activations_flat, k=sample_size, largest=largest).indices
+    sampled_indices = top_p_indices[torch.randperm(sample_size)[:k]]
+    top_p_indices = np.array(np.unravel_index(sampled_indices.cpu().numpy(), activations.shape)).T.tolist()
+    top_p_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in top_p_indices]
+    top_p_activations = [activations[b, s].item() for b, s in top_p_indices]
+    # Print the  most positive and negative examples and their activations
+    print(f"Top {k} most {label} examples:")
+    zeros = torch.zeros((1, all_activations.shape[-1]), device=device, dtype=torch.float32)
+    texts = [model.tokenizer.bos_token]
+    text_to_not_repeat = set()
+    acts = [zeros]
+    text_sep = "\n"
+    topk_zip = zip(top_p_indices, top_p_examples, top_p_activations)
+    for index, example, activation in topk_zip:
+        batch, pos = index
+        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+        activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
+            all_activations, batch, pos, window_size=window_size
+        )
+        assert len(text_window) == activation_window.shape[0], (
+            f"Initially text window length {len(text_window)} "
+            f"does not match activation window length {activation_window.shape[0]}"
+        )
+        text_flat = "".join(text_window)
+        if text_flat in text_to_not_repeat:
+            continue
+        text_to_not_repeat.add(text_flat)
+        print(
+            f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}"
+        )
+        text_window.append(text_sep)
+        activation_window = torch.cat([activation_window, zeros], dim=0)
+        assert len(text_window) == activation_window.shape[0]
+        texts += text_window
+        acts.append(activation_window)
+    acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
+    assert acts_cat.shape[0] == len(texts)
+    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
+    save_html(html, f"top_{p * 100:.0f}pc_most_{label}_layer_{layer}_sentiment.html", model)
+    display(html)
+#%%
+def plot_top_p(
+    activations: Float[Tensor, "row pos layer"], k: int = 10, p: float = 0.1, layer: int = 0,
+    window_size: int = 10, centred: bool = True,
+):
+   _plot_top_p(activations, layer=layer, p=p, k=k, largest=True, window_size=window_size, centred=centred)
+   _plot_top_p(activations, layer=layer, p=p, k=k, largest=False, window_size=window_size, centred=centred)
+#%%
+plot_top_p(sentiment_activations, k=50, layer=0, p=0.01)
+#%%
+
