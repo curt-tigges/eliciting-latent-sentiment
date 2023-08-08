@@ -248,12 +248,12 @@ def _plot_topk(
     print(f"Top {k} most {label} examples:")
     zeros = torch.zeros((1, all_activations.shape[-1]), device=device, dtype=torch.float32)
     texts = [model.tokenizer.bos_token]
+    text_to_not_repeat = set()
     acts = [zeros]
     text_sep = "\n"
     topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_activations)
     for index, example, activation in topk_zip:
         batch, pos = index
-        print(f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}")
         text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
             all_activations, batch, pos, window_size=window_size
@@ -261,6 +261,11 @@ def _plot_topk(
         assert len(text_window) == activation_window.shape[0], (
             f"Initially text window length {len(text_window)} does not match activation window length {activation_window.shape[0]}"
         )
+        text_flat = "".join(text_window)
+        if text_flat in text_to_not_repeat:
+            continue
+        text_to_not_repeat.add(text_flat)
+        print(f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}")
         text_window.append(text_sep)
         activation_window = torch.cat([activation_window, zeros], dim=0)
         assert len(text_window) == activation_window.shape[0]
