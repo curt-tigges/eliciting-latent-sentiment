@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 import einops
 from jaxtyping import Float, Int
-from typing import List, Union
+from typing import List, Tuple, Union
 from transformer_lens import HookedTransformer
 from transformer_lens.evals import make_owt_data_loader
 from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name
@@ -33,30 +33,52 @@ sentiment_dir = load_array("km_2c_line_embed_and_mlp0", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
-def plot_neuroscope(text: str, centred):
-    activations_by_layer = []
-    for layer in range(model.cfg.n_layers):
-        act_name = get_act_name('resid_post', layer)
-        _, cache = model.run_with_cache(
-            text, names_filter=lambda name: name == act_name
-        )
-        embeddings: Int[Tensor, "batch pos d_model"] = cache[act_name]
-        embeddings /= embeddings.norm(dim=-1, keepdim=True)
-        activations = einops.einsum(
-            embeddings.to(device), sentiment_dir.to(device),
-            "batch pos d_model, d_model -> batch pos"
-        )
-        if centred:
-            activations -= activations.mean()
-        activations = einops.rearrange(activations, "batch pos -> pos batch")
-        activations_by_layer.append(activations)
-    text_activations: Float[Tensor, "pos layer 1"] = torch.stack(activations_by_layer, dim=1)
+def plot_neuroscope(
+    tokens: Union[str, List[str]], centred: bool, activations: Float[Tensor, "pos layer 1"] = None,
+    verbose=False,
+):
+    if isinstance(tokens, str):
+        tokens = model.to_str_tokens(tokens)
+    if activations is None:
+        if verbose:
+            print("Computing activations")
+        acts_by_layer = []
+        for layer in range(model.cfg.n_layers):
+            act_name = get_act_name('resid_post', layer)
+            _, cache = model.run_with_cache(
+                tokens, names_filter=lambda name: name == act_name
+            )
+            embeddings: Int[Tensor, "batch pos d_model"] = cache[act_name]
+            embeddings /= embeddings.norm(dim=-1, keepdim=True)
+            acts = einops.einsum(
+                embeddings.to(device), sentiment_dir.to(device),
+                "batch pos d_model, d_model -> batch pos"
+            )
+            if centred:
+                acts -= acts.mean()
+            acts = einops.rearrange(acts, "batch pos -> pos batch")
+            acts_by_layer.append(acts)
+        activations: Float[Tensor, "pos layer 1"] = torch.stack(acts_by_layer, dim=1)
+    elif centred:
+        if verbose:
+            print("Centering activations")
+        layer_means = einops.reduce(activations, "pos layer 1 -> 1 layer 1", reduction="mean")
+        layer_means = einops.rearrange(layer_means, "1 layer 1 -> pos layer 1", pos=activations.shape[0])
+        activations -= layer_means
+    elif verbose:
+        print("Activations already centered")
+    assert (
+        activations.ndim == 3
+    ), f"activations must be of shape [tokens x layers x neurons], found {activations.shape}"
+    assert len(tokens) == activations.shape[0], (
+        f"tokens and activations must have the same length, found tokens={len(tokens)} and acts={activations.shape[0]}, "
+        f"tokens={tokens}"
+
+    )
     return text_neuron_activations(
-        tokens=model.to_str_tokens(text), 
-        activations=text_activations,
-        # first_dimension_name="Layer",
+        tokens=tokens, 
+        activations=activations,
         second_dimension_name="Model",
-        # first_dimension_labels=["embed_and_mlp0"],
         second_dimension_labels=["gpt2-small"],
     )
 #%%
@@ -176,23 +198,38 @@ class ClearCache:
         gc.collect()
         torch.cuda.empty_cache()
 #%%
-if is_file("sentiment_activations", model):
+if is_file("sentiment_activations.npy", model):
     sentiment_activations = load_array("sentiment_activations", model)
+    sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(sentiment_activations, device=device, dtype=torch.float32)
 else:
     with ClearCache():
-        sentiment_activations = get_activations_from_data(dataloader)
+        sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_data(dataloader)
     save_array(sentiment_activations, "sentiment_activations", model)
 sentiment_activations.shape
 #%%
-def extract_example(batch: int, pos: int, window_size: int = 10):
+def get_window(batch: int, pos: int, window_size: int = 10) -> Tuple[int, int]:
     lb = max(0, pos - window_size)
     ub = min(len(dataloader.dataset[batch]['tokens']), pos + window_size)
-    return model.to_string(dataloader.dataset[batch]['tokens'][lb:ub])
+    return lb, ub
+#%%
+def extract_text_window(batch: int, pos: int, window_size: int = 10) -> List[str]:
+    lb, ub = get_window(batch, pos, window_size)
+    return model.to_str_tokens(dataloader.dataset[batch]['tokens'][lb:ub], prepend_bos=False)
+#%%
+def extract_activations_window(
+    activations: Float[Tensor, "row pos layer"], 
+    batch: int, pos: int, window_size: int = 10,
+) -> Float[Tensor, "pos layer"]:
+    lb, ub = get_window(batch, pos, window_size)
+    return activations[batch, lb:ub, :]
+
 #%%
 def _plot_topk(
-    activations: Float[Tensor, "row pos"], k: int = 10, largest: bool = True
+    all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
+    window_size: int = 10,
 ):
     label = "positive" if largest else "negative"
+    activations = all_activations[:, :, layer]
     topk_pos_indices = torch.topk(activations.flatten(), k=k, largest=largest).indices
     topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the most positive and negative activations
@@ -200,19 +237,35 @@ def _plot_topk(
     topk_pos_activations = [activations[b, s].item() for b, s in topk_pos_indices]
     # Print the  most positive and negative examples and their activations
     print(f"Top {k} most {label} examples:")
-    texts = []
-    for index, example, activation in zip(topk_pos_indices, topk_pos_examples, topk_pos_activations):
+    zeros = torch.zeros((1, all_activations.shape[-1]), device=device, dtype=torch.float32)
+    texts = [model.tokenizer.bos_token]
+    acts = [zeros]
+    text_sep = "\n"
+    topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_activations)
+    for index, example, activation in topk_zip:
         batch, pos = index
         print(f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}")
-        texts.append(extract_example(batch, pos))
-    texts_cat = '\n'.join(texts)
-    display(plot_neuroscope(texts_cat, centred=False))
+        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+        activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
+            all_activations, batch, pos, window_size=window_size
+        )
+        assert len(text_window) == activation_window.shape[0], (
+            f"Initially text window length {len(text_window)} does not match activation window length {activation_window.shape[0]}"
+        )
+        text_window.append(text_sep)
+        activation_window = torch.cat([activation_window, zeros], dim=0)
+        assert len(text_window) == activation_window.shape[0]
+        texts += text_window
+        acts.append(activation_window)
+    acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
+    assert acts_cat.shape[0] == len(texts)
+    display(plot_neuroscope(texts, centred=False, activations=acts_cat, verbose=False))
 #%%
 def plot_topk(activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0):
-   _plot_topk(activations[:, :, layer], k=k, largest=True)
-   _plot_topk(activations[:, :, layer], k=k, largest=False)
+   _plot_topk(activations, layer=layer, k=k, largest=True)
+   _plot_topk(activations, layer=layer, k=k, largest=False)
 # %%
-plot_topk(sentiment_activations, k=50, layer=0)
+# plot_topk(sentiment_activations, k=50, layer=0)
 # %%
 plot_topk(sentiment_activations, k=50, layer=11)
 # %%
