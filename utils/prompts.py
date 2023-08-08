@@ -198,7 +198,7 @@ def get_adjective(adjective_list, index):
     return adjective_list[index % len(adjective_list)]
 
 
-def remove_pythia_double_token_words(model, words: list = None) -> list:
+def remove_pythia_double_token_words(model, words: list = None, verbose=True) -> list:
     """ Removes words that are double tokens in Pythia
     """
     print("Using Pythia model")
@@ -207,8 +207,8 @@ def remove_pythia_double_token_words(model, words: list = None) -> list:
         tkn = model.to_str_tokens(a)
         if len(tkn)==2:
             new_words.append(a)
-
-    print(f"Count of words: {len(words)}")
+    if verbose:
+        print(f"Count of words: {len(words)}")
 
     return new_words
 
