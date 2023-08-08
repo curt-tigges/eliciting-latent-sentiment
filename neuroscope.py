@@ -78,7 +78,7 @@ def plot_neuroscope(
         )
         if verbose:
             print(f"Activations shape: {activations.shape}")
-    elif centred:
+    if centred:
         if verbose:
             print("Centering activations")
         layer_means = einops.reduce(activations, "pos layer 1 -> 1 layer 1", reduction="mean")
@@ -166,6 +166,11 @@ clo_single_tokens = list(set(clo_single_tokens))
 #%%
 clo_text = "\n".join(clo_single_tokens)
 plot_neuroscope(clo_text, centred=True)
+#%%
+# ============================================================================ #
+# Negations
+negation_text = "\nText 1: Please don't plague me with your nonsense. I can't bear it when you do that. You're not a good person. I don't like you. I'm not going to do that. I won't do that. I can't do that. \nText 2: It's not bad at all. You didn't get derailed. You didn't rely on stereotypes. There is no stigma in your words. You are a great writer."
+plot_neuroscope(negation_text, centred=True, verbose=False)
 #%%
 # ============================================================================ #
 # Max activating examples on training data
@@ -284,7 +289,9 @@ def plot_topk(
    _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred)
    _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred)
 # %%
-# plot_topk(sentiment_activations, k=50, layer=0)
+plot_topk(sentiment_activations, k=50, layer=0)
+# %%
+plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
 # %%
 plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
 # %%
