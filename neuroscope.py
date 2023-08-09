@@ -6,11 +6,11 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 import einops
-from jaxtyping import Float, Int
-from typing import List, Tuple, Union
+from jaxtyping import Float, Int, Bool
+from typing import Iterable, List, Tuple, Union
 from transformer_lens import HookedTransformer
 from transformer_lens.evals import make_owt_data_loader
-from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name
+from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name, test_prompt
 from circuitsvis.activations import text_neuron_activations
 from tqdm.notebook import tqdm
 from IPython.display import display
@@ -137,7 +137,15 @@ harry_potter_neuroscope
 #%%
 # ============================================================================ #
 # Prefixes
-
+#%%
+def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
+    single_tokens = []
+    for word in prefixes:
+        if model.to_str_tokens(word, prepend_bos=False)[0] == fragment:
+            single_tokens.append(word)
+    single_tokens = list(set(single_tokens))
+    text = "\n".join(single_tokens)
+    return plot_neuroscope(text, centred=True)
 #%%
 common_words_cr = [
     ' crony', ' crump', ' crinkle', ' craggy', ' cramp', ' crumb', ' crayon', ' cringing', ' cramping'
@@ -166,6 +174,12 @@ clo_single_tokens = list(set(clo_single_tokens))
 #%%
 clo_text = "\n".join(clo_single_tokens)
 plot_neuroscope(clo_text, centred=True)
+#%%
+test_prefixes(
+    " Gri",
+    [' Grieve', ' Grievance', 'Gripen', ],
+    model
+)
 #%%
 # ============================================================================ #
 # Negations
@@ -244,10 +258,21 @@ def extract_activations_window(
 #%%
 def _plot_topk(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
-    window_size: int = 10, centred: bool = True,
+    window_size: int = 10, centred: bool = True, exclusions: Iterable[str] = None,
 ):
     label = "positive" if largest else "negative"
-    activations = all_activations[:, :, layer]
+    activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
+    # create a mask for the exclusions
+    if exclusions is not None:
+        exclusions: Int[Tensor, "words"] = torch.unique(model.to_tokens(exclusions, prepend_bos=False).flatten())
+        masks = []
+        for batch_idx, batch_value in enumerate(dataloader):
+            batch_tokens: Int[Tensor, "batch_size pos 1"] = batch_value['tokens'].to(device).unsqueeze(-1)
+            batch_mask: Bool[Tensor, "batch_size pos"] = torch.any(batch_tokens == exclusions, dim=-1)
+            masks.append(batch_mask)
+        mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
+        assert mask.shape == activations.shape
+        activations[mask] = 0
     topk_pos_indices = torch.topk(activations.flatten(), k=k, largest=largest).indices
     topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the most positive and negative activations
@@ -283,21 +308,23 @@ def _plot_topk(
     acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
     assert acts_cat.shape[0] == len(texts)
     html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
-    save_html(html, f"top_{k}_most_{label}_layer_{layer}_sentiment.html", model)
+    exclusion_suffix = "_w_exclusions" if exclusions is not None else ""
+    file_name = f"top_{k}_most_{label}_layer_{layer}_sentiment{exclusion_suffix}.html"
+    save_html(html, file_name, model)
     display(html)
 #%%
 def plot_topk(
     activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0,
-    window_size: int = 10, centred: bool = True,
+    window_size: int = 10, centred: bool = True, exclusions: Iterable[str] = None,
 ):
-   _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred)
-   _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred)
+   _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred, exclusions=exclusions)
+   _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred, exclusions=exclusions)
 # %%
-plot_topk(sentiment_activations, k=50, layer=0)
-# %%
-plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
-# %%
-plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
+# plot_topk(sentiment_activations, k=50, layer=0)
+# # %%
+# plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
+# # %%
+# plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
 # %%
 # ============================================================================ #
 # Top p sampling
@@ -359,6 +386,117 @@ def plot_top_p(
    _plot_top_p(activations, layer=layer, p=p, k=k, largest=True, window_size=window_size, centred=centred)
    _plot_top_p(activations, layer=layer, p=p, k=k, largest=False, window_size=window_size, centred=centred)
 #%%
-plot_top_p(sentiment_activations, k=50, layer=0, p=0.01)
+# plot_top_p(sentiment_activations, k=50, layer=0, p=0.01)
+#%%
+# ============================================================================ #
+# Exclusions
+#%%
+def expand_exclusions(exclusions: Iterable[str]):
+    expanded_exclusions = []
+    for exclusion in exclusions:
+        exclusion = exclusion.strip().lower()
+        expanded_exclusions.append(exclusion)
+        expanded_exclusions.append(exclusion + " ")
+        expanded_exclusions.append(" " + exclusion)
+        expanded_exclusions.append(" " + exclusion + " ")
+        expanded_exclusions.append(exclusion.capitalize())
+        expanded_exclusions.append(" " + exclusion.capitalize())
+        expanded_exclusions.append(exclusion.capitalize() + " ")
+        expanded_exclusions.append(exclusion.upper())
+        expanded_exclusions.append(" " + exclusion.upper())
+        expanded_exclusions.append(exclusion.upper() + " ")
+    return list(set(expanded_exclusions))
+#%%
+exclusions = [
+    # more interesting ones
+    'adequate', 'truly', 'mis', 'dys', 'provides', 'offers', 'fully', 'Flint', 'migraine', 'stars', 
+    'star', 'really', 'considerable', 'reasonably', 'substantial', 'additional', 'STD', 'Fukushima',
+    'Narcolepsy',
+    # the rest
+    ' perfect', ' fantastic',' marvelous',' good',' remarkable',' wonderful',
+    ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
+    ' amazing',' lovely',' brilliant',' terrific',' superb',' spectacular',' great',
+    ' beautiful'
+    ' dreadful',' bad',' miserable',' horrific',' terrible',
+    ' disgusting',' disastrous',' horrendous',' offensive',' wretched',
+    ' awful',' unpleasant',' horrible',' mediocre',' disappointing',
+    'excellent', 'opportunity', 'success', 'generous', 'harmful', 'plaguing', 'derailed', 'unwanted',
+    'stigma', 'burdened', 'stereotypes', 'hurts', 'burdens', 'harming', 'winning', 'smooth', 
+    'shameful', 'hurting', 'nightmare', 'inflicted', 'disadvantaging', 'stigmatized', 'stigmatizing',
+    'stereotyped', 'forced', 'confidence', 'senseless', 'wrong', 'hurt', 'stereotype', 'sexist',
+    'unnecesarily', 'horribly',  'impressive', 'fraught', 'brute', 'blight',
+    'unnecessary', 'unnecessarily', 'fraught','deleterious', 'scrapped', 'intrusive',
+    'unhealthy', 'plague', 'hated', 'burden', 'vilified', 'afflicted', 'polio', 'inaction',
+    'condemned', 'crippled', 'unrestrained', 'derail', 'cliché', 
+    'toxicity', 'bastard', 'clich', 'politicized', 'overedit', 'curse', 'choked', 'politicize',
+    'frowned', 'sorry', 'slurs', 'taboo', 'bullshit', 'painfully', 'premature', 'worsened',
+    'pathogens', 'Domestic', 'Violence', 'painful',
+    'splendid', 'magnificent', 'beautifully', 'gorgeous', 'nice', 'phenomenal',
+    'finest', 'splendid', 'wonderfully',
+    'ugly', 'dehuman', 'negatively', 'degrading', 'rotten', 'traumatic', 'crying',
+    'criticized', 'dire', 'best', 'exceptionally', 'negative', 'dirty',
+    'rotting','enjoy', 'amazingly', 'brilliantly', 'traumatic', 'hinder', 'hindered',
+    'depressing', 'diseased', 'depressing', 'bleary', 'carcinogenic', 'demoralizing',
+    'traumatizing', 'injustice', 'blemish', 'nausea', 'peeing', 'abhorred', 
+    'appreciate', 'perfectly', 'elegant', 'supreme', 'excellence', 'sufficient', 'toxic', 'hazardous',
+    'muddy', 'hinder', 'derelict', 'disparaged', 'sour', 'disgraced', 'degenerate',
+    'disapproved', 'annoy', 'nicely', 'stellar', 'charming', 'cool', 'handsome', 'exquisite',
+    'sufficient', 'cool', 'brilliance', 'flawless', 'delightful', 'impeccable', 'fascinating',
+    'decent', 'genius', 'appreciated', 'remarkably', 'greatest', 'humiliating', 
+    'embarassing', 'saddening', 'injustice', 'hinders', 'annihilate', 'waste', 'unliked',
+    'stunning', 'glorious', 'deft', 'enjoyed', 'ideal', 'stylish', 'sublime', 'admirable',
+    'embarass', 'injustices', 'disapproval', 'misery', 'sore', 'prejudice', 'disgrace',
+    'messed', 'capable', 'breathtaking', 'suffered', 'poisoned', 'ill', 'unsafe', 
+    'morbid', 'irritated', 'irritable', 'contaiminate', 'derogatory',
+    'prejudging', 'inconvenienced', 'embarrassingly', 'embarrass', 'embarassed', 'embarrassment',
+    'fine', 'better', 'unparalleled', 'astonishing', 'neat', 'embarrassing', 'doom',
+    'inconvenient', 'boring', 'conatiminate', 'contaminated', 'contaminating', 'contaminates',
+    'penalty', 'tarnish', 'disenfranchised', 'disenfranchising', 'disenfranchisement',
+    'super', 'marvel', 'enjoys', 'talented', 'clever', 'enhanced', 'ample',
+    'love', 'expert', 'gifted', 'loved', 'enjoying', 'enjoyable', 'enjoyed', 'enjoyable',
+    'tremendous', 'confident', 'confidently', 'love', 'harms', 'jeapordize', 'jeapordized',
+    'depress', 'penalize', 'penalized', 'penalizes', 'penalizing', 'penalty', 'penalties',
+    'tarred', 'nauseating', 'harms', 'lethality', 'loves', 'unique', 'appreciated', 'appreciates',
+    'appreciating', 'appreciation', 'appreciative', 'appreciates', 'appreciated', 'appreciating',
+    'favorite', 'greatness', 'goodness', 'suitable', 'prowess', 'masterpiece', 'ingenious', 'strong',
+    'versatile', 'well', 'effective', 'scare', 'shaming', 'worse', 'bleak', 'hate', 'tainted',
+    'destructive', 'doomed', 'celebrated', 'gracious', 'worthy', 'interesting', 'coolest', 
+    'intriguing', 'enhance', 'enhances', 'celebrated', 'genuine', 'smoothly', 'greater', 'astounding',
+    'classic', 'successful', 'innovative', 'plenty', 'competent', 'noteworthy', 'treasures',
+    'adore', 'adores', 'adored', 'adoring', 'adorable', 'adoration', 'adore', 'grim',
+    'displeased', 'mismanagement', 'jeopardizes', 'garbage', 'mangle', 'stale',
+    'excel', 'wonders', 'faithful', 'extraordinarily', 'inspired', 'vibrant', 'faithful', 'compelling',
+    'standout', 'exemplary', 'vibrant', 'toxic', 'contaminate', 'antagonistic', 'terminate',
+    'detrimental', 'unpopular', 'fear', 'outdated', 'adept', 'charisma', 'popular', 'popularly',
+    'humiliation', 'sick', 'nasty', 'fatal', 'distress', 'unfavorable', 'foul', 
+    'bureaucratic', 'dying', 'nasty', 'worst', 'destabilising', 'unforgiving', 'vandalized',
+    'polluted', 'poisonous', 'dirt', 'original', 'incredibly', 'invaluable', 'acclaimed',
+    'successfully', 'able', 'reliable', 'loving', 'beauty', 'famous', 'solid', 'rich',
+    'famous', 'thoughtful', 'enhancement', 'sufficiently', 'robust', 'bestselling', 'renowned',
+    'impressed', 'elegence', 'thrilled', 'hostile', 'scar', 'piss', 'danger', 'inflammatory',
+    'diseases', 'disillusion', 'depressive', 'bum', 'disgust', 'aggravates', 'pissy',
+    'dangerous', 'urinary', 'pissing', 'nihilism', 'nihilistic', 'disillusioned', 'depressive', 
+    'dismal', 'trustworthy', 'unjust', 'enthusiastic', 'seamlesslly', 'seamless', 'liked',
+    'enthusiasm', 'superior', 'useful', 'master', 'heavenly', 'enthusiastic', 'effortlessly',
+    'adequately', 'powerful', 'seamlessly', 'dumb', 'dishonors', 'traitor',
+    'bleed', 'invalid', 'horror', 'reprehensible', 'die', 'petty', 'lame', 'fouling', 'foul',
+    'racist', 'elegance', 'top', 'waste', 'wasteful', 'wasted', 'wasting', 'wastes', 'wastefulness',
+    'trample', 'trampled', 'vexing', 'vitriol', 'stangate', 'stagnant', 'stagnate', 'stagnated',
+    'crisis', 'vex', 'corroded', 'sad', 'bitter', 'insults', 'impres', 'cringe', 'humilate', 'humiliates',
+    'humiliated', 'humiliating', 'humiliation', 'humiliations', 'humiliates', 'humiliatingly',
+    'corrosive', 'corrosion', 'corroded', 'corrodes', 'corroding', 'corrosive', 'corrosively',
+    'inhospitable', 'waste', 'wastes', 'wastefulness', 'wasteful', 'wasted', 'wasting',
+    'unintended', 'stressful', 'trash', 'unhappy', 'unhappily', 'unhappiness', 'unhappier',
+    'unholy', 'peril', 'perilous', 'perils', 'perilously', 'perilousness', 'perilousnesses',
+    'faulty', 'damaging', 'damages', 'damaged', 'damagingly', 'damages', 'damaging', 'damaged',
+    'trashy', 'punitive', 'punish', 'punished', 'punishes', 'punishing', 'punishment', 'punishments',
+    'pessimistic', 'pessimism', 'inspiring', 'impress', 'coward', 'tired', 'empty',
+    'trauma', 'torn', 'unease', 'gloomy', 'gloom', 'gloomily', 'gloominess', 'gloomier',
+    'hideous', 'embarrassed', 'wastes', 'wasteful', 'misdemeanour',
+
+]
+exclusions = expand_exclusions(exclusions)
+# %%
+plot_topk(sentiment_activations, k=50, layer=1, exclusions=exclusions)
 #%%
 
