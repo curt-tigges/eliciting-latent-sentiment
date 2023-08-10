@@ -7,14 +7,18 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 import einops
 from jaxtyping import Float, Int, Bool
-from typing import Iterable, List, Tuple, Union
+from typing import Dict, Iterable, List, Tuple, Union
 from transformer_lens import HookedTransformer
 from transformer_lens.evals import make_owt_data_loader
 from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name, test_prompt
 from circuitsvis.activations import text_neuron_activations
 from tqdm.notebook import tqdm
 from IPython.display import display
-from utils.store import load_array, save_html, save_array, is_file
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import os
+from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
@@ -147,39 +151,30 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
     text = "\n".join(single_tokens)
     return plot_neuroscope(text, centred=True)
 #%%
-common_words_cr = [
-    ' crony', ' crump', ' crinkle', ' craggy', ' cramp', ' crumb', ' crayon', ' cringing', ' cramping'
-]
-cr_single_tokens = []
-for word in common_words_cr:
-    if model.to_str_tokens(word, prepend_bos=False)[0] == " cr":
-        # print(word, model.to_str_tokens(word, prepend_bos=False))
-        cr_single_tokens.append(word)
-cr_single_tokens = list(set(cr_single_tokens))
-# cr_single_tokens
+test_prefixes(
+    " cr",
+    [' crony', ' crump', ' crinkle', ' craggy', ' cramp', ' crumb', ' crayon', ' cringing', ' cramping'],
+    model
+)
 #%%
-cr_text = "\n".join(cr_single_tokens)
-plot_neuroscope(cr_text, centred=True)
-#%%
-common_words_clo = [
-    ' clopped', ' cloze', ' cloistered', ' clopping', ' cloacal', ' cloister', ' cloaca',
-]
-clo_single_tokens = []
-for word in common_words_clo:
-    if model.to_str_tokens(word, prepend_bos=False)[0] == " clo":
-        # print(word, model.to_str_tokens(word, prepend_bos=False))
-        clo_single_tokens.append(word)
-clo_single_tokens = list(set(clo_single_tokens))
-# clo_single_tokens
-#%%
-clo_text = "\n".join(clo_single_tokens)
-plot_neuroscope(clo_text, centred=True)
+test_prefixes(
+    " clo",
+    [' clopped', ' cloze', ' cloistered', ' clopping', ' cloacal', ' cloister', ' cloaca',],
+    model
+)
 #%%
 test_prefixes(
     " Gri",
     [' Grieve', ' Grievance', 'Gripen', ],
     model
 )
+test_prefixes(
+    " Tooth",
+    [" Toothpaste", " Toothbrush", " Tooth Fairy", " Toothache", " Toothpick", " Toothless", ],
+    model
+)
+#%%
+model.to_str_tokens(" RUDE")
 #%%
 # ============================================================================ #
 # Negations
@@ -246,7 +241,10 @@ def get_window(batch: int, pos: int, window_size: int = 10) -> Tuple[int, int]:
 #%%
 def extract_text_window(batch: int, pos: int, window_size: int = 10) -> List[str]:
     lb, ub = get_window(batch, pos, window_size)
-    return model.to_str_tokens(dataloader.dataset[batch]['tokens'][lb:ub], prepend_bos=False)
+    tokens = dataloader.dataset[batch]['tokens'][lb:ub]
+    str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
+    # print(tokens, str_tokens)
+    return str_tokens
 #%%
 def extract_activations_window(
     activations: Float[Tensor, "row pos layer"], 
@@ -254,33 +252,37 @@ def extract_activations_window(
 ) -> Float[Tensor, "pos layer"]:
     lb, ub = get_window(batch, pos, window_size)
     return activations[batch, lb:ub, :]
-
+#%%
+def get_batch_pos_mask(tokens: Union[str, List[str], Tensor], all_activations: Float[Tensor, "row pos layer"]):
+    mask_values: Int[Tensor, "words"] = torch.unique(model.to_tokens(tokens, prepend_bos=False).flatten())
+    masks = []
+    for batch_idx, batch_value in enumerate(dataloader):
+        batch_tokens: Int[Tensor, "batch_size pos 1"] = batch_value['tokens'].to(device).unsqueeze(-1)
+        batch_mask: Bool[Tensor, "batch_size pos"] = torch.any(batch_tokens == mask_values, dim=-1)
+        masks.append(batch_mask)
+    mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
+    assert mask.shape == all_activations.shape[:-1]
+    return mask
 #%%
 def _plot_topk(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
     window_size: int = 10, centred: bool = True, exclusions: Iterable[str] = None,
 ):
     label = "positive" if largest else "negative"
+    layers = all_activations.shape[-1]
     activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
     # create a mask for the exclusions
     if exclusions is not None:
-        exclusions: Int[Tensor, "words"] = torch.unique(model.to_tokens(exclusions, prepend_bos=False).flatten())
-        masks = []
-        for batch_idx, batch_value in enumerate(dataloader):
-            batch_tokens: Int[Tensor, "batch_size pos 1"] = batch_value['tokens'].to(device).unsqueeze(-1)
-            batch_mask: Bool[Tensor, "batch_size pos"] = torch.any(batch_tokens == exclusions, dim=-1)
-            masks.append(batch_mask)
-        mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
-        assert mask.shape == activations.shape
-        activations[mask] = 0
-    topk_pos_indices = torch.topk(activations.flatten(), k=k, largest=largest).indices
-    topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), activations.shape)).T.tolist()
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
+        masked_activations = activations.where(~mask, other=torch.tensor(0, device=device, dtype=torch.float32))
+    topk_pos_indices = torch.topk(masked_activations.flatten(), k=k, largest=largest).indices
+    topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), masked_activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the most positive and negative activations
     topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
-    topk_pos_activations = [activations[b, s].item() for b, s in topk_pos_indices]
+    topk_pos_activations = [masked_activations[b, s].item() for b, s in topk_pos_indices]
     # Print the  most positive and negative examples and their activations
     print(f"Top {k} most {label} examples:")
-    zeros = torch.zeros((1, all_activations.shape[-1]), device=device, dtype=torch.float32)
+    zeros = torch.zeros((1, layers), device=device, dtype=torch.float32)
     texts = [model.tokenizer.bos_token]
     text_to_not_repeat = set()
     acts = [zeros]
@@ -409,10 +411,12 @@ def expand_exclusions(exclusions: Iterable[str]):
 #%%
 exclusions = [
     # more interesting ones
-    'adequate', 'truly', 'mis', 'dys', 'provides', 'offers', 'fully', 'Flint', 'migraine', 'stars', 
-    'star', 'really', 'considerable', 'reasonably', 'substantial', 'additional', 'STD', 'Fukushima',
-    'Narcolepsy',
+    'adequate', 'truly', 'mis', 'dys', 'provides', 'offers', 'fully', 'Flint', 'migraine',  
+    'really', 'considerable', 'reasonably', 'substantial', 'additional', 'STD', 'Fukushima',
+    'Narcolepsy', 'Tooth', 'RUDE', 'Diagnostic',
     # the rest
+    'stars', 
+    'star',
     ' perfect', ' fantastic',' marvelous',' good',' remarkable',' wonderful',
     ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
     ' amazing',' lovely',' brilliant',' terrific',' superb',' spectacular',' great',
@@ -492,11 +496,80 @@ exclusions = [
     'trashy', 'punitive', 'punish', 'punished', 'punishes', 'punishing', 'punishment', 'punishments',
     'pessimistic', 'pessimism', 'inspiring', 'impress', 'coward', 'tired', 'empty',
     'trauma', 'torn', 'unease', 'gloomy', 'gloom', 'gloomily', 'gloominess', 'gloomier',
-    'hideous', 'embarrassed', 'wastes', 'wasteful', 'misdemeanour',
+    'hideous', 'embarrassed', 'wastes', 'wasteful', 'misdemeanour', 'nuisance',
+    'dilemma',' dilemmas', 'sewage', 'bogie', 'postponed', 'backward', 'paralyze',
+
 
 ]
 exclusions = expand_exclusions(exclusions)
 # %%
 plot_topk(sentiment_activations, k=50, layer=1, exclusions=exclusions)
 #%%
+def save_text(
+    text: str, 
+    label: str, 
+    model: Union[HookedTransformer, str]
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.txt')
+    with open(path, 'w') as f:
+        f.write(text)
+    return path
 
+# %%
+save_text('\n'.join(exclusions), 'sentiment_exclusions', model)
+#%%
+def plot_histogram(
+    tokens: Union[str, List[str]], 
+    all_activations: Float[Tensor, "row pos layer"], 
+    name: str = None,
+    layer: int = 0, 
+    nbins: int = 100,
+):
+    if name is None:
+        assert isinstance(tokens, str)
+        name = tokens
+    assert isinstance(name, str)
+    activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
+    mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(tokens, all_activations)
+    assert mask.shape == activations.shape
+    activations_to_plot = activations[mask].flatten()
+    fig = go.Histogram(x=activations_to_plot.cpu().numpy(), nbinsx=nbins, name=name)
+    return fig
+#%%
+def plot_histograms(
+    tokens: Dict[str, List[str]], all_activations: Float[Tensor, "row pos layer"], layer: int = 0,
+    nbins: int = 100,
+):
+    fig = make_subplots(rows=len(tokens), cols=1, shared_xaxes=True, shared_yaxes=True)
+    for idx, (name, token) in enumerate(tokens.items()):
+        hist = plot_histogram(token, all_activations, name, layer, nbins)
+        fig.add_trace(hist, row=idx+1, col=1)
+    fig.update_layout(
+        title_text=f"Layer {layer} resid_pre sentiment cosine sims",
+    )
+    return fig
+# %%
+pos_list = [
+    " amazing", " great", " excellent", " good", " wonderful", " fantastic", " awesome", 
+    " nice", " superb", " perfect", " incredible", " beautiful"
+]
+neg_list = [
+    " terrible", " bad", " awful", " horrible", " disgusting", " awful", 
+    " evil", " scary",
+]
+pos_neg_dict = {
+    "positive": pos_list,
+    "negative": neg_list,
+}
+plot_histograms(
+    pos_neg_dict, 
+    all_activations=sentiment_activations, 
+    layer=1, 
+    nbins=100,
+)
+# %%
