@@ -254,7 +254,7 @@ def extract_activations_window(
     lb, ub = get_window(batch, pos, window_size)
     return activations[batch, lb:ub, :]
 #%%
-def get_batch_pos_mask(tokens: Union[str, List[str], Tensor], all_activations: Float[Tensor, "row pos layer"]):
+def get_batch_pos_mask(tokens: Union[str, List[str], Tensor], activations: Float[Tensor, "row pos"] = None):
     mask_values: Int[Tensor, "words"] = torch.unique(model.to_tokens(tokens, prepend_bos=False).flatten())
     masks = []
     for batch_idx, batch_value in enumerate(dataloader):
@@ -262,16 +262,20 @@ def get_batch_pos_mask(tokens: Union[str, List[str], Tensor], all_activations: F
         batch_mask: Bool[Tensor, "batch_size pos"] = torch.any(batch_tokens == mask_values, dim=-1)
         masks.append(batch_mask)
     mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
-    assert mask.shape == all_activations.shape[:-1]
+    if activations is not None:
+        assert mask.shape == activations.shape
     return mask
 #%%
 def _plot_topk(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
     window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
+    verbose: bool = False,
 ):
     assert not (inclusions is not None and exclusions is not None)
     label = "positive" if largest else "negative"
     layers = all_activations.shape[-1]
+    if verbose:
+        print(f"Plotting top {k} {label} examples for layer {layer}")
     activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
     if largest:
         ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
@@ -283,10 +287,17 @@ def _plot_topk(
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
+        assert mask.sum() >= k, (
+            f"Only {mask.sum()} positions match the inclusions, but {k} are required"
+        )
+        if verbose:
+            print(f"Including {mask.sum()} positions")
         masked_activations = activations.where(mask, other=ignore_value)
     else:
         masked_activations = activations
-    topk_pos_indices = torch.topk(masked_activations.flatten(), k=k, largest=largest).indices
+    top_k_return = torch.topk(masked_activations.flatten(), k=k, largest=largest)
+    assert torch.isfinite(top_k_return.values).all()
+    topk_pos_indices = top_k_return.indices
     topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), masked_activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the most positive and negative activations
     topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
@@ -300,6 +311,11 @@ def _plot_topk(
     text_sep = "\n"
     topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_activations)
     for index, example, activation in topk_zip:
+        example_str = model.to_string(example)
+        if inclusions is not None:
+            assert example_str in inclusions, f"Example {example_str} not in inclusions {inclusions}"
+        if exclusions is not None:
+            assert example_str not in exclusions, f"Example {example_str} in exclusions {exclusions}"
         batch, pos = index
         text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
@@ -328,10 +344,20 @@ def _plot_topk(
 #%%
 def plot_topk(
     activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0,
-    window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
+    window_size: int = 10, centred: bool = True, 
+    inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
+    verbose: bool = False,
 ):
-   _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
-   _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
+   _plot_topk(
+       activations, layer=layer, k=k, largest=True, 
+       window_size=window_size, centred=centred, 
+       inclusions=inclusions, exclusions=exclusions, verbose=verbose
+    )
+   _plot_topk(
+       activations, layer=layer, k=k, largest=False, 
+       window_size=window_size, centred=centred, 
+       inclusions=inclusions, exclusions=exclusions, verbose=verbose
+    )
 # %%
 # plot_topk(sentiment_activations, k=50, layer=0)
 # # %%
@@ -626,27 +652,45 @@ pos_neg_dict = {
 #%%
 def plot_top_mean_variance(
     all_activations: Float[Tensor, "row pos layer"], layer: int, model: HookedTransformer, k: int = 10, 
+    min_count: int = 10,
 ):
     activations: Float[pd.Series, "batch_and_pos"] = pd.Series(all_activations[:, :, layer].flatten().cpu().numpy())
     tokens: Int[pd.DataFrame, "batch_and_pos"] = dataloader.dataset.data.to_pandas().tokens.explode(ignore_index=True)
+    counts = tokens.value_counts()
     means = activations.groupby(tokens).mean()
     std_devs = activations.groupby(tokens).std()
-    means_top_and_bottom = pd.concat([means.sort_values().head(k), means.sort_values().tail(k)]).reset_index()
+    means = means[counts >= min_count].dropna().sort_values()
+    std_devs = std_devs[counts >= min_count].dropna().sort_values()
+    means_top_and_bottom = pd.concat([means.head(k), means.tail(k)]).reset_index()
     means_top_and_bottom['valence'] = ["negative"] * k + ["positive"] * k
     means_top_and_bottom.columns = ['token', 'mean', 'valence']
-    means_top_and_bottom.token = model.to_str_tokens(torch.tensor(means_top_and_bottom.token))
+    means_top_and_bottom.token = [
+        f"{i}: {tok}" 
+        for i, tok in zip(
+            means_top_and_bottom.token, 
+            model.to_str_tokens(torch.tensor(means_top_and_bottom.token))
+        )
+    ]
     px.bar(data_frame=means_top_and_bottom, x='token', y='mean', color='valence').show()
-    std_devs_top_and_bottom = pd.concat([std_devs.dropna().sort_values().head(k), std_devs.dropna().sort_values().tail(k)]).reset_index()
+    std_devs_top_and_bottom = pd.concat([std_devs.head(k), std_devs.tail(k)]).reset_index()
     std_devs_top_and_bottom['variation'] = ["consistent"] * k + ["variable"] * k
     std_devs_top_and_bottom.columns = ['token', 'std_dev', 'variation']
-    std_devs_top_and_bottom.token = model.to_str_tokens(torch.tensor(std_devs_top_and_bottom.token))
+    std_devs_top_and_bottom.token = [
+        f"{i}: {tok}" 
+        for i, tok in zip(
+            std_devs_top_and_bottom.token, 
+            model.to_str_tokens(torch.tensor(std_devs_top_and_bottom.token))
+        )
+    ]
     px.bar(data_frame=std_devs_top_and_bottom, x='token', y='std_dev', color='variation').show()
 
 # %%
 plot_top_mean_variance(sentiment_activations, layer=1, model=model, k=10)
 # %%
-
+# "igmat", "inyl", "urrencies", "plugins", " agric"
+plot_topk(sentiment_activations, k=10, layer=1, inclusions=["ression"])
 #%%
+# "igmat" because of "estigmatiza" (stigmatize) and "destigamize"
 
 #%%
 # %%
