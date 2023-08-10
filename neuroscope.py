@@ -276,7 +276,7 @@ def _plot_topk(
         ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
     else:
         ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
-    # create a mask for the exclusions
+    # create a mask for the inclusions/exclusions
     if exclusions is not None:
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
         masked_activations = activations.where(~mask, other=ignore_value)
@@ -344,17 +344,32 @@ def plot_topk(
 #%%
 def _plot_top_p(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, p: float = 0.1, k: int = 10, largest: bool = True,
-    window_size: int = 10, centred: bool = True,
+    window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
 ):
+    assert not (inclusions is not None and exclusions is not None)
     label = "positive" if largest else "negative"
     activations: Float[Tensor, "batch pos"] = all_activations[:, :, layer]
-    activations_flat: Float[Tensor, "(batch pos)"] = activations.flatten()
+    if largest:
+        ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
+    else:
+        ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
+    # create a mask for the inclusions/exclusions
+    if exclusions is not None:
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
+        masked_activations = activations.where(~mask, other=ignore_value)
+    elif inclusions is not None:
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
+        masked_activations = activations.where(mask, other=ignore_value)
+    else:
+        masked_activations = activations
+
+    activations_flat: Float[Tensor, "(batch pos)"] = masked_activations.flatten()
     sample_size = int(p * len(activations_flat))
     top_p_indices = torch.topk(activations_flat, k=sample_size, largest=largest).indices
     sampled_indices = top_p_indices[torch.randperm(sample_size)[:k]]
-    top_p_indices = np.array(np.unravel_index(sampled_indices.cpu().numpy(), activations.shape)).T.tolist()
+    top_p_indices = np.array(np.unravel_index(sampled_indices.cpu().numpy(), masked_activations.shape)).T.tolist()
     top_p_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in top_p_indices]
-    top_p_activations = [activations[b, s].item() for b, s in top_p_indices]
+    top_p_activations = [masked_activations[b, s].item() for b, s in top_p_indices]
     # Print the  most positive and negative examples and their activations
     print(f"Top {k} most {label} examples:")
     zeros = torch.zeros((1, all_activations.shape[-1]), device=device, dtype=torch.float32)
@@ -393,12 +408,12 @@ def _plot_top_p(
 #%%
 def plot_top_p(
     activations: Float[Tensor, "row pos layer"], k: int = 10, p: float = 0.1, layer: int = 0,
-    window_size: int = 10, centred: bool = True,
+    window_size: int = 10, centred: bool = True,  inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
 ):
-   _plot_top_p(activations, layer=layer, p=p, k=k, largest=True, window_size=window_size, centred=centred)
-   _plot_top_p(activations, layer=layer, p=p, k=k, largest=False, window_size=window_size, centred=centred)
+   _plot_top_p(activations, layer=layer, p=p, k=k, largest=True, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
+   _plot_top_p(activations, layer=layer, p=p, k=k, largest=False, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
 #%%
-# plot_top_p(sentiment_activations, k=50, layer=0, p=0.01)
+# plot_top_p(sentiment_activations, k=50, layer=1, p=0.01)
 #%%
 # ============================================================================ #
 # Exclusions
@@ -420,13 +435,16 @@ def expand_exclusions(exclusions: Iterable[str]):
     return list(set(expanded_exclusions))
 #%%
 exclusions = [
+    # worth investigating?
+    # ' Trek', ' Yorkshire', 'Puerto', 'Celsius', 'Linux', 'Reuters', 'Romania', 'Gary',
     # more interesting ones
     'adequate', 'truly', 'mis', 'dys', 'provides', 'offers', 'fully', 'Flint', 'migraine',  
     'really', 'considerable', 'reasonably', 'substantial', 'additional', 'STD', 'Fukushima',
-    'Narcolepsy', 'Tooth', 'RUDE', 'Diagnostic',
+    'Narcolepsy', 'Tooth', 'RUDE', 'Diagnostic', 'Kissinger', '!', 'Obama', 'Assad', 'Gaza',
+    'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
+    'agoraphobia', 'greenhouse', 'DoS', 'Medicaid', 
     # the rest
-    'stars', 
-    'star',
+    'stars', 'star',
     ' perfect', ' fantastic',' marvelous',' good',' remarkable',' wonderful',
     ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
     ' amazing',' lovely',' brilliant',' terrific',' superb',' spectacular',' great',
@@ -508,14 +526,35 @@ exclusions = [
     'trauma', 'torn', 'unease', 'gloomy', 'gloom', 'gloomily', 'gloominess', 'gloomier',
     'hideous', 'embarrassed', 'wastes', 'wasteful', 'misdemeanour', 'nuisance',
     'dilemma',' dilemmas', 'sewage', 'bogie', 'postponed', 'backward', 'paralyze',
+    'very', 'special', 'important', 'more', 'nervous', 'awkward', 'problem', 'pain', 'loss',
+    'melancholy', 'dismissing', 'complain', 'stomp', 'terrorist', 'racism', 'criminal',
+    'colder', 'nuclear', 'divided', 'death', 'chlorine', 'illegal', 'risks',
+    'prisons', 'villain', 'incinerate', 'dead', 'lonely', 'mistakes', 'biased', 'illicit',
+    'defeat', 'lose', 'unbearable', 'presure', 'desperation', 
+    'osteoarthritis', 'Medicating', 'Medications', 'Medication', 'depressed', 'crimes',
+    'suck', 'hemorrhage', 'crap', 'dull', 'headaches', 'turbulent', 'intolerant',
+    'vulnerable', 'insignificant', 'insignificance', 'blame', 'Lie', 'jail', 'abuse',
+    'reputable', 'slave', 'harm', 'died', 'viruses', 'homeless', 'blind', 'mistake',
+    'war', 'accident', 'incidents', 'radiation', 'cursed', 'scorn', 'deaths', 'slow',
+    'crashing', 'warning', 'hypocritical', 'hypocrisy', 'problems', 'disappointment',
+    'blood', 'slut', 'skewer', 'vaguely', 'riots', 'unclear', 'charm', 'disease', 'creepy',
+    'burning', 'lack', 'guilty', 'glaring', 'failed', 'indoctrination', 'incoherent',
+    'hospital', 'syphilis', 'guilty', 'infection', 'faux', 'burning', 'creepy',
+    'disease', 'welts', 'trojans', 'trojan', 'makeshift', 'cant', 
 
 
 ]
 exclusions = expand_exclusions(exclusions)
 # %%
+plot_top_p(sentiment_activations, p=.02, k=50, layer=1, exclusions=exclusions)
+# %%
 # plot_topk(sentiment_activations, k=50, layer=1, exclusions=exclusions)
 # %%
 save_text('\n'.join(exclusions), 'sentiment_exclusions', model)
+#%%
+# ============================================================================ #
+# Histograms
+
 #%%
 def plot_histogram(
     tokens: Union[str, List[str]], 
@@ -545,6 +584,7 @@ def plot_histograms(
         fig.add_trace(hist, row=idx+1, col=1)
     fig.update_layout(
         title_text=f"Layer {layer} resid_pre sentiment cosine sims",
+        height=100 * (idx + 1)
     )
     return fig
 # %%
@@ -559,6 +599,15 @@ neg_list = [
 pos_neg_dict = {
     "positive": pos_list,
     "negative": neg_list,
+    "surprising_proper_nouns": [" Trek", " Yorkshire", " Linux", " Reuters"],
+    "trek": [" Trek"],
+    "yorkshire": [" Yorkshire"],
+    "linux": [" Linux"],
+    "reuters": [" Reuters"],
+    "first_names": [" John", " Mary", " Bob", " Alice"],
+    "places": [" London", " Paris", " Tokyo"],
+    # "exclamation_mark": ["!"],
+    # "other_punctuation": [".", ",", "?", ":", ";"],
 }
 plot_histograms(
     pos_neg_dict, 
@@ -567,5 +616,8 @@ plot_histograms(
     nbins=100,
 )
 # %%
-plot_topk(sentiment_activations, k=50, layer=1, inclusions=neg_list)
+# plot_topk(sentiment_activations, k=50, layer=1, inclusions=neg_list)
 # %%
+# plot_topk(sentiment_activations, k=50, layer=1, inclusions=[".", ",", "?", ":", ";"])
+# %%
+plot_topk(sentiment_activations, k=50, layer=1, inclusions=[".", ",", "?", ":", ";"])
