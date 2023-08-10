@@ -135,10 +135,42 @@ harry_potter_start = """
 """
 #%%
 harry_potter_neuroscope = plot_neuroscope(harry_potter_start, centred=True, verbose=False)
-#%%
 save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-#%%
 harry_potter_neuroscope
+#%%
+# ============================================================================ #
+# Harry Potter in French
+harry_potter_fr_start = """
+Mr et Mrs Dursley, qui habitaient au 4, Privet Drive, avaient toujours affirmé avec la plus grande
+fierté qu'ils étaient parfaitement normaux, merci pour eux. Jamais quiconque n'aurait imaginé qu'ils
+puissent se trouver impliqués dans quoi que ce soit d'étrange ou de mystérieux. Ils n'avaient pas de
+temps à perdre avec des sornettes.
+Mr Dursley dirigeait la Grunnings, une entreprise qui fabriquait des perceuses. C'était un homme
+grand et massif, qui n'avait pratiquement pas de cou, mais possédait en revanche une moustache de
+belle taille. Mrs Dursley, quant à elle, était mince et blonde et disposait d'un cou deux fois plus long
+que la moyenne, ce qui lui était fort utile pour espionner ses voisins en regardant par-dessus les
+clôtures des jardins. Les Dursley avaient un petit garçon prénommé Dudley et c'était à leurs yeux le
+plus bel enfant du monde.
+Les Dursley avaient tout ce qu'ils voulaient. La seule chose indésirable qu'ils possédaient, c'était un
+secret dont ils craignaient plus que tout qu'on le découvre un jour. Si jamais quiconque venait à
+entendre parler des Potter, ils étaient convaincus qu'ils ne s'en remettraient pas. Mrs Potter était la
+soeur de Mrs Dursley, mais toutes deux ne s'étaient plus revues depuis des années. En fait, Mrs
+Dursley faisait comme si elle était fille unique, car sa soeur et son bon à rien de mari étaient aussi
+éloignés que possible de tout ce qui faisait un Dursley. Les Dursley tremblaient d'épouvante à la
+pensée de ce que diraient les voisins si par malheur les Potter se montraient dans leur rue. Ils savaient
+que les Potter, eux aussi, avaient un petit garçon, mais ils ne l'avaient jamais vu. Son existence
+constituait une raison supplémentaire de tenir les Potter à distance: il n'était pas question que le petit
+Dudley se mette à fréquenter un enfant comme celui-là.
+Lorsque Mr et Mrs Dursley s'éveillèrent, au matin du mardi où commence cette histoire, il faisait gris
+et triste et rien dans le ciel nuageux ne laissait prévoir que des choses étranges et mystérieuses allaient
+bientôt se produire dans tout le pays. Mr Dursley fredonnait un air en nouant sa cravate la plus sinistre
+pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potins du quartier en
+s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses
+poumons.
+"""
+harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, centred=True, verbose=False)
+save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+harry_potter_fr_neuroscope
 #%%
 # ============================================================================ #
 # Prefixes
@@ -164,23 +196,32 @@ test_prefixes(
     model
 )
 #%%
-test_prefixes(
-    " Gri",
-    [' Grieve', ' Grievance', 'Gripen', ],
-    model
-)
-test_prefixes(
-    " Tooth",
-    [" Toothpaste", " Toothbrush", " Tooth Fairy", " Toothache", " Toothpick", " Toothless", ],
-    model
-)
-#%%
-model.to_str_tokens(" RUDE")
-#%%
 # ============================================================================ #
 # Negations
-negating_positive_text = "Here are my honest thoughts. You're not a good person. I don't like you. I hope that you don't succeed."
-plot_neuroscope(negating_positive_text, centred=True, verbose=False)
+#%%
+# negating_positive_text = "Here are my honest thoughts. You're not a good person. I don't like you. I hope that you don't succeed."
+# plot_neuroscope(negating_positive_text, centred=True, verbose=False)
+#%%
+negating_negative_text = "Here are my honest thoughts. You never fail. You're not bad at all. "
+plot_neuroscope(negating_negative_text, centred=True, verbose=False)
+#%%
+# negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
+# plot_neuroscope(negating_weird_text, centred=True, verbose=False)
+#%%
+multi_token_negative_text = """
+Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
+
+From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
+
+Regrettably, the characters, ostensibly intended to be the vessels through which the audience navigates the tumultuous currents of historical transformation, emerge as little more than hollow archetypes, devoid of psychological nuance or relatable verisimilitude. Their interactions, laden with stilted dialogues and ponderous monologues, meander aimlessly in the midst of a ponderous expanse, rendering their ostensibly profound endeavors an exercise in vapid verbosity rather than poignant engagement.
+
+The directorial predilection for intellectual acrobatics is manifest in the labyrinthine structure of the narrative, wherein chronology becomes a malleable construct, flitting whimsically between past and present without discernible rhyme or reason. While this narrative elasticity might have been wielded as a potent tool of thematic resonance, it instead metastasizes into an obfuscating force that imparts a sense of disjointed incoherence upon the cinematic proceedings, leaving the viewer to grapple with a puzzling tapestry of events that resist cohesive assimilation.
+
+Moreover, the fervent desire to imbue the proceedings with a veneer of intellectual profundity is acutely palpable within the film's verbiage-laden script. Dialogue, often comprising polysyllabic words of labyrinthine complexity, becomes an exercise in linguistic gymnastics that strays perilously close to the precipice of unintentional self-parody. This quixotic dalliance with ostentatious vocabulary serves only to erect an insurmountable barrier between the audience and the narrative, relegating the viewer to a state of befuddled detachment.
+
+In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
+"""
+plot_neuroscope(multi_token_negative_text, centred=True, verbose=False)
 #%%
 # ============================================================================ #
 # Openwebtext-10k
@@ -313,9 +354,9 @@ def _plot_topk(
     for index, example, activation in topk_zip:
         example_str = model.to_string(example)
         if inclusions is not None:
-            assert example_str in inclusions, f"Example {example_str} not in inclusions {inclusions}"
+            assert example_str in inclusions, f"Example '{example_str}' not in inclusions {inclusions}"
         if exclusions is not None:
-            assert example_str not in exclusions, f"Example {example_str} in exclusions {exclusions}"
+            assert example_str not in exclusions, f"Example '{example_str}' in exclusions {exclusions}"
         batch, pos = index
         text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
@@ -650,47 +691,66 @@ pos_neg_dict = {
 # ============================================================================ #
 # Means and variances
 #%%
-def plot_top_mean_variance(
-    all_activations: Float[Tensor, "row pos layer"], layer: int, model: HookedTransformer, k: int = 10, 
-    min_count: int = 10,
+def compute_mean_variance(
+    all_activations: Float[Tensor, "row pos layer"], layer: int, model: HookedTransformer,
 ):
     activations: Float[pd.Series, "batch_and_pos"] = pd.Series(all_activations[:, :, layer].flatten().cpu().numpy())
     tokens: Int[pd.DataFrame, "batch_and_pos"] = dataloader.dataset.data.to_pandas().tokens.explode(ignore_index=True)
     counts = tokens.value_counts()
     means = activations.groupby(tokens).mean()
     std_devs = activations.groupby(tokens).std()
+    return counts, means, std_devs
+#%%
+token_counts, token_means, token_std_devs = compute_mean_variance(sentiment_activations, 1, model)
+#%%
+def plot_top_mean_variance(
+    counts: pd.Series, means: pd.Series, std_devs: pd.Series, model: HookedTransformer, k: int = 10, 
+    min_count: int = 10,
+):
     means = means[counts >= min_count].dropna().sort_values()
     std_devs = std_devs[counts >= min_count].dropna().sort_values()
     means_top_and_bottom = pd.concat([means.head(k), means.tail(k)]).reset_index()
     means_top_and_bottom['valence'] = ["negative"] * k + ["positive"] * k
     means_top_and_bottom.columns = ['token', 'mean', 'valence']
     means_top_and_bottom.token = [
-        f"{i}: {tok}" 
+        f"{i}:{tok}" 
         for i, tok in zip(
             means_top_and_bottom.token, 
             model.to_str_tokens(torch.tensor(means_top_and_bottom.token))
         )
     ]
-    px.bar(data_frame=means_top_and_bottom, x='token', y='mean', color='valence').show()
+    fig = px.bar(data_frame=means_top_and_bottom, x='token', y='mean', color='valence')
+    fig.update_layout(title_text="Most extreme means", title_x=0.5)
+    fig.show()
     std_devs_top_and_bottom = pd.concat([std_devs.head(k), std_devs.tail(k)]).reset_index()
     std_devs_top_and_bottom['variation'] = ["consistent"] * k + ["variable"] * k
     std_devs_top_and_bottom.columns = ['token', 'std_dev', 'variation']
     std_devs_top_and_bottom.token = [
-        f"{i}: {tok}" 
+        f"{i}:{tok}" 
         for i, tok in zip(
             std_devs_top_and_bottom.token, 
             model.to_str_tokens(torch.tensor(std_devs_top_and_bottom.token))
         )
     ]
-    px.bar(data_frame=std_devs_top_and_bottom, x='token', y='std_dev', color='variation').show()
+    fig = px.bar(data_frame=std_devs_top_and_bottom, x='token', y='std_dev', color='variation')
+    fig.update_layout(title_text="Most extreme standard deviations", title_x=0.5)
+    fig.show()
 
 # %%
-plot_top_mean_variance(sentiment_activations, layer=1, model=model, k=10)
+plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
 # %%
-# "igmat", "inyl", "urrencies", "plugins", " agric"
-plot_topk(sentiment_activations, k=10, layer=1, inclusions=["ression"])
+plot_topk(sentiment_activations, k=10, layer=1, inclusions=[" Yorkshire"], window_size=20)
 #%%
-# "igmat" because of "estigmatiza" (stigmatize) and "destigamize"
+# "ression" as in "impression" vs. "aggression", "repression"
+# 'leasing' as in 'releasing' vs. 'subleasing'
+# 'ciplinary' as in 'multidisciplinary' vs. 'disciplinary'
+# 'rieved': 'grieved' is more negative than 'aggrieved'
+# 'byte': 'overbyte' vs. 'byte'
+# 'risons: 'Comparisons' vs. 'Prisons'
+# 'Ds': 'TZDs' (diabetes drug) vs. 'STDs'
+# 'ested': 'attested' vs. 'molested'
+# ' Hare' as in ' Hare Krishna vs. ' Harem'
+# ' Toro' as in ' Guillermo del Toro' vs ' Toro Rosso'
 
 #%%
 # %%
