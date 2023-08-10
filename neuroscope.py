@@ -18,7 +18,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
-from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label
+from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
@@ -266,15 +266,25 @@ def get_batch_pos_mask(tokens: Union[str, List[str], Tensor], all_activations: F
 #%%
 def _plot_topk(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
-    window_size: int = 10, centred: bool = True, exclusions: Iterable[str] = None,
+    window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
 ):
+    assert not (inclusions is not None and exclusions is not None)
     label = "positive" if largest else "negative"
     layers = all_activations.shape[-1]
     activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
+    if largest:
+        ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
+    else:
+        ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
     # create a mask for the exclusions
     if exclusions is not None:
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
-        masked_activations = activations.where(~mask, other=torch.tensor(0, device=device, dtype=torch.float32))
+        masked_activations = activations.where(~mask, other=ignore_value)
+    elif inclusions is not None:
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
+        masked_activations = activations.where(mask, other=ignore_value)
+    else:
+        masked_activations = activations
     topk_pos_indices = torch.topk(masked_activations.flatten(), k=k, largest=largest).indices
     topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), masked_activations.shape)).T.tolist()
     # Get the examples and their activations corresponding to the most positive and negative activations
@@ -317,10 +327,10 @@ def _plot_topk(
 #%%
 def plot_topk(
     activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0,
-    window_size: int = 10, centred: bool = True, exclusions: Iterable[str] = None,
+    window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
 ):
-   _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred, exclusions=exclusions)
-   _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred, exclusions=exclusions)
+   _plot_topk(activations, layer=layer, k=k, largest=True, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
+   _plot_topk(activations, layer=layer, k=k, largest=False, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
 # %%
 # plot_topk(sentiment_activations, k=50, layer=0)
 # # %%
@@ -503,23 +513,7 @@ exclusions = [
 ]
 exclusions = expand_exclusions(exclusions)
 # %%
-plot_topk(sentiment_activations, k=50, layer=1, exclusions=exclusions)
-#%%
-def save_text(
-    text: str, 
-    label: str, 
-    model: Union[HookedTransformer, str]
-):
-    model: str = get_model_name(model)
-    label = clean_label(label)
-    model_path = os.path.join('data', model)
-    if not os.path.exists(model_path):
-        os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.txt')
-    with open(path, 'w') as f:
-        f.write(text)
-    return path
-
+# plot_topk(sentiment_activations, k=50, layer=1, exclusions=exclusions)
 # %%
 save_text('\n'.join(exclusions), 'sentiment_exclusions', model)
 #%%
@@ -572,4 +566,6 @@ plot_histograms(
     layer=1, 
     nbins=100,
 )
+# %%
+plot_topk(sentiment_activations, k=50, layer=1, inclusions=neg_list)
 # %%
