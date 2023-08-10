@@ -18,6 +18,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
+import pandas as pd
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text
 #%%
 torch.set_grad_enabled(False)
@@ -178,8 +179,8 @@ model.to_str_tokens(" RUDE")
 #%%
 # ============================================================================ #
 # Negations
-negation_text = "\nText 1: Please don't plague me with your nonsense. I can't bear it when you do that. You're not a good person. I don't like you. I'm not going to do that. I won't do that. I can't do that. \nText 2: It's not bad at all. You didn't get derailed. You didn't rely on stereotypes. There is no stigma in your words. You are a great writer."
-plot_neuroscope(negation_text, centred=True, verbose=False)
+negating_positive_text = "Here are my honest thoughts. You're not a good person. I don't like you. I hope that you don't succeed."
+plot_neuroscope(negating_positive_text, centred=True, verbose=False)
 #%%
 # ============================================================================ #
 # Openwebtext-10k
@@ -609,15 +610,43 @@ pos_neg_dict = {
     # "exclamation_mark": ["!"],
     # "other_punctuation": [".", ",", "?", ":", ";"],
 }
-plot_histograms(
-    pos_neg_dict, 
-    all_activations=sentiment_activations, 
-    layer=1, 
-    nbins=100,
-)
+# plot_histograms(
+#     pos_neg_dict, 
+#     all_activations=sentiment_activations, 
+#     layer=1, 
+#     nbins=100,
+# )
 # %%
 # plot_topk(sentiment_activations, k=50, layer=1, inclusions=neg_list)
 # %%
 # plot_topk(sentiment_activations, k=50, layer=1, inclusions=[".", ",", "?", ":", ";"])
+#%%
+# ============================================================================ #
+# Means and variances
+#%%
+def plot_top_mean_variance(
+    all_activations: Float[Tensor, "row pos layer"], layer: int, model: HookedTransformer, k: int = 10, 
+):
+    activations: Float[pd.Series, "batch_and_pos"] = pd.Series(all_activations[:, :, layer].flatten().cpu().numpy())
+    tokens: Int[pd.DataFrame, "batch_and_pos"] = dataloader.dataset.data.to_pandas().tokens.explode(ignore_index=True)
+    means = activations.groupby(tokens).mean()
+    std_devs = activations.groupby(tokens).std()
+    means_top_and_bottom = pd.concat([means.sort_values().head(k), means.sort_values().tail(k)]).reset_index()
+    means_top_and_bottom['valence'] = ["negative"] * k + ["positive"] * k
+    means_top_and_bottom.columns = ['token', 'mean', 'valence']
+    means_top_and_bottom.token = model.to_str_tokens(torch.tensor(means_top_and_bottom.token))
+    px.bar(data_frame=means_top_and_bottom, x='token', y='mean', color='valence').show()
+    std_devs_top_and_bottom = pd.concat([std_devs.dropna().sort_values().head(k), std_devs.dropna().sort_values().tail(k)]).reset_index()
+    std_devs_top_and_bottom['variation'] = ["consistent"] * k + ["variable"] * k
+    std_devs_top_and_bottom.columns = ['token', 'std_dev', 'variation']
+    std_devs_top_and_bottom.token = model.to_str_tokens(torch.tensor(std_devs_top_and_bottom.token))
+    px.bar(data_frame=std_devs_top_and_bottom, x='token', y='std_dev', color='variation').show()
+
 # %%
-plot_topk(sentiment_activations, k=50, layer=1, inclusions=[".", ",", "?", ":", ";"])
+plot_top_mean_variance(sentiment_activations, layer=1, model=model, k=10)
+# %%
+
+#%%
+
+#%%
+# %%
