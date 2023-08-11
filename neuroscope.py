@@ -1,4 +1,6 @@
 #%%
+from functools import partial
+import itertools
 import gc
 import numpy as np
 import torch
@@ -11,6 +13,7 @@ from typing import Dict, Iterable, List, Tuple, Union
 from transformer_lens import HookedTransformer
 from transformer_lens.evals import make_owt_data_loader
 from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name, test_prompt
+from transformer_lens.hook_points import HookPoint
 from circuitsvis.activations import text_neuron_activations
 from tqdm.notebook import tqdm
 from IPython.display import display
@@ -173,6 +176,95 @@ save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
 harry_potter_fr_neuroscope
 #%%
 # ============================================================================ #
+# Steering and generating
+#%%
+def steering_hook(
+    input: Float[Tensor, "batch pos d_model"], hook: HookPoint, coef: float, direction: Float[Tensor, "d_model"]
+):
+    assert 'resid_post' in hook.name
+    input += coef * direction
+    return input
+#%%
+def steer_and_test_prompt(
+    coef: float,
+    direction: Float[Tensor, "d_model"],
+    prompt: str,
+    answer: str,
+    model: HookedTransformer,
+    prepend_space_to_answer: bool = True,
+):
+    model.reset_hooks()
+    hook = partial(steering_hook, coef=coef, direction=direction)
+    model.add_hook(
+        get_act_name("resid_post", 0),
+        hook,
+        dir="fwd",
+    )
+    test_prompt(prompt, answer, model, prepend_space_to_answer=prepend_space_to_answer)
+    model.reset_hooks()
+#%%
+def steer_and_generate(
+    coef: float,
+    direction: Float[Tensor, "d_model"],
+    prompt: str,
+    model: HookedTransformer,
+    **kwargs,
+) -> str:
+    model.reset_hooks()
+    hook = partial(steering_hook, coef=coef, direction=direction)
+    model.add_hook(
+        get_act_name("resid_post", 0),
+        hook,
+        dir="fwd",
+    )
+    input = model.to_tokens(prompt)
+    output = model.generate(input, **kwargs)
+    model.reset_hooks()
+    return model.to_string(output)[0]
+#%%
+def run_steering_search(
+    coefs: Iterable[int], samples: int, sentiment_dir: Float[Tensor, "d_model"], model: HookedTransformer, 
+    top_k: int = 10, temperature: float = 1.0, max_new_tokens: int = 20, do_sample: bool = True,
+    seed: int = 0,
+    prompt: str = "I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
+):
+    torch.manual_seed(seed)
+    out = ""
+    for coef, sample in tqdm(itertools.product(coefs, range(samples)), total=len(coefs) * samples):
+        if sample == 0:
+            out += f"Coef: {coef}\n"
+        gen = steer_and_generate(
+            coef,
+            sentiment_dir,
+            prompt,
+            model,
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=temperature,
+            top_k=top_k,
+        )
+        out += gen.replace(prompt, "") + "\n"
+    return out.replace("<|endoftext|>", "")
+#%%
+steering_text = run_steering_search(
+    coefs=[-20, -10,  0],
+    samples=10,
+    sentiment_dir=sentiment_dir,
+    model=model,
+    top_k=10,
+    temperature=1.0,
+    max_new_tokens=30,
+    do_sample=True,
+    seed=0,
+    prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
+)
+#%%
+plot_neuroscope(steering_text, centred=True)
+#%%
+
+
+#%%
+# ============================================================================ #
 # Prefixes
 #%%
 def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
@@ -204,6 +296,44 @@ test_prefixes(
 #%%
 negating_negative_text = "Here are my honest thoughts. You never fail. You're not bad at all. "
 plot_neuroscope(negating_negative_text, centred=True, verbose=False)
+#%%
+plot_neuroscope(
+    "Here are my honest thoughts. You never fail. You're not bad at all.", 
+    centred=True, 
+    verbose=False,
+)
+#%%
+plot_neuroscope(
+    "Here are my honest thoughts. Don't doubt yourself. You need not fear. You are not wrong. You are very much", 
+    centred=True, 
+    verbose=False,
+)
+#%%
+plot_neuroscope(
+    "Don't be sad. You should not feel ashamed. You are a truly", 
+    centred=True, 
+    verbose=False,
+)
+#%%
+test_prompt(
+    "Here are my honest thoughts. You never fail. You're not bad at all. You will always", 
+    "", 
+    model
+)
+#%%
+test_prompt(
+    "Don't be sad. You have nothing to be ashamed of. You are a truly", 
+    "", 
+    model,
+    top_k=20,
+)
+#%%
+test_prompt(
+    "Here are my honest thoughts. You are not a good person. Your behaviour is not okay. You are very", 
+    "", 
+    model,
+    top_k=20
+)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
