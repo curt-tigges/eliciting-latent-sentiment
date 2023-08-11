@@ -315,25 +315,25 @@ plot_neuroscope(
     verbose=False,
 )
 #%%
-test_prompt(
-    "Here are my honest thoughts. You never fail. You're not bad at all. You will always", 
-    "", 
-    model
-)
-#%%
-test_prompt(
-    "Don't be sad. You have nothing to be ashamed of. You are a truly", 
-    "", 
-    model,
-    top_k=20,
-)
-#%%
-test_prompt(
-    "Here are my honest thoughts. You are not a good person. Your behaviour is not okay. You are very", 
-    "", 
-    model,
-    top_k=20
-)
+# test_prompt(
+#     "Here are my honest thoughts. You never fail. You're not bad at all. You will always", 
+#     "", 
+#     model
+# )
+# #%%
+# test_prompt(
+#     "Don't be sad. You have nothing to be ashamed of. You are a truly", 
+#     "", 
+#     model,
+#     top_k=20,
+# )
+# #%%
+# test_prompt(
+#     "Here are my honest thoughts. You are not a good person. Your behaviour is not okay. You are very", 
+#     "", 
+#     model,
+#     top_k=20
+# )
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
@@ -434,13 +434,13 @@ def get_batch_pos_mask(tokens: Union[str, List[str], Tensor], activations: Float
         masks.append(batch_mask)
     mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
     if activations is not None:
-        assert mask.shape == activations.shape
+        assert mask.shape == activations.shape[:2]
     return mask
 #%%
 def _plot_topk(
     all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
     window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-    verbose: bool = False,
+    verbose: bool = False, base_layer: int = None,
 ):
     assert not (inclusions is not None and exclusions is not None)
     label = "positive" if largest else "negative"
@@ -448,6 +448,9 @@ def _plot_topk(
     if verbose:
         print(f"Plotting top {k} {label} examples for layer {layer}")
     activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
+    if base_layer is not None:
+        base_activations: Float[Tensor, "row pos"] = all_activations[:, :, base_layer]
+        activations = activations - base_activations
     if largest:
         ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
     else:
@@ -508,8 +511,12 @@ def _plot_topk(
     acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
     assert acts_cat.shape[0] == len(texts)
     html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
+    layer_suffix = f"_layer_{layer}" if layer is not None else ""
     exclusion_suffix = "_w_exclusions" if exclusions is not None else ""
-    file_name = f"top_{k}_most_{label}_layer_{layer}_sentiment{exclusion_suffix}.html"
+    inclusion_suffix = "_w_inclusions" if inclusions is not None else ""
+    base_layer_suffix = f"_base_layer_{base_layer}" if base_layer is not None else ""
+    suffices = layer_suffix + exclusion_suffix + inclusion_suffix + base_layer_suffix
+    file_name = f"top_{k}_most_{label}_sentiment{suffices}.html"
     save_html(html, file_name, model)
     display(html)
 #%%
@@ -517,21 +524,21 @@ def plot_topk(
     activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0,
     window_size: int = 10, centred: bool = True, 
     inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-    verbose: bool = False,
+    verbose: bool = False, base_layer: int = None,
 ):
    _plot_topk(
        activations, layer=layer, k=k, largest=True, 
        window_size=window_size, centred=centred, 
-       inclusions=inclusions, exclusions=exclusions, verbose=verbose
+       inclusions=inclusions, exclusions=exclusions, 
+       verbose=verbose, base_layer=base_layer
     )
    _plot_topk(
        activations, layer=layer, k=k, largest=False, 
        window_size=window_size, centred=centred, 
-       inclusions=inclusions, exclusions=exclusions, verbose=verbose
+       inclusions=inclusions, exclusions=exclusions, 
+       verbose=verbose, base_layer=base_layer
     )
 # %%
-# plot_topk(sentiment_activations, k=50, layer=0)
-# # %%
 # plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
 # # %%
 # plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
@@ -743,8 +750,13 @@ exclusions = [
 
 ]
 exclusions = expand_exclusions(exclusions)
+#%%
+plot_topk(
+    sentiment_activations, k=50, layer=4, base_layer=0, window_size=20, centred=True,
+    exclusions=exclusions,
+)
 # %%
-plot_top_p(sentiment_activations, p=.02, k=50, layer=1, exclusions=exclusions)
+# plot_top_p(sentiment_activations, p=.02, k=50, layer=1, exclusions=exclusions)
 # %%
 # plot_topk(sentiment_activations, k=50, layer=1, exclusions=exclusions)
 # %%
