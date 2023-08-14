@@ -15,7 +15,11 @@ from jaxtyping import Float, Int
 from collections import defaultdict
 import einops
 import re
-
+import pickle
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 # %%
 
 _SeqPos = Optional[Int[Tensor, "batch pos"]]
@@ -840,6 +844,109 @@ def act_patch(
     results_dict = defaultdict(list)
     nodes_dict = patching_nodes.get_node_dict(model, new_cache["q", 0])
     progress_bar = tqdm(total=sum(len(node_list) for node_list in nodes_dict.values()), leave=leave, disable=disable)
+    for node_name, node_list in nodes_dict.items():
+        progress_bar.set_description(f"Patching {node_name!r}")
+        for (seq_pos, node) in node_list:
+            node.seq_pos = seq_pos
+            results_dict[node_name].append(act_patch_single(patching_nodes=node))
+            progress_bar.update(1)
+    progress_bar.close()
+    for node_name, node_shape_dict in patching_nodes.shape_values.items():
+        if verbose: print(f"results[{node_name!r}].shape = ({', '.join(f'{s}={v}' for s, v in node_shape_dict.items())})")
+    return {
+        node_name: t.tensor(results).reshape(list(patching_nodes.shape_values[node_name].values())) if isinstance(results[0], float) else results
+        for node_name, results in results_dict.items()
+    }
+
+
+def train_probe_at_layer_pos(model, act_folder, labels, layer, pos=-1, component='hook_resid_post', with_scaler=True, max_iter=100):
+
+    # Get activations
+    with open(os.path.join(act_folder, f"{component}_pos_{pos}_activations.pkl"), "rb") as f:
+        act_list = pickle.load(f)[:, layer, :]
+
+    X_train, X_test, y_train, y_test = train_test_split(act_list, labels, test_size=0.2, random_state=42)
+    #print(f"Data size: {X_train.shape} Label size: {y_train.shape}")
+
+    if with_scaler:
+        pipe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=max_iter))
+    else:
+        pipe = make_pipeline(LogisticRegression(max_iter=max_iter))
+    pipe.fit(X_train, y_train)  # apply scaling on training data
+    score = pipe.score(X_test, y_test)  # apply scaling on testing data, without leaking training data.
+    print(f"Layer {layer} position {pos} test score: {score}")
+
+    return pipe, score
+
+
+def _probe_patch_single(
+    model: HookedTransformer,
+    orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
+    patching_nodes: Union[Node, List[Node]],
+    patching_metric: Callable,
+    new_cache: ActivationCache,
+    probe_multiplier: int = 1,
+    apply_metric_to_cache: bool = False,
+) -> Float[Tensor, ""]:
+    '''Same principle as path patching, but we just patch a single activation at the 'activation' node.'''
+
+    # Call this at the start, just in case! This also clears context by default
+    model.reset_hooks()
+
+    batch_size, seq_len = new_cache["z", 0].shape[:2]
+
+    if isinstance(patching_nodes, Node): patching_nodes = [patching_nodes]
+    for node in patching_nodes:
+        batch_indices, seq_pos_indices = get_batch_and_seq_pos_indices(node.seq_pos, batch_size, seq_len)
+        model.add_hook(
+            node.activation_name, 
+            node.get_patching_hook_fn(new_cache, batch_indices, seq_pos_indices)
+        )
+
+    if apply_metric_to_cache:
+        _, cache = model.run_with_cache(orig_input, return_type=None)
+        return patching_metric(cache)
+    else:
+        logits = model(orig_input)
+        return patching_metric(logits)
+    
+
+def probe_patch(
+    model: HookedTransformer,
+    orig_input: Union[str, List[str], Int[Tensor, "batch seq_len"]],
+    patching_nodes: Union[IterNode, Node, List[Node]],
+    patching_metric: Callable,
+    probe_multiplier: int = 1,
+    new_input: Optional[Union[str, List[str], Int[Tensor, "batch seq_len"]]] = None,
+    new_cache: Optional[ActivationCache] = None,
+    apply_metric_to_cache: bool = False,
+    verbose: bool = False,
+) -> Float[Tensor, "..."]:
+
+
+    if new_cache is None:
+        _, new_cache = model.run_with_cache(new_input, return_type=None)
+
+
+    # Get out backend patching function (fix all the arguments we won't be changing)
+    act_patch_single = partial(
+        _act_patch_single,
+        model=model,
+        orig_input=orig_input,
+        # patching_nodes=patching_nodes,
+        patching_metric=patching_metric,
+        new_cache=new_cache,
+        apply_metric_to_cache=apply_metric_to_cache,
+    )
+
+    # If we're not iterating over anything, i.e. it's just a single instance of activation patching:
+    if not isinstance(patching_nodes, IterNode):
+        return act_patch_single(patching_nodes=patching_nodes)
+
+    # If we're iterating over nodes:
+    results_dict = defaultdict(list)
+    nodes_dict = patching_nodes.get_node_dict(model, new_cache["q", 0])
+    progress_bar = tqdm(total=sum(len(node_list) for node_list in nodes_dict.values()))
     for node_name, node_list in nodes_dict.items():
         progress_bar.set_description(f"Patching {node_name!r}")
         for (seq_pos, node) in node_list:
