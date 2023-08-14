@@ -11,3 +11,4 @@ ccs_act_patching*.html
 *.html
 !data
 neel-plotly
+.vscode/
