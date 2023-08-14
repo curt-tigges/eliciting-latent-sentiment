@@ -223,8 +223,8 @@ def logit_diff_noising(
 
 def residual_stack_to_logit_diff(
     residual_stack: Float[Tensor, "... batch d_model"], 
-    answer_tokens: Int[Tensor, "batch pair correct"], 
     cache: ActivationCache, 
+    answer_tokens: Int[Tensor, "batch pair correct"], 
     model: HookedTransformer,
     pos: int = -1,
     biased: bool = False,
@@ -250,6 +250,7 @@ def residual_stack_to_logit_diff(
 def cache_to_logit_diff(
     cache: ActivationCache,
     answer_tokens: Int[Tensor, "batch pair correct"], 
+    model: HookedTransformer,
     pos: int = -1,
 ):
     final_residual_stream: Float[Tensor, "batch pos d_model"] = cache["resid_post", -1]
@@ -257,6 +258,7 @@ def cache_to_logit_diff(
     return residual_stack_to_logit_diff(
         token_residual_stream, 
         answer_tokens=answer_tokens, 
+        model=model,
         cache=cache, 
         pos=pos,
     )
