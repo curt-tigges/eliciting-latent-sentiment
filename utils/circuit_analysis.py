@@ -4,7 +4,7 @@ from functools import partial
 import torch
 from torchtyping import TensorType as TT
 from torch import Tensor
-from jaxtyping import Float
+from jaxtyping import Float, Int
 from typing import Tuple
 import einops
 
@@ -14,7 +14,7 @@ import plotly.graph_objs as go
 import torch
 import ipywidgets as widgets
 from IPython.display import display
-
+from transformer_lens import ActivationCache, HookedTransformer
 
 if torch.cuda.is_available():
     device = int(os.environ.get("LOCAL_RANK", 0))
@@ -221,16 +221,46 @@ def logit_diff_noising(
 # =============== LOGIT LENS UTILS ===============
 
 
-def residual_stack_to_logit_diff(residual_stack, logit_diff_directions, prompts, cache):
-    scaled_residual_stack = cache.apply_ln_to_stack(
-        residual_stack, layer=-1, pos_slice=-1
+def residual_stack_to_logit_diff(
+    residual_stack: Float[Tensor, "... batch d_model"], 
+    answer_tokens: Int[Tensor, "batch pair correct"], 
+    cache: ActivationCache, 
+    model: HookedTransformer,
+    pos: int = -1,
+    biased: bool = False,
+):
+    scaled_residual_stack: Float[Tensor, "... batch d_model"] = cache.apply_ln_to_stack(residual_stack, layer = -1, pos_slice=pos)
+    answer_residual_directions: Float[Tensor, "batch pair correct d_model"] = model.tokens_to_residual_directions(answer_tokens)
+    answer_residual_directions = answer_residual_directions.mean(dim=1)
+    logit_diff_directions: Float[Tensor, "batch d_model"] = answer_residual_directions[:, 0] - answer_residual_directions[:, 1]
+    batch_logit_diffs: Float[Tensor, "... batch"] = einops.einsum(
+        scaled_residual_stack, 
+        logit_diff_directions, 
+        "... batch d_model, batch d_model -> ... batch",
     )
-    return einsum(
-        "... batch d_model, batch d_model -> ...",
-        scaled_residual_stack,
-        logit_diff_directions,
-    ) / len(prompts)
+    if not biased:
+        diff_from_unembedding_bias: Float[Tensor, "batch"] = (
+            model.b_U[answer_tokens[:, :, 0]] - 
+            model.b_U[answer_tokens[:, :, 1]]
+        ).mean(dim=1)
+        batch_logit_diffs += diff_from_unembedding_bias
+    return einops.reduce(batch_logit_diffs, "... batch -> ...", 'mean')
 
+
+def cache_to_logit_diff(
+    cache: ActivationCache,
+    answer_tokens: Int[Tensor, "batch pair correct"], 
+    pos: int = -1,
+):
+    final_residual_stream: Float[Tensor, "batch pos d_model"] = cache["resid_post", -1]
+    token_residual_stream: Float[Tensor, "batch d_model"] = final_residual_stream[:, pos, :]
+    return residual_stack_to_logit_diff(
+        token_residual_stream, 
+        answer_tokens=answer_tokens, 
+        cache=cache, 
+        pos=pos,
+    )
+    
 
 # =============== PATCHING & KNOCKOUT UTILS ===============
 def patch_pos_head_vector(
