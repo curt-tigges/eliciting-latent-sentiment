@@ -75,6 +75,11 @@ class TestTransformerLens(unittest.TestCase):
         cls.text = [
             f"The movie was {adj}. I thought it was" for adj in cls.pos_adjectives + cls.neg_adjectives
         ]
+        cls.answers = [[" great", " terrible"]] * len(cls.pos_adjectives) + [[" terrible", " great"]] * len(cls.neg_adjectives)
+        cls.answer_tokens = cls.model.to_tokens(cls.answers, prepend_bos=False)
+        cls.clean_tokens = cls.model.to_tokens(cls.text)
+        cls.answer_tokens = einops.repeat(cls.answer_tokens, "batch correct -> batch 1 correct")
+        cls.clean_logits, cls.clean_cache = cls.model.run_with_cache(cls.text)
 
     def test_adjective_tokens(self):
         for adj in self.pos_adjectives + self.neg_adjectives:
@@ -90,15 +95,20 @@ class TestTransformerLens(unittest.TestCase):
             ))
 
     def test_logit_diff_calculation(self):
-        answers = [[" great", " terrible"]] * len(self.pos_adjectives) + [[" terrible", " great"]] * len(self.neg_adjectives)
-        answer_tokens = self.model.to_tokens(answers, prepend_bos=False)
-        clean_tokens = self.model.to_tokens(self.text)
-        self.assertEqual(len(clean_tokens), len(answer_tokens))
-        answer_tokens = einops.repeat(answer_tokens, "batch correct -> batch 1 correct")
-        clean_logits, clean_cache = self.model.run_with_cache(self.text)
-        clean_logit_diff = get_logit_diff(clean_logits, answer_tokens=answer_tokens)
-        average_logit_diff = cache_to_logit_diff(clean_cache, answer_tokens, self.model, -1)
+        
+        clean_logit_diff = get_logit_diff(self.clean_logits, answer_tokens=self.answer_tokens)
+        average_logit_diff = cache_to_logit_diff(self.clean_cache, self.answer_tokens, self.model, -1)
         self.assertLessEqual(torch.max(torch.abs(average_logit_diff - clean_logit_diff)), 1e-4)
+
+    def test_accumulated_resid(self):
+        clean_accumulated_residual: Float[Tensor, "layer 1 d_model"]
+        clean_accumulated_residual, labels = self.clean_cache.accumulated_resid(
+            layer=-1, incl_mid=False, pos_slice=-1, return_labels=True
+        )
+        clean_logit_lens_logit_diffs = residual_stack_to_logit_diff(
+            clean_accumulated_residual, self.clean_cache, self.answer_tokens, self.model, biased=True
+        )
+        self.assertEqual(clean_logit_lens_logit_diffs.shape, (self.model.cfg.n_layers + 1, ))
 
 if __name__ == "__main__":
     unittest.main()
