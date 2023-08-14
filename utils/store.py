@@ -80,3 +80,26 @@ def get_labels(glob_str: str, model: Union[HookedTransformer, str]) -> list:
     model_path = os.path.join('data', model)
     labels = [os.path.split(p)[-1] for p in glob.iglob(os.path.join(model_path, glob_str))]
     return labels
+
+
+def is_file(name: str, model: Union[HookedTransformer, str]) -> list:
+    model: str = get_model_name(model)
+    model_path = os.path.join('data', model)
+    file_path = os.path.join(model_path, name)
+    return os.path.exists(file_path)
+
+
+def save_text(
+    text: str, 
+    label: str, 
+    model: Union[HookedTransformer, str]
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.txt')
+    with open(path, 'w') as f:
+        f.write(text)
+    return path

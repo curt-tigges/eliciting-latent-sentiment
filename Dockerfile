@@ -1,5 +1,5 @@
 FROM pytorch/pytorch:latest
-RUN pip install transformer-lens circuitsvis plotly torchtyping
+RUN pip install transformer-lens circuitsvis plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib
 RUN pip install --upgrade jax jaxlib
 RUN apt-get update \
     && apt-get install -y curl
@@ -13,6 +13,3 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN git config --global user.email "oskar.hollinsworth@gmail.com" && \
     git config --global user.name "skar0" && \
     git config --global remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-
-RUN pip install jupyterlab scikit-learn
-RUN pip install ipywidgets
