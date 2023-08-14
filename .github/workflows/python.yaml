@@ -13,4 +13,4 @@ jobs:
     - name: Run unit tests in Docker container
       run: |
         docker pull skar0/elicitinglatentsentiment:latest
-        docker run -v ${PWD}:/app elicitinglatentsentiment:latest /bin/sh -c "cd /app && python -m unittest discover tests"
+        docker run -v ${PWD}:/app skar0/elicitinglatentsentiment:latest /bin/sh -c "cd /app && python -m unittest discover tests"
