@@ -1,0 +1,20 @@
+name: Run Unit Tests in Docker
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Set up Node.js 16.x
+      uses: actions/setup-node@v2
+      with:
+        node-version: '16.x'
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Run unit tests in Docker container
+      run: |
+        docker pull skar0/elicitinglatentsentiment:latest
+        docker run -v ${PWD}:/app skar0/elicitinglatentsentiment:latest /bin/sh -c "cd /app && python -m unittest discover tests"
