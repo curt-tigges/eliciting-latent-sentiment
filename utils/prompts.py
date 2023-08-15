@@ -8,7 +8,7 @@ import einops
 from enum import Enum
 
 
-def drop_duplicates(input_list):
+def dedup_list(input_list):
     seen = set()
     return [x for x in input_list if x not in seen and not seen.add(x)]
 
@@ -71,7 +71,7 @@ class PromptsConfig:
         if truncate_length is not None:
             words = truncate_words_by_length(model, words, truncate_length, verbose=verbose)
         if drop_duplicates:
-            words = drop_duplicates(words)
+            words = dedup_list(words)
         return CircularList(words)
 
 
