@@ -137,9 +137,9 @@ harry_potter_start = """
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
 """
 #%%
-harry_potter_neuroscope = plot_neuroscope(harry_potter_start, centred=True, verbose=False)
-save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-harry_potter_neuroscope
+# harry_potter_neuroscope = plot_neuroscope(harry_potter_start, centred=True, verbose=False)
+# save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
+# harry_potter_neuroscope
 #%%
 # ============================================================================ #
 # Harry Potter in French
@@ -171,9 +171,9 @@ pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potin
 s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses
 poumons.
 """
-harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, centred=True, verbose=False)
-save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-harry_potter_fr_neuroscope
+# harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, centred=True, verbose=False)
+# save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+# harry_potter_fr_neuroscope
 #%%
 # ============================================================================ #
 # Steering and generating
@@ -246,20 +246,20 @@ def run_steering_search(
         out += gen.replace(prompt, "") + "\n"
     return out.replace("<|endoftext|>", "")
 #%%
-steering_text = run_steering_search(
-    coefs=[-20, -10,  0],
-    samples=10,
-    sentiment_dir=sentiment_dir,
-    model=model,
-    top_k=10,
-    temperature=1.0,
-    max_new_tokens=30,
-    do_sample=True,
-    seed=0,
-    prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
-)
-#%%
-plot_neuroscope(steering_text, centred=True)
+# steering_text = run_steering_search(
+#     coefs=[-20, -10,  0],
+#     samples=10,
+#     sentiment_dir=sentiment_dir,
+#     model=model,
+#     top_k=10,
+#     temperature=1.0,
+#     max_new_tokens=30,
+#     do_sample=True,
+#     seed=0,
+#     prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
+# )
+# #%%
+# plot_neuroscope(steering_text, centred=True)
 #%%
 
 
@@ -276,17 +276,17 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
     text = "\n".join(single_tokens)
     return plot_neuroscope(text, centred=True)
 #%%
-test_prefixes(
-    " cr",
-    [' crony', ' crump', ' crinkle', ' craggy', ' cramp', ' crumb', ' crayon', ' cringing', ' cramping'],
-    model
-)
-#%%
-test_prefixes(
-    " clo",
-    [' clopped', ' cloze', ' cloistered', ' clopping', ' cloacal', ' cloister', ' cloaca',],
-    model
-)
+# test_prefixes(
+#     " cr",
+#     [' crony', ' crump', ' crinkle', ' craggy', ' cramp', ' crumb', ' crayon', ' cringing', ' cramping'],
+#     model
+# )
+# #%%
+# test_prefixes(
+#     " clo",
+#     [' clopped', ' cloze', ' cloistered', ' clopping', ' cloacal', ' cloister', ' cloaca',],
+#     model
+# )
 #%%
 # ============================================================================ #
 # Negations
@@ -294,26 +294,26 @@ test_prefixes(
 # negating_positive_text = "Here are my honest thoughts. You're not a good person. I don't like you. I hope that you don't succeed."
 # plot_neuroscope(negating_positive_text, centred=True, verbose=False)
 #%%
-negating_negative_text = "Here are my honest thoughts. You never fail. You're not bad at all. "
-plot_neuroscope(negating_negative_text, centred=True, verbose=False)
-#%%
-plot_neuroscope(
-    "Here are my honest thoughts. You never fail. You're not bad at all.", 
-    centred=True, 
-    verbose=False,
-)
-#%%
-plot_neuroscope(
-    "Here are my honest thoughts. Don't doubt yourself. You need not fear. You are not wrong. You are very much", 
-    centred=True, 
-    verbose=False,
-)
-#%%
-plot_neuroscope(
-    "Don't be sad. You should not feel ashamed. You are a truly", 
-    centred=True, 
-    verbose=False,
-)
+# negating_negative_text = "Here are my honest thoughts. You never fail. You're not bad at all. "
+# plot_neuroscope(negating_negative_text, centred=True, verbose=False)
+# #%%
+# plot_neuroscope(
+#     "Here are my honest thoughts. You never fail. You're not bad at all.", 
+#     centred=True, 
+#     verbose=False,
+# )
+# #%%
+# plot_neuroscope(
+#     "Here are my honest thoughts. Don't doubt yourself. You need not fear. You are not wrong. You are very much", 
+#     centred=True, 
+#     verbose=False,
+# )
+# #%%
+# plot_neuroscope(
+#     "Don't be sad. You should not feel ashamed. You are a truly", 
+#     centred=True, 
+#     verbose=False,
+# )
 #%%
 # test_prompt(
 #     "Here are my honest thoughts. You never fail. You're not bad at all. You will always", 
@@ -351,7 +351,7 @@ Moreover, the fervent desire to imbue the proceedings with a veneer of intellect
 
 In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
 """
-plot_neuroscope(multi_token_negative_text, centred=True, verbose=False)
+# plot_neuroscope(multi_token_negative_text, centred=True, verbose=False)
 #%%
 # ============================================================================ #
 # Openwebtext-10k
@@ -751,10 +751,10 @@ exclusions = [
 ]
 exclusions = expand_exclusions(exclusions)
 #%%
-plot_topk(
-    sentiment_activations, k=50, layer=4, base_layer=0, window_size=20, centred=True,
-    exclusions=exclusions,
-)
+# plot_topk(
+#     sentiment_activations, k=50, layer=4, base_layer=0, window_size=20, centred=True,
+#     exclusions=exclusions,
+# )
 # %%
 # plot_top_p(sentiment_activations, p=.02, k=50, layer=1, exclusions=exclusions)
 # %%
@@ -879,20 +879,77 @@ def plot_top_mean_variance(
     fig.show()
 
 # %%
-plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
+# plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
 # %%
-plot_topk(sentiment_activations, k=10, layer=1, inclusions=[" Yorkshire"], window_size=20)
+# plot_topk(sentiment_activations, k=10, layer=1, inclusions=[" Yorkshire"], window_size=20)
 #%%
-# "ression" as in "impression" vs. "aggression", "repression"
-# 'leasing' as in 'releasing' vs. 'subleasing'
-# 'ciplinary' as in 'multidisciplinary' vs. 'disciplinary'
-# 'rieved': 'grieved' is more negative than 'aggrieved'
-# 'byte': 'overbyte' vs. 'byte'
-# 'risons: 'Comparisons' vs. 'Prisons'
-# 'Ds': 'TZDs' (diabetes drug) vs. 'STDs'
-# 'ested': 'attested' vs. 'molested'
-# ' Hare' as in ' Hare Krishna vs. ' Harem'
-# ' Toro' as in ' Guillermo del Toro' vs ' Toro Rosso'
+def resample_hook(
+    input: Float[Tensor, "batch pos d_model"], 
+    hook: HookPoint, 
+    direction: Float[Tensor, "d_model"],
+):
+    assert 'resid' in hook.name
+    assert direction.shape == (model.cfg.d_model,)
+    assert direction.norm().item() == 1.0
+    # shuffle input tensor along the batch dimension
+    shuffled = input[torch.randperm(input.shape[0])]
+    orig_proj: Float[Tensor, "batch pos"] = einops.einsum(
+        input, direction, 'batch pos d_model, d_model -> batch pos'
+    )
+    new_proj: Float[Tensor, "batch pos"] = einops.einsum(
+        shuffled, direction, 'batch pos d_model, d_model -> batch pos'
+    )
+    return (
+        input + (new_proj - orig_proj).unsqueeze(-1) * direction
+    )
+#%%
+def get_resample_ablated_loss_diffs(
+    direction: Float[Tensor, "d_model"],
+    model: HookedTransformer,
+    dataloader: DataLoader,
+    k: int = 10,
+    window_size: int = 10,
+    layer: int = 0,
+    seed: int = 0,
+    max_batch: int = None
+):
+    torch.manual_seed(seed)
+    model.reset_hooks()
+    hook = partial(resample_hook, direction=direction)
+    loss_diffs = []
+    for batch_idx, batch_value in tqdm(enumerate(dataloader), total=len(dataloader)):
+        batch_tokens = batch_value['tokens'].to(device)
+        model.reset_hooks()
+        orig_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
+        model.add_hook(
+            get_act_name('resid_post', layer),
+            hook,
+            dir="fwd",
+        )
+        new_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
+        loss_diff: Float[Tensor, "mb pos"] = new_loss - orig_loss
+        loss_diffs.append(loss_diff)
+        model.reset_hooks()
+        if max_batch is not None and batch_idx + 1 >= max_batch:
+            break
+    loss_diffs = torch.cat(loss_diffs, dim=0)
+    topk_return = torch.topk(loss_diffs.flatten(), k=k, largest=True)
+    topk_pos_indices = np.array(np.unravel_index(topk_return.indices.cpu().numpy(), loss_diffs.shape)).T.tolist()
+    topk_pos_values = topk_return.values
 
-#%%
+    # Get the examples and their activations corresponding to the most positive and negative activations
+    topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
+    text_sep = "\n"
+    topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_values)
+    texts = []
+    for index, example, loss_diff in topk_zip:
+        batch, pos = index
+        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+        print(f"Example: {model.to_string(example)}, Loss diff: {loss_diff:.4f}, Batch: {batch}, Pos: {pos}")
+        text_window.append(text_sep)
+        texts += text_window
+    return texts
 # %%
+loss_diff_text = get_resample_ablated_loss_diffs(sentiment_dir, model, dataloader, k=50, window_size=10)
+plot_neuroscope(''.join(loss_diff_text), centred=True)
+#%%
