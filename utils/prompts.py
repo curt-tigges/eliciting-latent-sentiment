@@ -12,10 +12,10 @@ def filter_words_by_length(model, words: list, length: int, verbose=False) -> li
     if verbose:
         print("Filtering words by length")
     new_words = []
-    for a in words:
-        tkn = model.to_str_tokens(a, prepend_bos=False)
+    for word in words:
+        tkn = model.to_str_tokens(word, prepend_bos=False)
         if len(tkn) == length:
-            new_words.append(a)
+            new_words.append(word)
     if verbose:
         print(f"Count of words: {len(words)}")
 
@@ -26,9 +26,10 @@ def truncate_words_by_length(model, words: list, length: int, verbose=False) -> 
     if verbose:
         print("Truncating words by length")
     new_words = []
-    for a in words:
-        tkn = model.to_str_tokens(a, prepend_bos=False)
-        new_words.append(tkn[:length])
+    for word in words:
+        tkn = model.to_str_tokens(word, prepend_bos=False)
+        trunc = ''.join(tkn[:length])
+        new_words.append(trunc)
     return new_words
 
 
@@ -311,6 +312,7 @@ def get_dataset(
         device=device, 
         dtype=torch.long
     )
+    prompt_len = None
     for i in range(n_prompts):
         all_prompts.append(prompts_dict[comparison[0]][i])
         all_prompts.append(prompts_dict[comparison[1]][i])
@@ -319,6 +321,10 @@ def get_dataset(
             answer_tokens[i * 2, pair_idx, 1] = model.to_single_token(answers_dict[comparison[1]][pair_idx])
             answer_tokens[i * 2 + 1, pair_idx, 0] = model.to_single_token(answers_dict[comparison[1]][pair_idx])
             answer_tokens[i * 2 + 1, pair_idx, 1] = model.to_single_token(answers_dict[comparison[0]][pair_idx])
+        if prompt_len is None:
+            prompt_len = len(model.to_tokens(all_prompts[-1], prepend_bos=True))
+        else:
+            assert prompt_len == len(model.to_tokens(all_prompts[-1], prepend_bos=True))
     prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(
         all_prompts, prepend_bos=True
     )
