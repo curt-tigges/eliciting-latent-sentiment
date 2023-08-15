@@ -48,9 +48,14 @@ class PromptsConfig:
         self._prompts_dict = prompts_dict
         
     def get(
-        self, key: str, model: HookedTransformer, 
-        filter_length: int = None, truncate_length: int = None,
-        prepend_space: bool = True, verbose: bool = False,
+        self, 
+        key: str, 
+        model: HookedTransformer, 
+        filter_length: int = None, 
+        truncate_length: int = None,
+        drop_duplicates: bool = True,
+        prepend_space: bool = True, 
+        verbose: bool = False,
     ) -> CircularList:
         words: list = self._prompts_dict[key]
         if prepend_space:
@@ -59,11 +64,15 @@ class PromptsConfig:
             words = filter_words_by_length(model, words, filter_length, verbose=verbose)
         if truncate_length is not None:
             words = truncate_words_by_length(model, words, truncate_length, verbose=verbose)
+        if drop_duplicates:
+            words = list(set(words))
         return CircularList(words)
 
 
 class PromptType(Enum):
     SIMPLE = "simple"
+    SIMPLE_TRAIN = "simple_train"
+    SIMPLE_TEST = "simple_test"
     COMPLETION = "completion"
     COMPLETION_2 = "completion_2"
     CLASSIFICATION = "classification"
@@ -105,6 +114,26 @@ def get_prompts(
         ]
         neutral_prompts = [
             f"I thought this movie was{neutral_adjectives[i]}, I watched it. \nConclusion: This movie is" for i in range(len(neutral_adjectives))
+        ]
+    elif prompt_type == PromptType.SIMPLE_TRAIN:
+        positive_adjectives = prompt_config.get("positive_adjectives_train", model, filter_length=1)
+        negative_adjectives = prompt_config.get("negative_adjectives_train", model, filter_length=1)
+        neutral_prompts = None
+        pos_prompts = [
+            f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives))
+        ]
+        neg_prompts = [
+            f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives))
+        ]
+    elif prompt_type == PromptType.SIMPLE_TEST:
+        positive_adjectives = prompt_config.get("positive_adjectives_test", model, filter_length=1)
+        negative_adjectives = prompt_config.get("negative_adjectives_test", model, filter_length=1)
+        neutral_prompts = None
+        pos_prompts = [
+            f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives))
+        ]
+        neg_prompts = [
+            f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives))
         ]
     elif prompt_type == PromptType.SIMPLE_MOOD:
         walking_synonyms: CircularList[str]  = prompt_config.get("walk_synonyms", model)
@@ -261,15 +290,11 @@ def get_dataset(
     comparison: Tuple[str, str] = ("positive", "negative"),
 ) -> Tuple[
     List[str], # all_prompts
-    Float[Tensor, "batch n_pairs 2"], # answer tokens
+    Float[Tensor, "batch pair correct"], # answer tokens
     Float[Tensor, "batch pos"], # clean tokens
     Float[Tensor, "batch pos"], # corrupted tokens
 ]:
-    '''
-    answer_tokens:
-        list of the token (ie an integer) corresponding to each answer, 
-        in the format (correct_token, incorrect_token)
-    '''
+    # FIXME: this should really return a dataset object
     prompt_type = PromptType(prompt_type)
     prompts_dict, answers_dict = get_prompts(
         model, prompt_type
@@ -399,18 +424,3 @@ def get_ccs_dataset(
     ]
     assert len(pos_prompts) == len(pos_tokens)
     return neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, truncated
-
-
-def embed_and_mlp0(
-    tokens: Union[str, List[str], Int[Tensor, "batch pos"]],
-    transformer: HookedTransformer,
-):
-    if isinstance(tokens, str):
-        tokens = transformer.to_tokens(tokens)
-    elif isinstance(tokens, list) and isinstance(tokens[0], str):
-        tokens = transformer.to_tokens(tokens)
-    block0 = transformer.blocks[0]
-    resid_mid = transformer.embed(tokens)
-    mlp_out = block0.mlp((resid_mid))
-    resid_post = resid_mid + mlp_out
-    return block0.ln2(resid_post)
