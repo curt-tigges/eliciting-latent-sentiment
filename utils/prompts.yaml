@@ -94,6 +94,25 @@ neutral_answer_tokens:
   - ok
   - decent
 
+positive_moods:
+  - happy
+  - excited
+  - delighted
+  - pleased
+  - smiling
+  - satisfied
+  - glad
+
+negative_moods:
+  - sad
+  - scared
+  - terrible
+  - terrified
+  - morbid
+  - guilty
+  - suffering
+
+
 positive_adverbs:
   - excitedly
   - joyfully
@@ -415,6 +434,20 @@ negative_french:
   - sournois
   - stupide
   - superficiel
+
+positive_french_answers:
+  - bien
+  - recommandé
+  - impressionnant
+  - ccaptivant
+  - réussi
+
+negative_french_answers:
+  - mauvais
+  - décevant
+  - ennuyeux
+  - difficile à regarder
+  - inintéressant
 
 positive_proper_nouns:
   - Mandela
