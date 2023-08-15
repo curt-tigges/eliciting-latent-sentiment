@@ -911,13 +911,13 @@ def get_resample_ablated_loss_diffs(
     window_size: int = 10,
     layer: int = 0,
     seed: int = 0,
+    max_batch: int = None
 ):
     torch.manual_seed(seed)
     model.reset_hooks()
     hook = partial(resample_hook, direction=direction)
-    text = []
-    for batch_idx, batch_value in tqdm(enumerate(dataloader), total=k):
-        text.append(f"\n{batch_idx})")
+    loss_diffs = []
+    for batch_idx, batch_value in tqdm(enumerate(dataloader), total=len(dataloader)):
         batch_tokens = batch_value['tokens'].to(device)
         model.reset_hooks()
         orig_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
@@ -927,19 +927,28 @@ def get_resample_ablated_loss_diffs(
             dir="fwd",
         )
         new_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
-        loss_diff = new_loss - orig_loss
-        top_idx = torch.argmax(loss_diff)
-        top_batch, top_pos = np.unravel_index(top_idx.cpu().numpy(), loss_diff.shape)
-        top_batch_full = (batch_idx * dataloader.batch_size + top_batch).item()
-        top_token = model.to_string(batch_tokens[top_batch, top_pos])
-        top_loss_diff = loss_diff[top_batch, top_pos].item()
-        print(f"batch: {top_batch_full}, pos: {top_pos}, token: {top_token}, loss_diff: {top_loss_diff}")
-        top_text = extract_text_window(top_batch_full, top_pos, window_size=window_size)
-        text += top_text
+        loss_diff: Float[Tensor, "mb pos"] = new_loss - orig_loss
+        loss_diffs.append(loss_diff)
         model.reset_hooks()
-        if batch_idx + 1 >= k:
+        if max_batch is not None and batch_idx + 1 >= max_batch:
             break
-    return text
+    loss_diffs = torch.cat(loss_diffs, dim=0)
+    topk_return = torch.topk(loss_diffs.flatten(), k=k, largest=True)
+    topk_pos_indices = np.array(np.unravel_index(topk_return.indices.cpu().numpy(), loss_diffs.shape)).T.tolist()
+    topk_pos_values = topk_return.values
+
+    # Get the examples and their activations corresponding to the most positive and negative activations
+    topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
+    text_sep = "\n"
+    topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_values)
+    texts = []
+    for index, example, loss_diff in topk_zip:
+        batch, pos = index
+        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+        print(f"Example: {model.to_string(example)}, Loss diff: {loss_diff:.4f}, Batch: {batch}, Pos: {pos}")
+        text_window.append(text_sep)
+        texts += text_window
+    return texts
 # %%
 loss_diff_text = get_resample_ablated_loss_diffs(sentiment_dir, model, dataloader, k=50, window_size=10)
 plot_neuroscope(''.join(loss_diff_text), centred=True)
