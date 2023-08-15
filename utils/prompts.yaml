@@ -129,7 +129,109 @@ negative_adverbs:
   - horrifyingly
   - dreadfully
   - grimly
- 
+  - gruesomely
+  - morbidly
+  - disgustingly
+  - vilely
+  - obscenely
+  - odiously
+  - outrageously
+  - monstrously
+  - devilishly
+  - demonically
+  - sadistically
+  - viciously
+  - vilely
+  - wickedly
+  - perversely
+  - corruptly
+  - sinfully
+  - unjustly
+  - wickedly
+  - shamefully
+  - disgracefully
+  - scandalously
+  - shamelessly
+
+walk_synonyms:
+  - strolling
+  - marching
+  - striding
+  - hiking
+  - trekking
+  - ambling
+  - roaming
+  - wandering
+  - trudging
+  - meandering
+  - pacing
+  - tramping
+  - slogging
+  - treading
+  - rambling
+
+positive_feelings:
+  - happy
+  - glad
+  - cheerful
+  - joyful
+  - delighted
+  - pleased
+  - content
+  - satisfied
+  - thankful
+  - merry
+  - ecstatic
+  - thrilled
+  - sunny
+  - radiant
+  - upbeat
+  - vibrant
+  - optimistic
+  - grateful
+  - inspired
+  - festive
+  - blessed
+  - elevated
+  - sparkling
+  - lively
+  - enthusiastic
+  - ecstatic
+  - eager
+  - radiant
+  - animated
+
+negative_feelings:
+  - sad
+  - unhappy
+  - depressed
+  - miserable
+  - down
+  - desolate
+  - wretched
+  - gloomy
+  - dismal
+  - melancholy
+  - blue
+  - miserable
+  - pessimistic
+  - sour
+  - cynical
+  - disgruntled
+  - unhappy
+  - dissatisfied
+  - restless
+  - uncomfortable
+  - uneasy
+  - worried
+  - disturbed
+  - bothered
+  - distressed
+  - agitated
+  - restless
+  - anxious
+  - nervous
+
 positive_adjectives_train:
   - perfect
   - fantastic
