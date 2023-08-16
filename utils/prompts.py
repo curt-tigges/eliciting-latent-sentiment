@@ -168,6 +168,8 @@ def get_prompts(
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
     elif prompt_type == PromptType.SIMPLE_TEST:
+        positive_adjectives = prompt_config.get("positive_adjectives_test", model, filter_length=1)
+        negative_adjectives = prompt_config.get("negative_adjectives_test", model, filter_length=1)
         n_prompts = min(len(positive_adjectives), len(negative_adjectives))
         positive_adjectives = prompt_config.get("positive_adjectives_test", model, filter_length=1)
         negative_adjectives = prompt_config.get("negative_adjectives_test", model, filter_length=1)
