@@ -9,14 +9,14 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import numpy as np
 import einops
-import tqdm.auto as tqdm
+from tqdm.notebook import tqdm
 import random
 import pandas as pd
 from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from typing import Iterable, List, Tuple, Union, Optional
+from typing import Iterable, List, Tuple, Union, Optional, Dict
 from jaxtyping import Float, Int
 from torch import Tensor
 from functools import partial
@@ -35,7 +35,29 @@ from transformer_lens.hook_points import (
 )  # Hooking utilities
 import wandb
 from utils.store import save_array, save_html
-from utils.prompts import get_dataset, filter_words_by_length
+from utils.prompts import get_dataset, filter_words_by_length, PromptType
+#%%
+def get_special_positions(format_string: str, token_list: List[str]) -> Dict[str, List[int]]:
+    # Loop through each token in the token_list
+    format_idx = 0
+    curr_sub_token = None
+    out = dict()
+    for token_index, token in enumerate(token_list):
+        # Check if the token appears in the format_string
+        # print(format_idx, token_index, token, curr_sub_token, out)
+        if format_string[format_idx] == '{':
+            curr_sub_token = format_string[format_idx + 1:format_string.find('}', format_idx)]
+        if format_string.find(token, format_idx) >= 0:
+            format_idx = format_string.find(token, format_idx) + len(token)
+        elif curr_sub_token is not None:
+            out[curr_sub_token] = out.get(curr_sub_token, []) + [token_index]
+    
+    return out
+
+# Test
+format_string = "|endoftext|> The traveller{ADV} walked to their destination. The traveller felt very"
+token_list = ['', 'The', ' traveller', ' excited', 'ly', ' walked', ' to', ' their', ' destination', '.', ' The', ' traveller', ' felt', ' very']
+print(get_special_positions(format_string, token_list))  # Expected output: {'ADV': [3, 4]}
 # ============================================================================ #
 # model loading
 
@@ -53,10 +75,6 @@ model.name = MODEL_NAME
 #%%
 # ============================================================================ #
 # Data loading
-POSITION_MARKERS = [
-    ' perfect', ' amazing', ' impressive', 'rily', ' fabulous',
-    'antly', 'ant', ' Mandela', ' diagnostic',
-]
 #%%
 class KMeansDataset:
 
@@ -71,6 +89,9 @@ class KMeansDataset:
         model: HookedTransformer,
         name: str,
     ) -> None:
+        assert len(prompt_strings) == len(prompt_tokens)
+        assert len(prompt_strings) == len(binary_labels)
+        assert len(prompt_strings) == len(str_labels)
         self.prompt_strings = prompt_strings
         self.prompt_tokens = prompt_tokens
         self.binary_labels = binary_labels
@@ -103,19 +124,21 @@ def get_km_dataset(
     model: HookedTransformer,
     device: torch.device,
     prompt_type: str = "simple_train",
-    position_markers: List[str] = POSITION_MARKERS,
+    position_type: str = 'ADJ',
 ) -> KMeansDataset:
     all_prompts, answer_tokens, clean_tokens, _ = get_dataset(model, device, prompt_type=prompt_type)
     example_str_tokens = model.to_str_tokens(all_prompts[0])
-    for marker in position_markers:
-        if marker in example_str_tokens:
-            embed_position = example_str_tokens.index(marker)
-            break
-    else:
-        raise ValueError(f'Could not find position marker in example tokens {example_str_tokens}')
+    special_position_dict = get_special_positions(prompt_type.get_format_string(), example_str_tokens)
+    label_positions = [pos for key, positions in special_position_dict.items() for pos in positions]
     example_prompt_indexed = [f"{i}:{tok}" for i, tok in enumerate(example_str_tokens)]
     clean_labels = answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0]
-    str_labels = [model.to_str_tokens(p)[embed_position] for p in all_prompts]
+    str_labels = [''.join([model.to_str_tokens(prompt)[pos] for pos in label_positions]) for prompt in all_prompts]
+    assert len(all_prompts) == len(answer_tokens)
+    assert len(all_prompts) == len(clean_tokens)
+    assert len(str_labels) == len(clean_labels)
+    assert len(str_labels) == len(clean_tokens)
+    assert position_type in special_position_dict.keys()
+    embed_position = special_position_dict[position_type][-1]
     return KMeansDataset(
         all_prompts,
         clean_tokens,
@@ -321,6 +344,11 @@ def train_kmeans(
         len(set(km_first_cluster) & set(train_positive_adjectives)) >
         len(set(km_second_cluster) & set(train_positive_adjectives))
     )
+    print(
+        f"Cluster 1: {km_first_cluster}, "
+        f"Cluster 2: {km_second_cluster}, "
+        f"Positive first: {pos_first}"
+    )
     if pos_first:
         train_positive_cluster = km_first_cluster
         train_negative_cluster = km_second_cluster
@@ -354,12 +382,26 @@ def train_kmeans(
         np.linalg.norm(km_line) * np.linalg.norm(test_line)
     )
     # get accuracy
+    _, _, insample_accuracy = get_accuracy(
+        train_positive_cluster,
+        train_negative_cluster,
+        train_positive_adjectives,
+        train_negative_adjectives,
+    )
     correct, total, accuracy = get_accuracy(
         test_positive_cluster,
         test_negative_cluster,
         test_positive_adjectives,
         test_negative_adjectives,
     )
+    if train_data.name == test_data.name and train_layer == test_layer:
+        assert accuracy >= 0.5, (
+            f"Accuracy should be at least 50%, got {accuracy:.1%}, "
+            f"direct calc:{insample_accuracy:.1%}, "
+            f"train:{str(train_data.name)}, layer:{train_layer}, \n"
+            f"positive cluster: {test_positive_cluster}\n"
+            f"negative cluster: {test_negative_cluster}"
+        )
     columns = [
         'train_set', 'train_layer', 'test_set', 'test_layer', 
         'correct', 'total', 'accuracy', 'similarity',
@@ -472,12 +514,12 @@ def train_pca(
     return fig
 #%%
 PROMPT_TYPES = [
-    "simple_train",
-    "simple_test",
-    "simple_adverb",
-    "simple_french",
-    "proper_nouns",
-    "medical",
+    PromptType.SIMPLE_TRAIN,
+    PromptType.SIMPLE_TEST,
+    PromptType.SIMPLE_ADVERB,
+    PromptType.SIMPLE_FRENCH,
+    PromptType.PROPER_NOUNS,
+    PromptType.MEDICAL,
 ]
 LAYERS = list(range(model.cfg.n_layers + 1))
 ITERATOR = tqdm(
@@ -487,24 +529,54 @@ ITERATOR = tqdm(
 for train_type, train_layer, test_type, test_layer in ITERATOR:
     if train_layer != test_layer:
         continue
-    query = (
-        "(train_set == @train_type) & "
-        "(test_set == @test_type) & "
-        "(train_layer == @train_layer) & "
-        "(test_layer == @test_layer)"
-    )
-    if eval_csv(query, "km_stats", model):
-        continue
-    print(f"Training {train_type} layer {train_layer} on {test_type} layer {test_layer}")
-    trainset = get_km_dataset(model, device, prompt_type=train_type)
-    testset = get_km_dataset(model, device, prompt_type=test_type)
-    train_kmeans(
-        trainset, train_layer,
-        testset, test_layer,
-    )
-    train_pca(
-        trainset, train_layer,
-        testset, test_layer,
+    for train_pos in train_type.get_placeholders():
+        for test_pos in test_type.get_placeholders():
+            if train_pos != test_pos:
+                continue
+        query = (
+            "(train_set == @train_type) & "
+            "(test_set == @test_type) & "
+            "(train_layer == @train_layer) & "
+            "(test_layer == @test_layer) &"
+            "(train_pos == @train_pos) & "
+            "(test_pos == @test_pos)"
+        )
+    # if eval_csv(query, "km_stats", model):
+    #     continue
+        from tqdm import tqdm
+
+        ITERATOR = tqdm(
+            itertools.product(PROMPT_TYPES, LAYERS, PROMPT_TYPES, LAYERS),
+            total=len(PROMPT_TYPES) ** 2 * len(LAYERS) ** 2,
+        )
+
+        for train_type, train_layer, test_type, test_layer in ITERATOR:
+            if train_layer != test_layer:
+                continue
+            for train_pos in train_type.get_placeholders():
+                for test_pos in test_type.get_placeholders():
+                    if train_pos != test_pos:
+                        continue
+                    ITERATOR.set_description(f"Training on {train_type} layer {train_layer} and evaluating on {test_type} layer {test_layer}")
+                    trainset = get_km_dataset(model, device, prompt_type=train_type, position_type=train_pos)
+                    testset = get_km_dataset(model, device, prompt_type=test_type, position_type=test_pos)
+                    train_kmeans(
+                        trainset, train_layer,
+                        testset, test_layer,
+                    )
+                    train_pca(
+                        trainset, train_layer,
+                        testset, test_layer,
+                    )
+        trainset = get_km_dataset(model, device, prompt_type=train_type, position_type=train_pos)
+        testset = get_km_dataset(model, device, prompt_type=test_type, position_type=test_pos)
+        train_kmeans(
+            trainset, train_layer,
+            testset, test_layer,
+        )
+        train_pca(
+            trainset, train_layer,
+            testset, test_layer,
     )
 #%%
 km_stats = get_csv("km_stats", model)
@@ -513,15 +585,19 @@ km_stats
 def hide_nan(val):
     return '' if pd.isna(val) else f"{val:.1%}"
 #%%
-km_stats.pivot(
-    index=["train_set", "train_layer"],
+accuracy_styler = km_stats.pivot(
+    index=["train_set", "train_layer", "train_pos"],
     columns=["test_set"],
     values="accuracy",
 ).style.background_gradient(cmap="Reds").format(hide_nan).set_caption("K-means accuracy")
+save_html(accuracy_styler, "km_accuracy", model)
+display(accuracy_styler)
 #%%
-km_stats.pivot(
-    index=["train_set", "train_layer"],
+similarity_styler = km_stats.pivot(
+    index=["train_set", "train_layer", "train_pos"],
     columns=["test_set"],
     values="similarity",
 ).style.background_gradient(cmap="Reds").format(hide_nan).set_caption("K-means cosine similarities")
+save_html(similarity_styler, "km_similarity", model)
+display(similarity_styler)
 # %%
