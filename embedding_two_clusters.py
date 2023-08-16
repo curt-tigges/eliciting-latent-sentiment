@@ -503,12 +503,12 @@ for train_type, train_layer, test_type, test_layer in BAR:
     )
     for train_pos, test_pos in placeholders:
         query = (
-            "(train_set == @train_type.value) & "
-            "(test_set == @test_type.value) & "
-            "(train_layer == @train_layer) & "
-            "(test_layer == @test_layer) &"
-            "(train_pos == @train_pos) & "
-            "(test_pos == @test_pos)"
+            f"(train_set == '{train_type.value}') & "
+            f"(test_set == '{test_type.value}') & "
+            f"(train_layer == {train_layer}) & "
+            f"(test_layer == {test_layer}) &"
+            f"(train_pos == '{train_pos}') & "
+            f"(test_pos == '{test_pos}')"
         )
         if eval_csv(query, "km_stats", model):
             continue
