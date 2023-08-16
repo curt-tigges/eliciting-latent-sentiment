@@ -42,9 +42,10 @@ def get_special_positions(format_string: str, token_list: List[str]) -> Dict[str
     format_idx = 0
     curr_sub_token = None
     out = dict()
+    # print('get_special_positions', format_string, token_list)
     for token_index, token in enumerate(token_list):
         # Check if the token appears in the format_string
-        # print(format_idx, token_index, token, curr_sub_token, out)
+        # print(token_index, token, format_idx, curr_sub_token, out)
         if format_string[format_idx] == '{':
             curr_sub_token = format_string[format_idx + 1:format_string.find('}', format_idx)]
         if format_string.find(token, format_idx) >= 0:
@@ -55,9 +56,9 @@ def get_special_positions(format_string: str, token_list: List[str]) -> Dict[str
     return out
 
 # Test
-format_string = "|endoftext|> The traveller{ADV} walked to their destination. The traveller felt very"
-token_list = ['', 'The', ' traveller', ' excited', 'ly', ' walked', ' to', ' their', ' destination', '.', ' The', ' traveller', ' felt', ' very']
-print(get_special_positions(format_string, token_list))  # Expected output: {'ADV': [3, 4]}
+format_string = "|endoftext|> When I hear the name{NOUN}, I feel very"
+token_list = ['0:<|endoftext|>', '1:When', '2: I', '3: hear', '4: the', '5: name', '6: Mandela', '7:,', '8: I', '9: feel', '10: very']
+print(get_special_positions(format_string, token_list)) 
 # ============================================================================ #
 # model loading
 
@@ -83,23 +84,31 @@ class KMeansDataset:
         prompt_strings: List[str], 
         prompt_tokens: Int[Tensor, "batch pos"], 
         binary_labels: Int[Tensor, "batch"],
-        str_labels: List[str],
-        embed_position: int,
-        example: List[str],
+        position_type: str,
         model: HookedTransformer,
-        name: str,
+        prompt_type: str,
     ) -> None:
         assert len(prompt_strings) == len(prompt_tokens)
         assert len(prompt_strings) == len(binary_labels)
-        assert len(prompt_strings) == len(str_labels)
         self.prompt_strings = prompt_strings
         self.prompt_tokens = prompt_tokens
         self.binary_labels = binary_labels
-        self.str_labels = str_labels
-        self.embed_position = embed_position
-        self.example = example
         self.model = model
-        self.name = name
+        self.prompt_type = prompt_type
+        example_str_tokens = model.to_str_tokens(prompt_strings[0])
+        self.example = [f"{i}:{tok}" for i, tok in enumerate(example_str_tokens)]
+        self.special_position_dict = get_special_positions(prompt_type.get_format_string(), example_str_tokens)
+        label_positions = [pos for _, positions in self.special_position_dict.items() for pos in positions]
+        assert position_type in self.special_position_dict.keys(), (
+            f"Position type {position_type} not found in {self.special_position_dict.keys()} "
+            f"for prompt type {prompt_type}"
+        )
+        self.embed_position = self.special_position_dict[position_type][-1]
+        self.position_type = position_type
+        self.str_labels = [
+            ''.join([model.to_str_tokens(prompt)[pos] for pos in label_positions]) 
+            for prompt in prompt_strings
+        ]
 
     def __len__(self) -> int:
         return len(self.prompt_strings)
@@ -127,25 +136,15 @@ def get_km_dataset(
     position_type: str = 'ADJ',
 ) -> KMeansDataset:
     all_prompts, answer_tokens, clean_tokens, _ = get_dataset(model, device, prompt_type=prompt_type)
-    example_str_tokens = model.to_str_tokens(all_prompts[0])
-    special_position_dict = get_special_positions(prompt_type.get_format_string(), example_str_tokens)
-    label_positions = [pos for key, positions in special_position_dict.items() for pos in positions]
-    example_prompt_indexed = [f"{i}:{tok}" for i, tok in enumerate(example_str_tokens)]
     clean_labels = answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0]
-    str_labels = [''.join([model.to_str_tokens(prompt)[pos] for pos in label_positions]) for prompt in all_prompts]
+    
     assert len(all_prompts) == len(answer_tokens)
     assert len(all_prompts) == len(clean_tokens)
-    assert len(str_labels) == len(clean_labels)
-    assert len(str_labels) == len(clean_tokens)
-    assert position_type in special_position_dict.keys()
-    embed_position = special_position_dict[position_type][-1]
     return KMeansDataset(
         all_prompts,
         clean_tokens,
         clean_labels,
-        str_labels,
-        embed_position,
-        example_prompt_indexed,
+        position_type,
         model,
         prompt_type,
     )
@@ -271,7 +270,7 @@ def update_csv(
     data: pd.DataFrame,
     label: str, 
     model: Union[HookedTransformer, str], 
-    key_cols: Iterable[str] = ('train_set', 'train_layer', 'test_set', 'test_layer'),
+    key_cols: Iterable[str] = ('train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'),
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -295,6 +294,8 @@ def get_csv(
     label = clean_label(label)
     model_path = os.path.join('data', model)
     path = os.path.join(model_path, label + '.csv')
+    if not os.path.exists(path):
+        return pd.DataFrame()
     df = pd.read_csv(path)
     df = df.drop_duplicates(subset=key_cols)
     return df
@@ -306,6 +307,8 @@ def eval_csv(
     model: Union[HookedTransformer, str],
 ):
     df = get_csv(label, model)
+    if df.empty:
+        return False
     return df.eval(query).any()
 #%%
 # ============================================================================ #
@@ -316,6 +319,7 @@ def train_kmeans(
     test_data: KMeansDataset, test_layer: int,
     n_init: int = 10,
     n_clusters: int = 2,
+    random_state: int = 0,
 ):
     train_embeddings = train_data.embed(train_layer)
     test_embeddings = test_data.embed(test_layer)
@@ -331,7 +335,7 @@ def train_kmeans(
     test_negative_adjectives = [
         adj.strip() for adj, label in zip(test_data.str_labels, test_data.binary_labels) if label == 0
     ]
-    kmeans = KMeans(n_clusters=n_clusters, n_init=n_init)
+    kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
     kmeans.fit(train_embeddings)
     train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
     test_km_labels = kmeans.predict(test_embeddings)
@@ -340,15 +344,11 @@ def train_kmeans(
     km_first_cluster, km_second_cluster = split_by_label(
         train_data.str_labels, train_km_labels
     )
-    pos_first = (
-        len(set(km_first_cluster) & set(train_positive_adjectives)) >
-        len(set(km_second_cluster) & set(train_positive_adjectives))
-    )
-    print(
-        f"Cluster 1: {km_first_cluster}, "
-        f"Cluster 2: {km_second_cluster}, "
-        f"Positive first: {pos_first}"
-    )
+    one_pos = len(set(km_first_cluster) & set(train_positive_adjectives))
+    one_neg = len(set(km_first_cluster) & set(train_negative_adjectives))
+    two_pos = len(set(km_second_cluster) & set(train_positive_adjectives))
+    two_neg = len(set(km_second_cluster) & set(train_negative_adjectives))
+    pos_first = one_pos + two_neg > one_neg + two_pos
     if pos_first:
         train_positive_cluster = km_first_cluster
         train_negative_cluster = km_second_cluster
@@ -371,16 +371,19 @@ def train_kmeans(
         km_positive_centroid - km_negative_centroid
     )
     # write k means line to file
-    save_array(km_line, f"km_{train_data.name}_layer{train_layer}", model)
+    save_array(km_line, f"km_{train_data.prompt_type.value}_layer{train_layer}", model)
     # compute cosine sim
-    test_kmeans = KMeans(n_clusters=n_clusters, n_init=n_init)
+    test_kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
     test_kmeans.fit(test_embeddings)
     test_line: Float[np.ndarray, "d_model"] = (
         test_kmeans.cluster_centers_[0, :] - test_kmeans.cluster_centers_[1, :]
-    )
-    cosine_sim = np.dot(km_line, test_line) / (
-        np.linalg.norm(km_line) * np.linalg.norm(test_line)
-    )
+    ) * (1 if pos_first else -1)
+    if np.linalg.norm(test_line) < 1e-6:
+        cosine_sim = 0
+    else:
+        cosine_sim = np.dot(km_line, test_line) / (
+            np.linalg.norm(km_line) * np.linalg.norm(test_line)
+        )
     # get accuracy
     _, _, insample_accuracy = get_accuracy(
         train_positive_cluster,
@@ -394,25 +397,37 @@ def train_kmeans(
         test_positive_adjectives,
         test_negative_adjectives,
     )
-    if train_data.name == test_data.name and train_layer == test_layer:
+    is_insample = (
+        train_data.prompt_type == test_data.prompt_type and
+        train_data.position_type == test_data.position_type and
+        train_layer == test_layer
+    )
+    if is_insample:
         assert accuracy >= 0.5, (
             f"Accuracy should be at least 50%, got {accuracy:.1%}, "
             f"direct calc:{insample_accuracy:.1%}, "
-            f"train:{str(train_data.name)}, layer:{train_layer}, \n"
-            f"positive cluster: {test_positive_cluster}\n"
-            f"negative cluster: {test_negative_cluster}"
+            f"train:{train_data.prompt_type.value}, layer:{train_layer}, \n"
+            f"positive cluster: {sorted(test_positive_cluster)}\n"
+            f"negative cluster: {sorted(test_negative_cluster)}\n"
+            f"positive adjectives: {sorted(test_positive_adjectives)}\n"
+            f"negative adjectives: {sorted(test_negative_adjectives)}\n"
         )
     columns = [
-        'train_set', 'train_layer', 'test_set', 'test_layer', 
+        'train_set', 'train_layer', 'train_pos',
+        'test_set', 'test_layer',  'test_pos',
         'correct', 'total', 'accuracy', 'similarity',
     ]
     data = [[
-        train_data.name, train_layer, test_data.name, test_layer,
+        train_data.prompt_type.value, train_layer, train_data.position_type,
+        test_data.prompt_type.value, test_layer, test_data.position_type,
         correct, total, accuracy, cosine_sim,
     ]]
-    accuracy_df = pd.DataFrame(data, columns=columns)
+    stats_df = pd.DataFrame(data, columns=columns)
+    # if test_data.position_type == 'VRB':
+    #     print('Adding VRB data to csv')
+    #     print(stats_df)
     update_csv(
-        accuracy_df, "km_stats", model
+        stats_df, "km_stats", model
     )
 
 # %%
@@ -424,6 +439,7 @@ def train_pca(
     return_figure: bool = False,
     n_init: int = 10,
     n_clusters: int = 2,
+    random_state: int = 0,
 ) -> Tuple[pd.DataFrame, go.Figure]:
     train_embeddings = train_data.embed(train_layer)
     test_embeddings = test_data.embed(test_layer)
@@ -442,21 +458,22 @@ def train_pca(
     pca = PCA(n_components=2)
     train_pcs = pca.fit_transform(train_embeddings.numpy())
     test_pcs = pca.transform(test_embeddings.numpy())
-    kmeans = KMeans(n_clusters=n_clusters, n_init=n_init)
+    kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
     kmeans.fit(train_pcs)
     train_pca_labels: Int[np.ndarray, "batch"] = kmeans.labels_
     test_pca_labels = kmeans.predict(test_pcs)
     pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
     # PCA components should already be normalised, but just in case
     comp_unit = pca.components_[0, :] / np.linalg.norm(pca.components_[0, :])
-    save_array(comp_unit, f"pca_0_{train_data.name}_layer{train_layer}", model)
+    save_array(comp_unit, f"pca_0_{train_data.prompt_type.value}_layer{train_layer}", model)
     pca_first_cluster, pca_second_cluster = split_by_label(
         train_data.str_labels, train_pca_labels
     )
-    pca_pos_first = (
-        len(set(pca_first_cluster) & set(train_positive_adjectives)) >
-        len(set(pca_second_cluster) & set(train_positive_adjectives))
-    )
+    one_pos = len(set(pca_first_cluster) & set(train_positive_adjectives))
+    one_neg = len(set(pca_first_cluster) & set(train_negative_adjectives))
+    two_pos = len(set(pca_second_cluster) & set(train_positive_adjectives))
+    two_neg = len(set(pca_second_cluster) & set(train_negative_adjectives))
+    pca_pos_first = one_pos + two_neg > one_neg + two_pos
     if pca_pos_first:
         # positive first
         train_pca_positive_cluster = pca_first_cluster
@@ -482,9 +499,12 @@ def train_pca(
     test_pca.fit_transform(train_embeddings.numpy())
     test_comp_unit = test_pca.components_[0, :] / np.linalg.norm(test_pca.components_[0, :])
     # compute cosine sim
-    cosine_sim = np.dot(comp_unit, test_comp_unit) / (
-        np.linalg.norm(comp_unit) * np.linalg.norm(test_comp_unit)
-    )
+    if np.linalg.norm(test_comp_unit) < 1e-6:
+        cosine_sim = 0
+    else:
+        cosine_sim = np.dot(comp_unit, test_comp_unit) / (
+            np.linalg.norm(comp_unit) * np.linalg.norm(test_comp_unit)
+        )
     correct, total, accuracy = get_accuracy(
         test_pca_positive_cluster,
         test_pca_negative_cluster,
@@ -495,13 +515,19 @@ def train_pca(
         'train_set', 'train_layer', 'test_set', 'test_layer', 
         'correct', 'total', 'accuracy', 'similarity',
     ]
+    columns = [
+        'train_set', 'train_layer', 'train_pos',
+        'test_set', 'test_layer',  'test_pos',
+        'correct', 'total', 'accuracy', 'similarity',
+    ]
     data = [[
-        train_data.name, train_layer, test_data.name, test_layer,
+        train_data.prompt_type.value, train_layer, train_data.position_type,
+        test_data.prompt_type.value, test_layer, test_data.position_type,
         correct, total, accuracy, cosine_sim,
     ]]
-    accuracy_df = pd.DataFrame(data, columns=columns)
+    stats_df = pd.DataFrame(data, columns=columns)
     update_csv(
-        accuracy_df, "pc_stats", model
+        stats_df, "pca_stats", model
     )
     if return_figure and pca.n_components_ == 2:
         fig = plot_pca_2d(
@@ -522,52 +548,29 @@ PROMPT_TYPES = [
     PromptType.MEDICAL,
 ]
 LAYERS = list(range(model.cfg.n_layers + 1))
-ITERATOR = tqdm(
+BAR = tqdm(
     itertools.product(PROMPT_TYPES, LAYERS, PROMPT_TYPES, LAYERS),
     total=len(PROMPT_TYPES) ** 2 * len(LAYERS) ** 2,
 )
-for train_type, train_layer, test_type, test_layer in ITERATOR:
+for train_type, train_layer, test_type, test_layer in BAR:
+    BAR.set_description(f"trainset:{train_type.value}, train_layer:{train_layer}, testset:{test_type.value}, test_layer:{test_layer}")
     if train_layer != test_layer:
         continue
-    for train_pos in train_type.get_placeholders():
-        for test_pos in test_type.get_placeholders():
-            if train_pos != test_pos:
-                continue
+    placeholders = itertools.product(
+        train_type.get_placeholders(), test_type.get_placeholders()
+    )
+    for train_pos, test_pos in placeholders:
         query = (
-            "(train_set == @train_type) & "
-            "(test_set == @test_type) & "
+            "(train_set == @train_type.value) & "
+            "(test_set == @test_type.value) & "
             "(train_layer == @train_layer) & "
             "(test_layer == @test_layer) &"
             "(train_pos == @train_pos) & "
             "(test_pos == @test_pos)"
         )
-    # if eval_csv(query, "km_stats", model):
-    #     continue
-        from tqdm import tqdm
+        if eval_csv(query, "km_stats", model):
+            continue
 
-        ITERATOR = tqdm(
-            itertools.product(PROMPT_TYPES, LAYERS, PROMPT_TYPES, LAYERS),
-            total=len(PROMPT_TYPES) ** 2 * len(LAYERS) ** 2,
-        )
-
-        for train_type, train_layer, test_type, test_layer in ITERATOR:
-            if train_layer != test_layer:
-                continue
-            for train_pos in train_type.get_placeholders():
-                for test_pos in test_type.get_placeholders():
-                    if train_pos != test_pos:
-                        continue
-                    ITERATOR.set_description(f"Training on {train_type} layer {train_layer} and evaluating on {test_type} layer {test_layer}")
-                    trainset = get_km_dataset(model, device, prompt_type=train_type, position_type=train_pos)
-                    testset = get_km_dataset(model, device, prompt_type=test_type, position_type=test_pos)
-                    train_kmeans(
-                        trainset, train_layer,
-                        testset, test_layer,
-                    )
-                    train_pca(
-                        trainset, train_layer,
-                        testset, test_layer,
-                    )
         trainset = get_km_dataset(model, device, prompt_type=train_type, position_type=train_pos)
         testset = get_km_dataset(model, device, prompt_type=test_type, position_type=test_pos)
         train_kmeans(
@@ -577,7 +580,7 @@ for train_type, train_layer, test_type, test_layer in ITERATOR:
         train_pca(
             trainset, train_layer,
             testset, test_layer,
-    )
+        )
 #%%
 km_stats = get_csv("km_stats", model)
 km_stats
@@ -586,18 +589,18 @@ def hide_nan(val):
     return '' if pd.isna(val) else f"{val:.1%}"
 #%%
 accuracy_styler = km_stats.pivot(
-    index=["train_set", "train_layer", "train_pos"],
-    columns=["test_set"],
+    index=["train_set", "train_pos", "train_layer", ],
+    columns=["test_set", "test_pos"],
     values="accuracy",
-).style.background_gradient(cmap="Reds").format(hide_nan).set_caption("K-means accuracy")
+).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption("K-means accuracy")
 save_html(accuracy_styler, "km_accuracy", model)
 display(accuracy_styler)
 #%%
 similarity_styler = km_stats.pivot(
-    index=["train_set", "train_layer", "train_pos"],
-    columns=["test_set"],
+    index=["train_set",  "train_pos", "train_layer",],
+    columns=["test_set", "test_pos"],
     values="similarity",
-).style.background_gradient(cmap="Reds").format(hide_nan).set_caption("K-means cosine similarities")
+).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption("K-means cosine similarities")
 save_html(similarity_styler, "km_similarity", model)
 display(similarity_styler)
 # %%
