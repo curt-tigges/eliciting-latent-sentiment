@@ -397,7 +397,7 @@ negative_adjectives_multitoken:
   - whiny
   - xenophobic
 
-positive_french:
+positive_french_adjectives:
   - apaisant
   - captivant
   - génial
@@ -416,7 +416,7 @@ positive_french:
   - énergique
   - étonnant
 
-negative_french:
+negative_french_adjectives:
   - difficile
   - décevant
   - effrayant
@@ -447,6 +447,12 @@ negative_french_answers:
   - ennuyeux
   - difficile à regarder
   - inintéressant
+
+positive_french_verbs:
+  - adoré
+
+negative_french_verbs:
+  - détesté
 
 positive_proper_nouns:
   - Mandela

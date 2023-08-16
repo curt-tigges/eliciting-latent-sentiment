@@ -196,11 +196,13 @@ def get_prompts(
         pos_answers = prompt_config.get("positive_moods", model)
         neg_answers = prompt_config.get("negative_moods", model)
     elif prompt_type == PromptType.SIMPLE_FRENCH:
-        positive_french = prompt_config.get("positive_french", model)
-        negative_french = prompt_config.get("negative_french", model)
-        n_prompts = min(len(positive_french), len(negative_french))
-        pos_prompts = [formatter.format(ADJ=positive_french[i]) for i in range(n_prompts)]
-        neg_prompts = [formatter.format(ADJ=negative_french[i]) for i in range(n_prompts)]
+        positive_french_adj = prompt_config.get("positive_french_adjectives", model)
+        negative_french_adj = prompt_config.get("negative_french_adjectives", model)
+        positive_french_verbs = prompt_config.get("positive_french_verbs", model)
+        negative_french_verbs = prompt_config.get("negative_french_verbs", model)
+        n_prompts = min(len(positive_french_adj), len(negative_french_adj))
+        pos_prompts = [formatter.format(ADJ=positive_french_adj[i], VRB=positive_french_verbs[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_french_adj[i], VRB=negative_french_verbs[i]) for i in range(n_prompts)]
         neutral_prompts = None
         pos_answers = prompt_config.get("positive_french_answers", model, truncate_length=1)
         neg_answers = prompt_config.get("negative_french_answers", model, truncate_length=1)
@@ -253,6 +255,7 @@ def get_prompts(
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
     
+    # assertion checks
     assert len(pos_prompts) == len(neg_prompts), (
         f"Number of positive prompts ({len(pos_prompts)}) "
         f"does not match number of negative prompts ({len(neg_prompts)}). "
@@ -261,7 +264,16 @@ def get_prompts(
         f"Full list of positive prompts: {pos_prompts}. \n"
         f"Full list of negative prompts: {neg_prompts}."
     )
+    assert len(pos_prompts) == len(pos_answers), (
+        f"Number of positive prompts ({len(pos_prompts)}) "
+        f"does not match number of positive answers ({len(pos_answers)}). "
+        f"Please check the prompts.yaml file. \n"
+        f"Prompt type: {prompt_type}\n"
+        f"Full list of positive prompts: {pos_prompts}. \n"
+        f"Full list of positive answers: {pos_answers}."
+    )
 
+    # create output dicts
     prompt_dict = dict(
         positive=pos_prompts,
         negative=neg_prompts,
