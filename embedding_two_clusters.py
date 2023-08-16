@@ -34,7 +34,7 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import save_array, save_html
+from utils.store import save_array, save_html, update_csv, get_csv, eval_csv
 from utils.prompts import get_dataset, filter_words_by_length, PromptType
 #%%
 def get_special_positions(format_string: str, token_list: List[str]) -> Dict[str, List[int]]:
@@ -76,6 +76,9 @@ model.name = MODEL_NAME
 #%%
 # ============================================================================ #
 # Data loading
+CSV_COLS = (
+    'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+)
 #%%
 class KMeansDataset:
 
@@ -250,70 +253,6 @@ def plot_pca_2d(
     )
     return fig
 #%%
-CSV_COLS = (
-    'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
-)
-def clean_label(label: str) -> str:
-    label = label.replace('.npy', '')
-    label = label.replace('.html', '')
-    label = label.replace('data/', '')
-    assert "/" not in label, "Label must not contain slashes"
-    return label
-
-
-def get_model_name(model: Union[HookedTransformer, str]) -> str:
-    if isinstance(model, HookedTransformer):
-        assert len(model.name) > 0, "Model must have a name"
-        model = model.name
-    model = model.replace('EleutherAI/', '')
-    return model
-
-
-def update_csv(
-    data: pd.DataFrame,
-    label: str, 
-    model: Union[HookedTransformer, str], 
-    key_cols: Iterable[str] = CSV_COLS,
-):
-    model: str = get_model_name(model)
-    label = clean_label(label)
-    model_path = os.path.join('data', model)
-    if not os.path.exists(model_path):
-        os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.csv')
-    curr = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
-    curr = pd.concat([curr, data], axis=0)
-    curr = curr.drop_duplicates(subset=key_cols)
-    curr.to_csv(path, index=False)
-    return path
-
-
-def get_csv(
-    label: str,
-    model: Union[HookedTransformer, str],
-    key_cols: Iterable[str] = CSV_COLS,
-) -> pd.DataFrame:
-    model: str = get_model_name(model)
-    label = clean_label(label)
-    model_path = os.path.join('data', model)
-    path = os.path.join(model_path, label + '.csv')
-    if not os.path.exists(path):
-        return pd.DataFrame()
-    df = pd.read_csv(path)
-    df = df.drop_duplicates(subset=key_cols)
-    return df
-
-
-def eval_csv(
-    query: str,
-    label: str,
-    model: Union[HookedTransformer, str],
-):
-    df = get_csv(label, model)
-    if df.empty:
-        return False
-    return df.eval(query).any()
-#%%
 # ============================================================================ #
 # K-means
 #%%
@@ -430,7 +369,7 @@ def train_kmeans(
     #     print('Adding VRB data to csv')
     #     print(stats_df)
     update_csv(
-        stats_df, "km_stats", model
+        stats_df, "km_stats", model, key_cols=CSV_COLS
     )
 
 # %%
@@ -530,7 +469,7 @@ def train_pca(
     ]]
     stats_df = pd.DataFrame(data, columns=columns)
     update_csv(
-        stats_df, "pca_stats", model
+        stats_df, "pca_stats", model, key_cols=CSV_COLS
     )
     if return_figure and pca.n_components_ == 2:
         fig = plot_pca_2d(
@@ -585,7 +524,7 @@ for train_type, train_layer, test_type, test_layer in BAR:
             testset, test_layer,
         )
 #%%
-km_stats = get_csv("km_stats", model)
+km_stats = get_csv("km_stats", model, key_cols=CSV_COLS)
 km_stats
 #%%
 km_stats.train_pos.value_counts()

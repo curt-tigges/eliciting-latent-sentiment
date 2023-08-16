@@ -1,8 +1,9 @@
 import numpy as np
+import pandas as pd
 import glob
 import os
 from transformer_lens import HookedTransformer
-from typing import Union
+from typing import Iterable, Union
 import torch
 import plotly.graph_objects as go
 from circuitsvis.utils.render import RenderedHTML
@@ -23,6 +24,57 @@ def get_model_name(model: Union[HookedTransformer, str]) -> str:
         model = model.name
     model = model.replace('EleutherAI/', '')
     return model
+
+
+def update_csv(
+    data: pd.DataFrame,
+    label: str, 
+    model: Union[HookedTransformer, str], 
+    key_cols: Iterable[str] = None,
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.csv')
+    curr = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+    curr = pd.concat([curr, data], axis=0)
+    if key_cols is not None:
+        curr = curr.drop_duplicates(subset=key_cols)
+    curr.to_csv(path, index=False)
+    return path
+
+
+def get_csv(
+    label: str,
+    model: Union[HookedTransformer, str],
+    key_cols: Iterable[str] = None,
+) -> pd.DataFrame:
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    path = os.path.join(model_path, label + '.csv')
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    df = pd.read_csv(path)
+    if key_cols is not None:
+        df = df.drop_duplicates(subset=key_cols)
+    return df
+
+
+def eval_csv(
+    query: str,
+    label: str,
+    model: Union[HookedTransformer, str],
+    key_cols: Iterable[str] = None,
+):
+    df = get_csv(label, model)
+    if df.empty:
+        return False
+    if key_cols is not None:
+        df = df.drop_duplicates(subset=key_cols)
+    return df.eval(query).any()
 
 
 def save_array(
