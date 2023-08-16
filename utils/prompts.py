@@ -156,21 +156,21 @@ def get_prompts(
     formatter = prompt_type.get_format_string()
 
     if prompt_type == PromptType.SIMPLE:
-        pos_prompts = [formatter.format(ADJ=positive_adjectives[i]) for i in range(len(positive_adjectives))]
-        neg_prompts = [formatter.format(ADJ=negative_adjectives[i]) for i in range(len(negative_adjectives))]
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(len(positive_adjectives))]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(len(negative_adjectives))]
         neutral_prompts = [formatter.format(ADJ=neutral_adjectives[i]) for i in range(len(neutral_adjectives))]
     elif prompt_type == PromptType.SIMPLE_TRAIN:
         positive_adjectives = prompt_config.get("positive_adjectives_train", model, filter_length=1)
         negative_adjectives = prompt_config.get("negative_adjectives_train", model, filter_length=1)
         neutral_prompts = None
-        pos_prompts = [formatter.format(ADJ=positive_adjectives[i]) for i in range(len(positive_adjectives))]
-        neg_prompts = [formatter.format(ADJ=negative_adjectives[i]) for i in range(len(negative_adjectives))]
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(len(positive_adjectives))]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(len(negative_adjectives))]
     elif prompt_type == PromptType.SIMPLE_TEST:
         positive_adjectives = prompt_config.get("positive_adjectives_test", model, filter_length=1)
         negative_adjectives = prompt_config.get("negative_adjectives_test", model, filter_length=1)
         neutral_prompts = None
-        pos_prompts = [formatter.format(ADJ=positive_adjectives[i]) for i in range(len(positive_adjectives))]
-        neg_prompts = [formatter.format(ADJ=negative_adjectives[i]) for i in range(len(negative_adjectives))]
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(len(positive_adjectives))]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(len(negative_adjectives))]
     elif prompt_type == PromptType.SIMPLE_MOOD:
         walking_synonyms: CircularList[str]  = prompt_config.get("walk_synonyms", model)
         positive_feelings: CircularList[str] = prompt_config.get("positive_feelings", model)
