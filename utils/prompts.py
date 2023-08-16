@@ -255,7 +255,7 @@ def get_prompts(
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
     
-    # assertion checks
+    # check length match
     assert len(pos_prompts) == len(neg_prompts), (
         f"Number of positive prompts ({len(pos_prompts)}) "
         f"does not match number of negative prompts ({len(neg_prompts)}). "
@@ -263,14 +263,6 @@ def get_prompts(
         f"Prompt type: {prompt_type}\n"
         f"Full list of positive prompts: {pos_prompts}. \n"
         f"Full list of negative prompts: {neg_prompts}."
-    )
-    assert len(pos_prompts) == len(pos_answers), (
-        f"Number of positive prompts ({len(pos_prompts)}) "
-        f"does not match number of positive answers ({len(pos_answers)}). "
-        f"Please check the prompts.yaml file. \n"
-        f"Prompt type: {prompt_type}\n"
-        f"Full list of positive prompts: {pos_prompts}. \n"
-        f"Full list of positive answers: {pos_answers}."
     )
 
     # create output dicts
