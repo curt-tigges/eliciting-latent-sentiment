@@ -319,7 +319,6 @@ positive_adjectives_test:
   - glorious
   - magical
   - pleasing
-  - movie
 
 negative_adjectives_test:
   - foul
@@ -530,3 +529,27 @@ negative_medical:
   - toxic
   - traumatic
   - viral
+
+positive_verbs:
+  - enjoyed
+  - loved
+  - liked
+  - appreciated
+  - admired
+
+negative_verbs:
+  - hated
+  - disliked
+  - despised
+
+neutral_verbs:
+  - watched
+
+neutral_top_adjectives:
+  - average
+
+positive_top_adjectives:
+  - good
+
+negative_top_adjectives:
+  - bad
