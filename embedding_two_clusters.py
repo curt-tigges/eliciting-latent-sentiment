@@ -255,8 +255,7 @@ def plot_pca_2d(
 #%%
 # ============================================================================ #
 # K-means
-#%%
-def train_kmeans(
+def _fit_kmeans(
     train_data: KMeansDataset, train_layer: int,
     test_data: KMeansDataset, test_layer: int,
     n_init: int = 10,
@@ -312,20 +311,6 @@ def train_kmeans(
     km_line: Float[np.ndarray, "d_model"] = (
         km_positive_centroid - km_negative_centroid
     )
-    # write k means line to file
-    save_array(km_line, f"km_{train_data.prompt_type.value}_layer{train_layer}", model)
-    # compute cosine sim
-    test_kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
-    test_kmeans.fit(test_embeddings)
-    test_line: Float[np.ndarray, "d_model"] = (
-        test_kmeans.cluster_centers_[0, :] - test_kmeans.cluster_centers_[1, :]
-    ) * (1 if pos_first else -1)
-    if np.linalg.norm(test_line) < 1e-6:
-        cosine_sim = 0
-    else:
-        cosine_sim = np.dot(km_line, test_line) / (
-            np.linalg.norm(km_line) * np.linalg.norm(test_line)
-        )
     # get accuracy
     _, _, insample_accuracy = get_accuracy(
         train_positive_cluster,
@@ -354,6 +339,49 @@ def train_kmeans(
             f"positive adjectives: {sorted(test_positive_adjectives)}\n"
             f"negative adjectives: {sorted(test_negative_adjectives)}\n"
         )
+    
+    return km_line, correct, total, accuracy
+#%%
+def safe_cosine_sim(
+    line1: Float[np.ndarray, "d_model"], line2: Float[np.ndarray, "d_model"],
+    tol: float = 1e-6, min_value: float = -0.9,
+):
+    if np.linalg.norm(line1) < tol or np.linalg.norm(line2) < tol:
+        cosine_sim = 0
+    else:
+        cosine_sim = np.dot(line1, line2) / (
+            np.linalg.norm(line1) * np.linalg.norm(line2)
+        )
+    assert cosine_sim >= min_value, (
+        f"cosine sim very negative ({cosine_sim:.2f}), looks like a flipped sign"
+    )
+    return cosine_sim
+#%%
+def train_kmeans(
+    train_data: KMeansDataset, train_layer: int,
+    test_data: KMeansDataset, test_layer: int,
+    n_init: int = 10,
+    n_clusters: int = 2,
+    random_state: int = 0,
+):
+    km_line, correct, total, accuracy = _fit_kmeans(
+        train_data, train_layer,
+        test_data, test_layer,
+        n_init=n_init,
+        n_clusters=n_clusters,
+        random_state=random_state,
+    )
+    test_line, _, _, _ = _fit_kmeans(
+        test_data, test_layer,
+        test_data, test_layer,
+        n_init=n_init,
+        n_clusters=n_clusters,
+        random_state=random_state,
+    )
+    # write k means line to file
+    save_array(km_line, f"km_{train_data.prompt_type.value}_layer{train_layer}", model)
+
+    cosine_sim = safe_cosine_sim(km_line, test_line)
     columns = [
         'train_set', 'train_layer', 'train_pos',
         'test_set', 'test_layer',  'test_pos',
@@ -365,9 +393,7 @@ def train_kmeans(
         correct, total, accuracy, cosine_sim,
     ]]
     stats_df = pd.DataFrame(data, columns=columns)
-    # if test_data.position_type == 'VRB':
-    #     print('Adding VRB data to csv')
-    #     print(stats_df)
+    
     update_csv(
         stats_df, "km_stats", model, key_cols=CSV_COLS
     )
@@ -453,10 +479,6 @@ def train_pca(
         test_positive_adjectives,
         test_negative_adjectives,
     )
-    columns = [
-        'train_set', 'train_layer', 'test_set', 'test_layer', 
-        'correct', 'total', 'accuracy', 'similarity',
-    ]
     columns = [
         'train_set', 'train_layer', 'train_pos',
         'test_set', 'test_layer',  'test_pos',
