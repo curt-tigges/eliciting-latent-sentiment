@@ -250,6 +250,9 @@ def plot_pca_2d(
     )
     return fig
 #%%
+CSV_COLS = (
+    'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+)
 def clean_label(label: str) -> str:
     label = label.replace('.npy', '')
     label = label.replace('.html', '')
@@ -270,7 +273,7 @@ def update_csv(
     data: pd.DataFrame,
     label: str, 
     model: Union[HookedTransformer, str], 
-    key_cols: Iterable[str] = ('train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'),
+    key_cols: Iterable[str] = CSV_COLS,
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -288,7 +291,7 @@ def update_csv(
 def get_csv(
     label: str,
     model: Union[HookedTransformer, str],
-    key_cols: Iterable[str] = ('train_set', 'train_layer', 'test_set', 'test_layer'),
+    key_cols: Iterable[str] = CSV_COLS,
 ) -> pd.DataFrame:
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -584,6 +587,8 @@ for train_type, train_layer, test_type, test_layer in BAR:
 #%%
 km_stats = get_csv("km_stats", model)
 km_stats
+#%%
+km_stats.train_pos.value_counts()
 #%%
 def hide_nan(val):
     return '' if pd.isna(val) else f"{val:.1%}"
