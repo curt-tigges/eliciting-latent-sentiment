@@ -1,5 +1,7 @@
 from typing import List
 from jaxtyping import Int, Float
+from typeguard import typechecked
+import numpy as np
 import torch
 from torch import Tensor
 from transformer_lens import HookedTransformer
@@ -38,7 +40,8 @@ class ResidualStreamDataset:
     def __eq__(self, other: object) -> bool:
         return set(self.prompt_strings) == set(other.prompt_strings)
     
-    def embed(self, position_type: str, layer: int) -> Float[Tensor, "batch d_model"]:
+    @typechecked
+    def embed(self, position_type: str, layer: int) -> Float[np.ndarray, "batch d_model"]:
         assert 0 <= layer <= self.model.cfg.n_layers
         assert position_type in self.placeholder_dict.keys(), (
             f"Position type {position_type} not found in {self.placeholder_dict.keys()} "
