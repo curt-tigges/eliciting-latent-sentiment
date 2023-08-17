@@ -211,7 +211,7 @@ def train_direction(
         fitting_method = _fit_logistic_regression
     else:
         fitting_method = _fit_kmeans
-    km_line, correct, total, accuracy = fitting_method(
+    train_line, correct, total, accuracy = fitting_method(
         train_data, train_pos, train_layer,
         test_data, test_pos, test_layer,
         **kwargs,
@@ -225,9 +225,9 @@ def train_direction(
     method_label = method.value
     if method == FittingMethod.PCA:
         method_label = f'{method_label}{kwargs.get("pca_components")}'
-    save_array(km_line, f"{method_label}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
+    save_array(train_line, f"{method_label}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
 
-    cosine_sim = safe_cosine_sim(km_line, test_line)
+    cosine_sim = safe_cosine_sim(train_line, test_line)
     columns = [
         'train_set', 'train_layer', 'train_pos',
         'test_set', 'test_layer',  'test_pos',

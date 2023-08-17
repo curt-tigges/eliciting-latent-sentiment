@@ -53,7 +53,7 @@ class ResidualStreamDataset:
             self.prompt_tokens, return_type=None, names_filter = lambda name: hook in name
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook, layer]
-        return out[:, embed_position, :].cpu().detach()
+        return out[:, embed_position, :].cpu().detach().numpy()
     
     @classmethod
     def get_dataset(
