@@ -58,14 +58,13 @@ CSV_COLS = (
     'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
 )
 #%%
-class KMeansDataset:
+class ResidualStreamDataset:
 
     def __init__(
         self, 
         prompt_strings: List[str], 
         prompt_tokens: Int[Tensor, "batch pos"], 
         binary_labels: Int[Tensor, "batch"],
-        position_type: str,
         model: HookedTransformer,
         prompt_type: str,
     ) -> None:
@@ -78,14 +77,8 @@ class KMeansDataset:
         self.prompt_type = prompt_type
         example_str_tokens = model.to_str_tokens(prompt_strings[0])
         self.example = [f"{i}:{tok}" for i, tok in enumerate(example_str_tokens)]
-        self.special_position_dict = prompt_type.get_placeholder_positions(example_str_tokens)
-        label_positions = [pos for _, positions in self.special_position_dict.items() for pos in positions]
-        assert position_type in self.special_position_dict.keys(), (
-            f"Position type {position_type} not found in {self.special_position_dict.keys()} "
-            f"for prompt type {prompt_type}"
-        )
-        self.embed_position = self.special_position_dict[position_type][-1]
-        self.position_type = position_type
+        self.placeholder_dict = prompt_type.get_placeholder_positions(example_str_tokens)
+        label_positions = [pos for _, positions in self.placeholder_dict.items() for pos in positions]
         self.str_labels = [
             ''.join([model.to_str_tokens(prompt)[pos] for pos in label_positions]) 
             for prompt in prompt_strings
@@ -97,8 +90,13 @@ class KMeansDataset:
     def __eq__(self, other: object) -> bool:
         return set(self.prompt_strings) == set(other.prompt_strings)
     
-    def embed(self, layer: int) -> Float[Tensor, "batch d_model"]:
+    def embed(self, position_type: str, layer: int) -> Float[Tensor, "batch d_model"]:
         assert 0 <= layer <= self.model.cfg.n_layers
+        assert position_type in self.placeholder_dict.keys(), (
+            f"Position type {position_type} not found in {self.placeholder_dict.keys()} "
+            f"for prompt type {self.prompt_type}"
+        )
+        embed_position = self.placeholder_dict[position_type][-1]
         hook = 'resid_pre'
         if layer == self.model.cfg.n_layers:
             hook = 'resid_post'
@@ -107,7 +105,7 @@ class KMeansDataset:
             self.prompt_tokens, return_type=None, names_filter = lambda name: hook in name
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook, layer]
-        return out[:, self.embed_position, :].cpu().detach()
+        return out[:, embed_position, :].cpu().detach()
 
 #%%
 def get_km_dataset(
@@ -115,13 +113,13 @@ def get_km_dataset(
     device: torch.device,
     prompt_type: str = "simple_train",
     position_type: str = 'ADJ',
-) -> KMeansDataset:
+) -> ResidualStreamDataset:
     all_prompts, answer_tokens, clean_tokens, _ = get_dataset(model, device, prompt_type=prompt_type)
     clean_labels = answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0]
     
     assert len(all_prompts) == len(answer_tokens)
     assert len(all_prompts) == len(clean_tokens)
-    return KMeansDataset(
+    return ResidualStreamDataset(
         all_prompts,
         clean_tokens,
         clean_labels,
@@ -164,14 +162,14 @@ def get_accuracy(
 # ============================================================================ #
 # K-means
 def _fit_kmeans(
-    train_data: KMeansDataset, train_layer: int,
-    test_data: KMeansDataset, test_layer: int,
+    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
+    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
     n_init: int = 10,
     n_clusters: int = 2,
     random_state: int = 0,
 ):
-    train_embeddings = train_data.embed(train_layer)
-    test_embeddings = test_data.embed(test_layer)
+    train_embeddings = train_data.embed(train_pos, train_layer)
+    test_embeddings = test_data.embed(train_pos, test_layer)
     train_positive_adjectives = [
         adj.strip() for adj, label in zip(train_data.str_labels, train_data.binary_labels) if label == 1
     ]
@@ -234,7 +232,7 @@ def _fit_kmeans(
     )
     is_insample = (
         train_data.prompt_type == test_data.prompt_type and
-        train_data.position_type == test_data.position_type and
+        train_pos == test_pos and
         train_layer == test_layer
     )
     if is_insample:
@@ -266,15 +264,15 @@ def safe_cosine_sim(
     return cosine_sim
 #%%
 def train_kmeans(
-    train_data: KMeansDataset, train_layer: int,
-    test_data: KMeansDataset, test_layer: int,
+    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
+    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
     n_init: int = 10,
     n_clusters: int = 2,
     random_state: int = 0,
 ):
     km_line, correct, total, accuracy = _fit_kmeans(
-        train_data, train_layer,
-        test_data, test_layer,
+        train_data, train_pos, train_layer,
+        test_data, test_pos, test_layer,
         n_init=n_init,
         n_clusters=n_clusters,
         random_state=random_state,
@@ -287,7 +285,7 @@ def train_kmeans(
         random_state=random_state,
     )
     # write k means line to file
-    save_array(km_line, f"km_{train_data.prompt_type.value}_{train_data.position_type}_layer{train_layer}", model)
+    save_array(km_line, f"km_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
 
     cosine_sim = safe_cosine_sim(km_line, test_line)
     columns = [
@@ -296,8 +294,8 @@ def train_kmeans(
         'correct', 'total', 'accuracy', 'similarity',
     ]
     data = [[
-        train_data.prompt_type.value, train_layer, train_data.position_type,
-        test_data.prompt_type.value, test_layer, test_data.position_type,
+        train_data.prompt_type.value, train_layer, train_pos,
+        test_data.prompt_type.value, test_layer, test_pos,
         correct, total, accuracy, cosine_sim,
     ]]
     stats_df = pd.DataFrame(data, columns=columns)
@@ -310,14 +308,14 @@ def train_kmeans(
 # ============================================================================ #
 # PCA
 def train_pca(
-    train_data: KMeansDataset, train_layer: int,
-    test_data: KMeansDataset, test_layer: int,
+    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
+    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
     n_init: int = 10,
     n_clusters: int = 2,
     random_state: int = 0,
 ) -> Tuple[pd.DataFrame, go.Figure]:
-    train_embeddings = train_data.embed(train_layer)
-    test_embeddings = test_data.embed(test_layer)
+    train_embeddings = train_data.embed(train_pos, train_layer)
+    test_embeddings = test_data.embed(test_pos, test_layer)
     train_positive_adjectives = [
         adj.strip() for adj, label in zip(train_data.str_labels, train_data.binary_labels) if label == 1
     ]
@@ -392,8 +390,8 @@ def train_pca(
         'correct', 'total', 'accuracy', 'similarity',
     ]
     data = [[
-        train_data.prompt_type.value, train_layer, train_data.position_type,
-        test_data.prompt_type.value, test_layer, test_data.position_type,
+        train_data.prompt_type.value, train_layer, train_pos,
+        test_data.prompt_type.value, test_layer, test_pos,
         correct, total, accuracy, cosine_sim,
     ]]
     stats_df = pd.DataFrame(data, columns=columns)
@@ -401,8 +399,8 @@ def train_pca(
         stats_df, "pca_stats", model, key_cols=CSV_COLS
     )
     plot_data = [[
-         train_data.prompt_type.value, train_layer, train_data.position_type,
-        test_data.prompt_type.value, test_layer, test_data.position_type,
+         train_data.prompt_type.value, train_layer, train_pos,
+        test_data.prompt_type.value, test_layer, test_pos,
         train_pcs, train_data.str_labels, train_data.binary_labels, 
         test_pcs, test_data.str_labels, test_data.binary_labels,
         pca_centroids
