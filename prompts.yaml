@@ -1,0 +1,561 @@
+positive_core_adjectives:
+  - perfect
+  - fantastic
+  - marvelous
+  - good
+  - remarkable
+  - wonderful
+  - fabulous
+  - outstanding
+  - awesome
+  - exceptional
+  - incredible
+  - extraordinary
+  - amazing
+  - lovely
+  - brilliant
+  - terrific
+  - superb
+  - spectacular
+  - great
+  - beautiful
+
+negative_core_adjectives:
+  - dreadful
+  - bad
+  - miserable
+  - horrific
+  - terrible
+  - disgusting
+  - disastrous
+  - horrendous
+  - offensive
+  - wretched
+  - awful
+  - unpleasant
+  - horrible
+  - mediocre
+  - disappointing
+
+neutral_adjectives:
+  - average
+  - normal
+  - standard
+  - typical
+  - common
+  - ordinary
+  - regular
+  - usual
+  - familiar
+  - generic
+  - conventional
+  - fine
+  - okay
+  - ok
+  - decent
+  - fair
+  - satisfactory
+  - adequate
+  - alright
+
+neutral_core_adjectives:
+  - ok
+  - okay
+  - OK
+  - alright
+  - fine
+  - neutral
+  - acceptable
+  - fair
+  - standard
+  - reasonable
+  - average
+
+positive_answer_tokens:
+  - great
+  - amazing
+  - awesome
+  - good
+  - perfect
+
+negative_answer_tokens:
+  - terrible
+  - awful
+  - bad
+  - horrible
+  - disgusting
+
+neutral_answer_tokens:
+  - OK
+  - mediocre
+  - fine
+  - okay
+  - alright
+  - ok
+  - decent
+
+positive_moods:
+  - happy
+  - excited
+  - delighted
+  - pleased
+  - smiling
+  - satisfied
+  - glad
+
+negative_moods:
+  - sad
+  - scared
+  - terrible
+  - terrified
+  - morbid
+  - guilty
+  - suffering
+
+
+positive_adverbs:
+  - excitedly
+  - joyfully
+  - gleefully
+  - merrily
+  - cheerfully
+  - delightedly
+  - joyously
+  - triumphantly
+  - blissfully
+  - euphorically
+  - radiantly
+  - buoyantly
+  - jokingly
+  - humorously
+  - comically
+  - amusingly
+  - playfully
+  - sportively
+  - lightheartedly
+  - gleefully
+
+negative_adverbs:
+  - fearfully
+  - frightfully
+  - scaredly
+  - scarily
+  - fearingly
+  - fearfully
+  - frightenedly
+  - horrendously
+  - horrifically
+  - horrifyingly
+  - dreadfully
+  - grimly
+  - gruesomely
+  - morbidly
+  - disgustingly
+  - vilely
+  - obscenely
+  - odiously
+  - outrageously
+  - monstrously
+  - devilishly
+  - demonically
+  - sadistically
+  - viciously
+  - vilely
+  - wickedly
+  - perversely
+  - corruptly
+  - sinfully
+  - unjustly
+  - wickedly
+  - shamefully
+  - disgracefully
+  - scandalously
+  - shamelessly
+
+walk_synonyms:
+  - strolling
+  - marching
+  - striding
+  - hiking
+  - trekking
+  - ambling
+  - roaming
+  - wandering
+  - trudging
+  - meandering
+  - pacing
+  - tramping
+  - slogging
+  - treading
+  - rambling
+
+positive_feelings:
+  - happy
+  - glad
+  - cheerful
+  - joyful
+  - delighted
+  - pleased
+  - content
+  - satisfied
+  - thankful
+  - merry
+  - ecstatic
+  - thrilled
+  - sunny
+  - radiant
+  - upbeat
+  - vibrant
+  - optimistic
+  - grateful
+  - inspired
+  - festive
+  - blessed
+  - elevated
+  - sparkling
+  - lively
+  - enthusiastic
+  - ecstatic
+  - eager
+  - radiant
+  - animated
+
+negative_feelings:
+  - sad
+  - unhappy
+  - depressed
+  - miserable
+  - down
+  - desolate
+  - wretched
+  - gloomy
+  - dismal
+  - melancholy
+  - blue
+  - miserable
+  - pessimistic
+  - sour
+  - cynical
+  - disgruntled
+  - unhappy
+  - dissatisfied
+  - restless
+  - uncomfortable
+  - uneasy
+  - worried
+  - disturbed
+  - bothered
+  - distressed
+  - agitated
+  - restless
+  - anxious
+  - nervous
+
+positive_adjectives_train:
+  - perfect
+  - fantastic
+  - delightful
+  - cheerful
+  - good
+  - remarkable
+  - satisfactory
+  - wonderful
+  - nice
+  - fabulous
+  - outstanding
+  - satisfying
+  - awesome
+  - exceptional
+  - adequate
+  - incredible
+  - extraordinary
+  - amazing
+  - decent
+  - lovely
+  - brilliant
+  - charming
+  - terrific
+  - superb
+  - spectacular
+  - great
+  - splendid
+  - beautiful
+  - positive
+  - excellent
+  - pleasant
+
+negative_adjectives_train:
+  - dreadful
+  - bad
+  - dull
+  - depressing
+  - miserable
+  - tragic
+  - nasty
+  - inferior
+  - horrific
+  - terrible
+  - ugly
+  - disgusting
+  - disastrous
+  - annoying
+  - boring
+  - offensive
+  - frustrating
+  - wretched
+  - inadequate
+  - dire
+  - unpleasant
+  - horrible
+  - disappointing
+  - awful
+
+positive_adjectives_test:
+  - stunning
+  - impressive
+  - admirable
+  - phenomenal
+  - radiant
+  - glorious
+  - magical
+  - pleasing
+
+negative_adjectives_test:
+  - foul
+  - vile
+  - appalling
+  - rotten
+  - grim
+  - dismal
+
+positive_adjectives_multitoken:
+  - magnanimous
+  - transcendent
+  - incomparable
+  - luminous
+  - transcendent
+  - alluring
+  - amiable
+  - angelic
+  - captivating
+  - enchanting
+  - uplifting
+  - affable
+  - amicable
+  - blissful
+  - bountiful
+  - commendable
+  - congenial
+  - elated
+  - estimable
+  - exhilarating
+  - genial
+  - gratifying
+  - harmonious
+  - heartening
+  - laudable
+  - peerless
+  - picturesque
+  - rejuvenating
+  - serene
+  - wholesome
+  - winsome
+  - zealous
+
+negative_adjectives_multitoken:
+  - abrasive
+  - belligerent
+  - brash
+  - callous
+  - complacent
+  - crass
+  - deceitful
+  - derisive
+  - devious
+  - disdainful
+  - dissolute
+  - envious
+  - fanatical
+  - hasty
+  - inane
+  - irritable
+  - jaded
+  - lamentable
+  - malevolent
+  - obstinate
+  - overbearing
+  - pompous
+  - pretentious
+  - quarrelsome
+  - reclusive
+  - reprehensible
+  - spiteful
+  - tactless
+  - temperamental
+  - thoughtless
+  - venomous
+  - whiny
+  - xenophobic
+
+positive_french_adjectives:
+  - apaisant
+  - captivant
+  - génial
+  - heureux
+  - incroyable
+  - jovial
+  - joyeux
+  - lumineux
+  - magnifique
+  - parfait
+  - plaisant
+  - satisfaisant
+  - souriant
+  - triomphant
+  - vaillant
+  - énergique
+  - étonnant
+
+negative_french_adjectives:
+  - difficile
+  - décevant
+  - effrayant
+  - hasardeux
+  - honteux
+  - inutile
+  - jaloux
+  - méchant
+  - obstiné
+  - pathétique
+  - pénible
+  - sinistre
+  - sombre
+  - sournois
+  - stupide
+  - superficiel
+
+positive_french_answers:
+  - bien
+  - recommandé
+  - impressionnant
+  - ccaptivant
+  - réussi
+
+negative_french_answers:
+  - mauvais
+  - décevant
+  - ennuyeux
+  - difficile à regarder
+  - inintéressant
+
+positive_french_verbs:
+  - adoré
+
+negative_french_verbs:
+  - détesté
+
+positive_proper_nouns:
+  - Mandela
+  - Gandhi
+  - Teresa
+  - Disney
+  - Einstein
+  - Parks
+  - Olympics
+  - Elvis
+  - Beatles
+  - Madonna
+  - Messi
+  - Cher
+  - Potter
+  - Holmes
+  - Mario
+  - Sonic
+
+
+negative_proper_nouns:
+  - Titanic
+  - Afghanistan
+  - Kissinger
+  - TSA
+  - Assad
+  - Gaza
+  - Obama
+  - Romney
+  - Fukushima
+  - BP
+  - Duterte
+  - McCarthy
+  - Hitler
+  - Stalin
+  - Mao
+  - Hussein
+  - Castro
+  - Dudley
+
+
+positive_medical:
+  - antibody
+  - antioxidant
+  - benign
+  - diagnostic
+  - efficacy
+  - optimization
+  - reconstruction
+  - regeneration
+  - rehabilitation
+  - remission
+  - resilience
+  - stabilization
+  - supplement
+  - therapeutic
+  - vaccination
+  - vitamins
+
+
+negative_medical:
+  - chronic
+  - complication
+  - contagious
+  - debilitating
+  - deficiency
+  - disease
+  - dysfunction
+  - hazardous
+  - infection
+  - inflammatory
+  - invasive
+  - mortality
+  - paralysis
+  - pathological
+  - rejection
+  - relapse
+  - resistant
+  - terminal
+  - toxic
+  - traumatic
+  - viral
+
+positive_verbs:
+  - enjoyed
+  - loved
+  - liked
+  - appreciated
+  - admired
+
+negative_verbs:
+  - hated
+  - disliked
+  - despised
+
+neutral_verbs:
+  - watched
+
+neutral_top_adjectives:
+  - average
+
+positive_top_adjectives:
+  - good
+
+negative_top_adjectives:
+  - bad

@@ -1,220 +1,93 @@
+import yaml
 from transformer_lens import HookedTransformer
 import torch
 from torch import Tensor
 from jaxtyping import Float, Int, Bool
-from typing import List, Tuple, Union
+from typing import Dict, List, Tuple, Union
 import einops
 from enum import Enum
-
-# deprecated for now--those with the weakest positive response are eliminated
-# pos_adj = [
-#     ' perfect', ' fantastic',' delightful',' cheerful',' marvelous',' good',' remarkable',' wonderful',
-#     ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
-#     ' amazing',' lovely',' brilliant',' charming',' terrific',' superb',' spectacular',' great',' splendid',
-#     ' beautiful',' joyful',' positive',#' excellent'
-#     ]
-
-pos_adj = [
-    ' perfect', ' fantastic',' marvelous',' good',' remarkable',' wonderful',
-    ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
-    ' amazing',' lovely',' brilliant',' terrific',' superb',' spectacular',' great',
-    ' beautiful'
-    ]
-
-# neg_adj = [
-#     ' dreadful',' bad',' dull',' depressing',' miserable',' tragic',' nasty',' inferior',' horrific',' terrible',
-#     ' ugly',' disgusting',' disastrous',' horrendous',' annoying',' boring',' offensive',' frustrating',' wretched',' dire',
-#     ' awful',' unpleasant',' horrible',' mediocre',' disappointing',' inadequate'
-#     ]
-
-neg_adj = [
-    ' dreadful',' bad',' miserable',' horrific',' terrible',
-    ' disgusting',' disastrous',' horrendous',' offensive',' wretched',
-    ' awful',' unpleasant',' horrible',' mediocre',' disappointing'
-    ]
-neutral_adj = [
-    ' average',' normal',' standard',' typical',' common',' ordinary',
-    ' regular',' usual',' familiar',' generic',' conventional',
-    ' fine', ' okay', ' ok', ' decent', ' fair', ' satisfactory', 
-    ' adequate', ' alright',
-
-]
-neutral_core_adj = [
-    ' ok', ' okay', ' OK', ' alright', ' fine', ' neutral', ' acceptable', ' fair', 
-    ' standard', ' reasonable', ' average'
-]
-
-pos_tokens = [" great"," amazing", " awesome", " good", " perfect"]
-neg_tokens = [" terrible", " awful", " bad", " horrible", " disgusting"]
-neutral_tokens = [
-    " OK", " mediocre", "fine", "okay", "alright", "ok", "decent",
-]
-
-pos_adverbs = [
-    # 3 tokens in gpt2-small with prepended space
-    'excitedly',
-    'joyfully',
-    'gleefully',
-    'merrily',
-    'cheerfully',
-    'delightedly',
-    'joyously',
-    'triumphantly',
-    'blissfully',
-    'euphorically',
-    'radiantly',
-    'buoyantly',
-    'jokingly',
-    'humorously',
-    'comically',
-    'amusingly',
-    'playfully',
-    'sportively',
-    'lightheartedly',
-    'gleefully'
-]
-neg_adverbs = [
-    'fearfully',
-    'frightfully',
-    'scaredly',
-    'scarily',
-    'fearingly',
-    'fearfully',
-    'frightenedly',
-    'horrendously',
-    'horrifically',
-    'horrifyingly',
-    'dreadfully',
-    'grimly',
-    'gruesomely',
-    'morbidly',
-    'disgustingly',
-    'vilely',
-    'obscenely',
-    'odiously',
-    'outrageously',
-    'monstrously',
-    'devilishly',
-    'demonically',
-    'sadistically',
-    'viciously',
-    'vilely',
-    'wickedly',
-    'perversely',
-    'corruptly',
-    'sinfully',
-    'unjustly',
-    'wickedly',
-    'shamefully',
-    'disgracefully',
-    'scandalously',
-    'shamelessly'
-]
-walk_synonyms = [
-    'strolling',
-    'marching',
-    'striding',
-    'hiking',
-    'trekking',
-    'ambling',
-    'roaming',
-    'wandering',
-    'trudging',
-    'meandering',
-    'pacing',
-    'tramping',
-    'slogging',
-    'treading',
-    'rambling'
-]
-pos_feelings = [
-    # 2 tokens in gpt2-small with prepended space
-    'happy',
-    'glad',
-    'cheerful',
-    'joyful',
-    'delighted',
-    'pleased',
-    'content',
-    'satisfied',
-    'thankful',
-    'merry',
-    'ecstatic',
-    'thrilled',
-    'sunny',
-    'radiant',
-    'upbeat',
-    'vibrant',
-    'optimistic',
-    'grateful',
-    'inspired',
-    'festive',
-    'blessed',
-    'elevated',
-    'sparkling',
-    'lively',
-    'enthusiastic',
-    'ecstatic',
-    'eager',
-    'radiant',
-    'animated'
-
-]
-neg_feelings = [
-    'sad',
-    'unhappy',
-    'depressed',
-    'miserable',
-    'down',
-    'desolate',
-    'wretched',
-    'gloomy',
-    'dismal',
-    'melancholy',
-    'blue',
-    'miserable',
-    'pessimistic',
-    'sour',
-    'cynical',
-    'disgruntled',
-    'unhappy',
-    'dissatisfied',
-    'restless',
-    'uncomfortable',
-    'uneasy',
-    'worried',
-    'disturbed',
-    'bothered',
-    'distressed',
-    'agitated',
-    'restless',
-    'anxious',
-    'nervous'
-]
-
-def get_adjective(adjective_list, index):
-    """ Returns the adjective at the given index, looping around the list if necessary
-    """
-    return adjective_list[index % len(adjective_list)]
+import re
 
 
-def remove_pythia_double_token_words(model, words: list = None, verbose=True) -> list:
-    """ Removes words that are double tokens in Pythia
-    """
-    print("Using Pythia model")
+def extract_placeholders(text: str) -> List[str]:
+    # Use regex to find all instances of {SOME_TEXT}
+    matches = re.findall(r'\{(\w+)\}', text)
+    
+    return matches
+
+
+def dedup_list(input_list):
+    seen = set()
+    return [x for x in input_list if x not in seen and not seen.add(x)]
+
+
+def filter_words_by_length(model, words: list, length: int, verbose=False) -> list:
+    if verbose:
+        print("Filtering words by length")
     new_words = []
-    for a in words:
-        tkn = model.to_str_tokens(a)
-        if len(tkn)==2:
-            new_words.append(a)
+    for word in words:
+        tkn = model.to_str_tokens(word, prepend_bos=False)
+        if len(tkn) == length:
+            new_words.append(word)
     if verbose:
         print(f"Count of words: {len(words)}")
 
     return new_words
 
 
+def truncate_words_by_length(model, words: list, length: int, verbose=False) -> list:
+    if verbose:
+        print("Truncating words by length")
+    new_words = []
+    for word in words:
+        tkn = model.to_str_tokens(word, prepend_bos=False)
+        trunc = ''.join(tkn[:length])
+        new_words.append(trunc)
+    return new_words
+
+
+class CircularList(list):
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            start, stop, step = index.indices(len(self))
+            return [self[i] for i in range(start, stop, step or 1)]
+        return super(CircularList, self).__getitem__(index % len(self))
+
+
+class PromptsConfig:
+
+    def __init__(self) -> None:
+        with open("prompts.yaml", "r") as f:
+            prompts_dict = yaml.safe_load(f)
+        self._prompts_dict = prompts_dict
+        
+    def get(
+        self, 
+        key: str, 
+        model: HookedTransformer, 
+        filter_length: int = None, 
+        truncate_length: int = None,
+        drop_duplicates: bool = True,
+        prepend_space: bool = True, 
+        verbose: bool = False,
+    ) -> CircularList:
+        words: list = self._prompts_dict[key]
+        if prepend_space:
+            words = [" " + word.strip() for word in words]
+        if filter_length is not None:
+            words = filter_words_by_length(model, words, filter_length, verbose=verbose)
+        if truncate_length is not None:
+            words = truncate_words_by_length(model, words, truncate_length, verbose=verbose)
+        if drop_duplicates:
+            words = dedup_list(words)
+        return CircularList(words)
+    
+
+
 class PromptType(Enum):
     SIMPLE = "simple"
+    SIMPLE_TRAIN = "simple_train"
+    SIMPLE_TEST = "simple_test"
     COMPLETION = "completion"
     COMPLETION_2 = "completion_2"
     CLASSIFICATION = "classification"
@@ -223,111 +96,188 @@ class PromptType(Enum):
     CLASSIFICATION_4 = "classification_4"
     RES_CLASS_1 = "res_class_1"
     SIMPLE_MOOD = "simple_mood"
+    SIMPLE_ADVERB = "simple_adverb"
+    SIMPLE_FRENCH = "simple_french"
+    PROPER_NOUNS = "proper_nouns"
+    MEDICAL = "medical"
+
+    def get_format_string(self):
+        prompt_strings = {
+            PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
+            PromptType.SIMPLE_TRAIN: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
+            PromptType.SIMPLE_TEST: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
+            PromptType.SIMPLE_MOOD: "The traveller was{ADV}{WALK} to their destination. Upon arrival, they felt{FEEL}. \nConclusion: The traveller is",
+            PromptType.SIMPLE_ADVERB: "The traveller{ADV} walked to their destination. The traveller felt very",
+            PromptType.SIMPLE_FRENCH: "Je pensais que ce film était{ADJ}, je l'ai{VRB}. \nConclusion: Ce film est",
+            PromptType.PROPER_NOUNS: "When I hear the name{NOUN}, I feel very",
+            PromptType.MEDICAL: "I heard the doctor use the word{MED} and I felt very",
+            PromptType.COMPLETION: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very",
+            PromptType.COMPLETION_2: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall it was just very",
+            PromptType.CLASSIFICATION: "Review Text: 'I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}.' \nReview Sentiment:",
+            PromptType.CLASSIFICATION_2: "Review Text: I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. \nReview Sentiment:",
+            PromptType.CLASSIFICATION_3: "Review Text: I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. Review Sentiment:",
+            PromptType.CLASSIFICATION_4: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. Review Sentiment:",
+            PromptType.RES_CLASS_1: "This restaurant was{ADJ1}, I{VRB} it. The food was{ADJ2}, and the service was{ADJ3}. Overall it was just",
+        }
+        return prompt_strings[self]
+    
+    def get_placeholders(self):
+        formatter = self.get_format_string()
+        return extract_placeholders(formatter)
+    
+
+prompt_config = PromptsConfig()
 
 
 def get_prompts(
+    model: HookedTransformer,
     prompt_type: str = "simple", 
-    positive_adjectives: list = pos_adj, 
-    negative_adjectives: list = neg_adj,
-    neutral_adjectives: list = neutral_adj,
-    positive_adverbs: list = pos_adverbs,
-    negative_adverbs: list = neg_adverbs,
-    walking_synonyms: list = walk_synonyms,
-    positive_feelings: list = pos_feelings,
-    negative_feelings: list = neg_feelings,
-) -> Tuple[list, list]:
+) -> Tuple[Dict[str, CircularList[str]], Dict[str, CircularList[str]]]:
+    # Define output types
+    pos_prompts: CircularList[str]
+    neg_prompts: CircularList[str]
+    neutral_prompts: CircularList[str]
+
+    # Read lists from config
+    pos_answers: CircularList[str] = prompt_config.get("positive_answer_tokens", model, filter_length=1)
+    neg_answers: CircularList[str] = prompt_config.get("negative_answer_tokens", model, filter_length=1)
+    positive_adjectives: CircularList[str] = prompt_config.get("positive_core_adjectives", model, filter_length=1)
+    negative_adjectives: CircularList[str] = prompt_config.get("negative_core_adjectives", model, filter_length=1)
+    neutral_adjectives: CircularList[str] = prompt_config.get("neutral_core_adjectives", model, filter_length=1)
+    positive_verbs: CircularList[str] = prompt_config.get("positive_verbs", model, filter_length=1)
+    negative_verbs: CircularList[str] = prompt_config.get("negative_verbs", model, filter_length=1)
+    neutral_verbs: CircularList[str] = prompt_config.get("neutral_verbs", model, filter_length=1)
+    positive_top_adjectives: CircularList[str] = prompt_config.get("positive_top_adjectives", model, filter_length=1)
+    negative_top_adjectives: CircularList[str] = prompt_config.get("negative_top_adjectives", model, filter_length=1)
+    neutral_top_adjectives: CircularList[str] = prompt_config.get("neutral_top_adjectives", model, filter_length=1)
+
+    # Get prompt type/format
     prompt_type = PromptType(prompt_type)
+    formatter = prompt_type.get_format_string()
+
     if prompt_type == PromptType.SIMPLE:
-        pos_prompts = [
-            f"I thought this movie was{positive_adjectives[i]}, I loved it. \nConclusion: This movie is" for i in range(len(positive_adjectives))
-        ]
-        neg_prompts = [
-            f"I thought this movie was{negative_adjectives[i]}, I hated it. \nConclusion: This movie is" for i in range(len(negative_adjectives))
-        ]
-        neutral_prompts = [
-            f"I thought this movie was{neutral_adjectives[i]}, I watched it. \nConclusion: This movie is" for i in range(len(neutral_adjectives))
-        ]
+        n_prompts = min(len(positive_adjectives), len(negative_adjectives))
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
+        neutral_prompts = [formatter.format(ADJ=neutral_adjectives[i]) for i in range(len(neutral_adjectives))]
+    elif prompt_type == PromptType.SIMPLE_TRAIN:
+        n_prompts = min(len(positive_adjectives), len(negative_adjectives))
+        positive_adjectives = prompt_config.get("positive_adjectives_train", model, filter_length=1)
+        negative_adjectives = prompt_config.get("negative_adjectives_train", model, filter_length=1)
+        neutral_prompts = None
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
+    elif prompt_type == PromptType.SIMPLE_TEST:
+        positive_adjectives = prompt_config.get("positive_adjectives_test", model, filter_length=1)
+        negative_adjectives = prompt_config.get("negative_adjectives_test", model, filter_length=1)
+        n_prompts = min(len(positive_adjectives), len(negative_adjectives))
+        positive_adjectives = prompt_config.get("positive_adjectives_test", model, filter_length=1)
+        negative_adjectives = prompt_config.get("negative_adjectives_test", model, filter_length=1)
+        neutral_prompts = None
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
     elif prompt_type == PromptType.SIMPLE_MOOD:
+        walking_synonyms: CircularList[str]  = prompt_config.get("walk_synonyms", model)
+        positive_feelings: CircularList[str] = prompt_config.get("positive_feelings", model)
+        negative_feelings: CircularList[str] = prompt_config.get("negative_feelings", model)
+        positive_adverbs: CircularList[str] = prompt_config.get("positive_adverbs", model)
+        negative_adverbs: CircularList[str] = prompt_config.get("negative_adverbs", model)
         n_prompts = min(len(positive_adverbs), len(walking_synonyms), len(positive_feelings), len(negative_adverbs), len(negative_feelings))
-        pos_prompts = [
-            f"The traveller was {positive_adverbs[i]} {walking_synonyms[i % len(walking_synonyms)]} to their destination. Upon arrival, they felt {positive_feelings[i]}. \nConclusion: The traveller is" for i in range(n_prompts)
-        ]
-        neg_prompts = [
-            f"The traveller was {negative_adverbs[i]} {walking_synonyms[i% len(walking_synonyms)]} to their destination. Upon arrival, they felt {negative_feelings[i]}. \nConclusion: The traveller is" for i in range(n_prompts)
-        ]
+        pos_prompts = [formatter.format(ADV=positive_adverbs[i], WALK=walking_synonyms[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADV=negative_adverbs[i], WALK=walking_synonyms[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
         neutral_prompts = None
-    elif prompt_type == PromptType.COMPLETION:
-        pos_prompts = [
-            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very" for i in range(len(positive_adjectives))
-        ]
-        neg_prompts = [
-            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very" for i in range(len(negative_adjectives))
-        ]
-        neutral_prompts = [
-            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very" for i in range(len(neutral_adjectives))
-        ]
-    elif prompt_type == PromptType.COMPLETION_2:
-        pos_prompts = [
-            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall it was just very good. I felt it was" for i in range(len(positive_adjectives))
-        ]
-        neg_prompts = [
-            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall it was just very bad. I felt it was" for i in range(len(positive_adjectives))
-        ]
-        neutral_prompts = [
-            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall it was just very average. I felt it was" for i in range(len(positive_adjectives))
-        ]
-    elif prompt_type == PromptType.CLASSIFICATION:
-        pos_prompts = [
-            f"Review Text: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neg_prompts = [
-            f"Review Text: 'I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neutral_prompts = [
-            f"Review Text: 'I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average.' \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-    elif prompt_type == PromptType.CLASSIFICATION_2:
-        pos_prompts = [
-            f"Review Text: I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neg_prompts = [
-            f"Review Text: I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neutral_prompts = [
-            f"Review Text: I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. \nReview Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-    elif prompt_type == PromptType.CLASSIFICATION_3:
-        pos_prompts = [
-            f"Review Text: I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neg_prompts = [
-            f"Review Text: I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neutral_prompts = [
-            f"Review Text: I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-    elif prompt_type == PromptType.CLASSIFICATION_4:
-        pos_prompts = [
-            f"I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, and overall the movie was just very good. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neg_prompts = [
-            f"I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)}, and overall the movie was just very bad. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neutral_prompts = [
-            f"I thought this movie was{get_adjective(neutral_adjectives, i)}, I watched it. The acting was{get_adjective(neutral_adjectives, i+1)}, the plot was{get_adjective(neutral_adjectives, i+2)}, and overall the movie was just very average. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-    elif prompt_type == PromptType.RES_CLASS_1:
-        pos_prompts = [
-            f"This restaurant was{get_adjective(positive_adjectives, i)}, I loved it. The food was{get_adjective(positive_adjectives, i+1)}, and the service was{get_adjective(positive_adjectives, i+2)}. Overall it was just great. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
-        neg_prompts = [
-            f"This restaurant was{get_adjective(negative_adjectives, i)}, I hated it. The food was{get_adjective(negative_adjectives, i+1)}, and the service was{get_adjective(negative_adjectives, i+2)}. Overall it was just awful. Review Sentiment:" for i in range(len(positive_adjectives)-1)
-        ]
+        pos_answers = prompt_config.get("positive_moods", model)
+        neg_answers = prompt_config.get("negative_moods", model)
+    elif prompt_type == PromptType.SIMPLE_ADVERB:
+        positive_adverbs = prompt_config.get("positive_adverbs", model)
+        negative_adverbs = prompt_config.get("negative_adverbs", model)
+        n_prompts = min(len(positive_adverbs), len(negative_adverbs))
+        pos_prompts = [formatter.format(ADV=positive_adverbs[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADV=negative_adverbs[i]) for i in range(n_prompts)]
         neutral_prompts = None
+        pos_answers = prompt_config.get("positive_moods", model)
+        neg_answers = prompt_config.get("negative_moods", model)
+    elif prompt_type == PromptType.SIMPLE_FRENCH:
+        positive_french_adj = prompt_config.get("positive_french_adjectives", model)
+        negative_french_adj = prompt_config.get("negative_french_adjectives", model)
+        positive_french_verbs = prompt_config.get("positive_french_verbs", model)
+        negative_french_verbs = prompt_config.get("negative_french_verbs", model)
+        n_prompts = min(len(positive_french_adj), len(negative_french_adj))
+        pos_prompts = [formatter.format(ADJ=positive_french_adj[i], VRB=positive_french_verbs[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_french_adj[i], VRB=negative_french_verbs[i]) for i in range(n_prompts)]
+        neutral_prompts = None
+        pos_answers = prompt_config.get("positive_french_answers", model, truncate_length=1)
+        neg_answers = prompt_config.get("negative_french_answers", model, truncate_length=1)
+    elif prompt_type == PromptType.PROPER_NOUNS:
+        positive_proper = prompt_config.get("positive_proper_nouns", model)
+        negative_proper = prompt_config.get("negative_proper_nouns", model)
+        n_prompts = min(len(positive_proper), len(negative_proper))
+        pos_prompts = [formatter.format(NOUN=positive_proper[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(NOUN=negative_proper[i]) for i in range(n_prompts)]
+        neutral_prompts = None
+    elif prompt_type == PromptType.MEDICAL:
+        positive_medical = prompt_config.get("positive_medical", model)
+        negative_medical = prompt_config.get("negative_medical", model)
+        n_prompts = min(len(positive_medical), len(negative_medical))
+        pos_prompts = [formatter.format(MED=positive_medical[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(MED=negative_medical[i]) for i in range(n_prompts)]
+        neutral_prompts = None
+    elif prompt_type in (
+        PromptType.COMPLETION, PromptType.COMPLETION_2, PromptType.RES_CLASS_1
+    ):
+        n_prompts = min(len(positive_adjectives), len(negative_adjectives))
+        pos_prompts = [
+            formatter.format(ADJ1=positive_adjectives[i], ADJ2=positive_adjectives[i + 1], ADJ3=positive_adjectives[i + 2], VRB=positive_verbs[i])
+            for i in range(n_prompts)
+        ]
+        neg_prompts = [
+            formatter.format(ADJ1=negative_adjectives[i], ADJ2=negative_adjectives[i + 1], ADJ3=negative_adjectives[i + 2], VRB=negative_verbs[i])
+            for i in range(n_prompts)
+        ]
+        neutral_prompts = [
+            formatter.format(ADJ1=neutral_adjectives[i], ADJ2=neutral_adjectives[i + 1], ADJ3=neutral_adjectives[i + 2], VRB=neutral_verbs[i])
+            for i in range(n_prompts)
+        ]
+    elif prompt_type in (
+        PromptType.CLASSIFICATION, PromptType.CLASSIFICATION_2, PromptType.CLASSIFICATION_3, PromptType.CLASSIFICATION_4
+    ):
+        n_prompts = min(len(positive_adjectives), len(negative_adjectives))
+        pos_prompts = [
+            formatter.format(ADJ1=positive_adjectives[i], ADJ2=positive_adjectives[i + 1], ADJ3=positive_adjectives[i + 2], ADJ4=positive_top_adjectives[i], VRB=positive_verbs[i])
+            for i in range(n_prompts)
+        ]
+        neg_prompts = [
+            formatter.format(ADJ1=negative_adjectives[i], ADJ2=negative_adjectives[i + 1], ADJ3=negative_adjectives[i + 2], ADJ4=negative_top_adjectives[i], VRB=negative_verbs[i])
+            for i in range(n_prompts)
+        ]
+        neutral_prompts = [
+            formatter.format(ADJ1=neutral_adjectives[i], ADJ2=neutral_adjectives[i + 1], ADJ3=neutral_adjectives[i + 2], ADJ4=neutral_top_adjectives[i], VRB=neutral_verbs[i])
+            for i in range(n_prompts)
+        ]
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
+    
+    # check length match
+    assert len(pos_prompts) == len(neg_prompts), (
+        f"Number of positive prompts ({len(pos_prompts)}) "
+        f"does not match number of negative prompts ({len(neg_prompts)}). "
+        f"Please check the prompts.yaml file. \n"
+        f"Prompt type: {prompt_type}\n"
+        f"Full list of positive prompts: {pos_prompts}. \n"
+        f"Full list of negative prompts: {neg_prompts}."
+    )
 
-    return pos_prompts, neg_prompts, neutral_prompts
+    # create output dicts
+    prompt_dict = dict(
+        positive=pos_prompts,
+        negative=neg_prompts,
+        neutral=neutral_prompts,
+    )
+    answer_dict = dict(
+        positive=pos_answers,
+        negative=neg_answers,
+    )
+    return prompt_dict, answer_dict
 
 
 def get_dataset(
@@ -335,58 +285,23 @@ def get_dataset(
     device: torch.device,
     n_pairs: int = 1,
     prompt_type: str = "simple",
-    pos_answers: list = None,
-    neg_answers: list = None,
-    neutral_answers: list = neutral_tokens,
     comparison: Tuple[str, str] = ("positive", "negative"),
 ) -> Tuple[
-    Float[Tensor, "batch pos"],
-    Float[Tensor, "batch n_pairs 2"],
-    Float[Tensor, "batch pos"],
-    Float[Tensor, "batch pos"],
+    List[str], # all_prompts
+    Float[Tensor, "batch pair correct"], # answer tokens
+    Float[Tensor, "batch pos"], # clean tokens
+    Float[Tensor, "batch pos"], # corrupted tokens
 ]:
-    '''
-    answer_tokens:
-        list of the token (ie an integer) corresponding to each answer, 
-        in the format (correct_token, incorrect_token)
-    '''
+    # FIXME: this should really return a dataset object
     prompt_type = PromptType(prompt_type)
-    # FIXME: the below should be moved to a separate function like get_prompts()
-    if prompt_type == PromptType.SIMPLE_MOOD:
-        pos_answers = [" happy", "excited", " delighted", " pleased", "smiling", " satisfied", " glad"]
-        neg_answers = [" sad", " scared", " terrible", " terrified", " morbid", " guilty", " suffering"]
-    elif pos_answers is None or neg_answers is None:
-        pos_answers = pos_tokens
-        neg_answers = neg_tokens
-    assert n_pairs <= len(pos_answers)
-
-    
-    if "pythia" in model.cfg.model_name:
-        positive_adjectives = remove_pythia_double_token_words(model, pos_adj)
-        negative_adjectives = remove_pythia_double_token_words(model, neg_adj)
-        neutral_adjectives = remove_pythia_double_token_words(
-            model, neutral_adj
-        )
-        pos_answers = remove_pythia_double_token_words(model, pos_answers)
-        neg_answers = remove_pythia_double_token_words(model, neg_answers)
-        neutral_answers = remove_pythia_double_token_words(model, neutral_answers)
-    else:
-        positive_adjectives = pos_adj
-        negative_adjectives = neg_adj
-        neutral_adjectives = neutral_adj
-
-    pos_prompts, neg_prompts, neutral_prompts = get_prompts(
-        prompt_type, positive_adjectives, negative_adjectives, neutral_adjectives
+    prompts_dict, answers_dict = get_prompts(
+        model, prompt_type
     )
-    prompts_dict = {
-        "positive": pos_prompts,
-        "negative": neg_prompts,
-        "neutral": neutral_prompts,
-    }
+    assert n_pairs <= len(answers_dict[comparison[0]])
     n_prompts = min(
         len(prompts_dict[comparison[0]]), 
         len(prompts_dict[comparison[1]]), 
-        )
+    )
     batch_size = n_prompts * 2
     all_prompts = []
     answer_tokens = torch.empty(
@@ -394,30 +309,22 @@ def get_dataset(
         device=device, 
         dtype=torch.long
     )
-    
+    prompt_len = None
     for i in range(n_prompts):
-
         all_prompts.append(prompts_dict[comparison[0]][i])
         all_prompts.append(prompts_dict[comparison[1]][i])
-        
         for pair_idx in range(n_pairs):
-            pos_token = model.to_single_token(pos_answers[pair_idx])
-            neg_token = model.to_single_token(neg_answers[pair_idx])
-            neut_token = model.to_single_token(neutral_answers[pair_idx])
-            tokens_dict = {
-                'positive': pos_token, 
-                'negative': neg_token, 
-                'neutral': neut_token,
-            }
-            answer_tokens[i * 2, pair_idx, 0] = tokens_dict[comparison[0]]
-            answer_tokens[i * 2, pair_idx, 1] = tokens_dict[comparison[1]]
-            answer_tokens[i * 2 + 1, pair_idx, 0] = tokens_dict[comparison[1]]
-            answer_tokens[i * 2 + 1, pair_idx, 1] = tokens_dict[comparison[0]]
-    
+            answer_tokens[i * 2, pair_idx, 0] = model.to_single_token(answers_dict[comparison[0]][pair_idx])
+            answer_tokens[i * 2, pair_idx, 1] = model.to_single_token(answers_dict[comparison[1]][pair_idx])
+            answer_tokens[i * 2 + 1, pair_idx, 0] = model.to_single_token(answers_dict[comparison[1]][pair_idx])
+            answer_tokens[i * 2 + 1, pair_idx, 1] = model.to_single_token(answers_dict[comparison[0]][pair_idx])
+        if prompt_len is None:
+            prompt_len = len(model.to_tokens(all_prompts[-1], prepend_bos=True))
+        else:
+            assert prompt_len == len(model.to_tokens(all_prompts[-1], prepend_bos=True))
     prompts_tokens: Float[Tensor, "batch pos"] = model.to_tokens(
         all_prompts, prepend_bos=True
     )
-    
     clean_tokens = prompts_tokens.to(device)
     corrupted_tokens = model.to_tokens(
         all_prompts[1:] + [all_prompts[0]], prepend_bos=True
@@ -434,37 +341,20 @@ def get_onesided_datasets(
     prompt_type: str = "simple",
     dataset_sentiments: list = ["positive", "negative"],
     answer_sentiment: str = "positive",
-    answers: list = None,
-    positive_adjectives: list = pos_adj, 
-    negative_adjectives: list = neg_adj,
-    neutral_adjectives: list = neutral_core_adj,
 ):
     '''
     answer_tokens:
         list of the token (ie an integer) corresponding to each answer, 
         in the format (correct_token, incorrect_token)
     '''
-    assert n_answers <= len(pos_tokens)
     assert prompt_type in ["simple", "completion", "classification"]
     
-    if "pythia" in model.cfg.model_name:
-        positive_adjectives = remove_pythia_double_token_words(
-            model, positive_adjectives
-        )
-        negative_adjectives = remove_pythia_double_token_words(
-            model, negative_adjectives
-        )
-        neutral_adjectives = remove_pythia_double_token_words(
-            model, neutral_core_adj
-        )
-
-    pos_prompts, neg_prompts, neutral_prompts = get_prompts(
-        prompt_type, positive_adjectives, negative_adjectives, neutral_adjectives
+    prompt_str_dict, answers_dict = get_prompts(
+        model, prompt_type
     )
     prompts_dict = {
-        "positive": model.to_tokens(pos_prompts, prepend_bos=True),
-        "negative": model.to_tokens(neg_prompts, prepend_bos=True),
-        "neutral": model.to_tokens(neutral_prompts, prepend_bos=True)
+        key: model.to_tokens(values, prepend_bos=True)
+        for key, values in prompt_str_dict.items()
     }
     for prompt_k, prompt_v in prompts_dict.items():
         assert prompt_v.shape[1] == prompts_dict["positive"].shape[1], (
@@ -475,12 +365,6 @@ def get_onesided_datasets(
     n_prompts = min([prompts_dict[s].shape[0] for s in dataset_sentiments])
     prompt_return_dict = {
         s:prompts_dict[s][:n_prompts] for s in dataset_sentiments
-    }
-
-    answers_dict = {
-        'positive': pos_tokens, 
-        'negative': neg_tokens, 
-        'neutral': neutral_tokens,
     }
 
     answers = answers or answers_dict[answer_sentiment]
@@ -543,18 +427,3 @@ def get_ccs_dataset(
     ]
     assert len(pos_prompts) == len(pos_tokens)
     return neg_tokens, pos_tokens, neg_prompts, pos_prompts, gt_labels, truncated
-
-
-def embed_and_mlp0(
-    tokens: Union[str, List[str], Int[Tensor, "batch pos"]],
-    transformer: HookedTransformer,
-):
-    if isinstance(tokens, str):
-        tokens = transformer.to_tokens(tokens)
-    elif isinstance(tokens, list) and isinstance(tokens[0], str):
-        tokens = transformer.to_tokens(tokens)
-    block0 = transformer.blocks[0]
-    resid_mid = transformer.embed(tokens)
-    mlp_out = block0.mlp((resid_mid))
-    resid_post = resid_mid + mlp_out
-    return block0.ln2(resid_post)

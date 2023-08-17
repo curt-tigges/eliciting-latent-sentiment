@@ -1,4 +1,5 @@
 #%%
+import yaml
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,14 +9,14 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import numpy as np
 import einops
-import tqdm.auto as tqdm
+from tqdm.notebook import tqdm
 import random
 import pandas as pd
 from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from typing import Iterable, List, Tuple, Union, Optional
+from typing import Iterable, List, Tuple, Union, Optional, Dict
 from jaxtyping import Float, Int
 from torch import Tensor
 from functools import partial
@@ -26,20 +27,43 @@ import itertools
 from IPython.display import display, HTML
 import circuitsvis as cv
 from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache
-import transformer_lens.utils as utils
+from transformer_lens.utils import test_prompt
 import transformer_lens.evals as evals
 from transformer_lens.hook_points import (
     HookedRootModule,
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import save_array, save_html
-from utils.prompts import get_dataset
+from utils.store import save_array, save_html, update_csv, get_csv, eval_csv
+from utils.prompts import get_dataset, filter_words_by_length, PromptType
+#%%
+def get_special_positions(format_string: str, token_list: List[str]) -> Dict[str, List[int]]:
+    # Loop through each token in the token_list
+    format_idx = 0
+    curr_sub_token = None
+    out = dict()
+    # print('get_special_positions', format_string, token_list)
+    for token_index, token in enumerate(token_list):
+        # Check if the token appears in the format_string
+        # print(token_index, token, format_idx, curr_sub_token, out)
+        if format_string[format_idx] == '{':
+            curr_sub_token = format_string[format_idx + 1:format_string.find('}', format_idx)]
+        if format_string.find(token, format_idx) >= 0:
+            format_idx = format_string.find(token, format_idx) + len(token)
+        elif curr_sub_token is not None:
+            out[curr_sub_token] = out.get(curr_sub_token, []) + [token_index]
+    
+    return out
+
+# Test
+format_string = "|endoftext|> When I hear the name{NOUN}, I feel very"
+token_list = ['0:<|endoftext|>', '1:When', '2: I', '3: hear', '4: the', '5: name', '6: Mandela', '7:,', '8: I', '9: feel', '10: very']
+print(get_special_positions(format_string, token_list)) 
 # ============================================================================ #
 # model loading
 
 #%%
-device = torch.device('cpu')
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODEL_NAME = 'gpt2-small'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -52,247 +76,81 @@ model.name = MODEL_NAME
 #%%
 # ============================================================================ #
 # Data loading
+CSV_COLS = (
+    'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+)
 #%%
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device)
-all_prompts[0]
-#%%
-def check_for_duplicates(
-    str_tokens: List[str],
-) -> None:
-    if len(str_tokens) != len(set(str_tokens)):
-        raise AssertionError('Duplicate tokens found: ' + str_tokens)
+class KMeansDataset:
 
-def check_single_tokens(
-    str_tokens: List[str],
-    transformer: HookedTransformer = model,
-) -> None:
-    good_tokens = []
-    error = False
-    for token in str_tokens:
-        if token.startswith(' '):
-            check_token = token
-        else:
-            check_token = ' ' + token
-        try:
-            transformer.to_single_token(check_token)
-            good_tokens.append(token)
-        except AssertionError as e:
-            error = True
-            continue
-    if error:
-        raise AssertionError(
-            'Non-single tokens found, reduced list: ' + str(good_tokens)
+    def __init__(
+        self, 
+        prompt_strings: List[str], 
+        prompt_tokens: Int[Tensor, "batch pos"], 
+        binary_labels: Int[Tensor, "batch"],
+        position_type: str,
+        model: HookedTransformer,
+        prompt_type: str,
+    ) -> None:
+        assert len(prompt_strings) == len(prompt_tokens)
+        assert len(prompt_strings) == len(binary_labels)
+        self.prompt_strings = prompt_strings
+        self.prompt_tokens = prompt_tokens
+        self.binary_labels = binary_labels
+        self.model = model
+        self.prompt_type = prompt_type
+        example_str_tokens = model.to_str_tokens(prompt_strings[0])
+        self.example = [f"{i}:{tok}" for i, tok in enumerate(example_str_tokens)]
+        self.special_position_dict = get_special_positions(prompt_type.get_format_string(), example_str_tokens)
+        label_positions = [pos for _, positions in self.special_position_dict.items() for pos in positions]
+        assert position_type in self.special_position_dict.keys(), (
+            f"Position type {position_type} not found in {self.special_position_dict.keys()} "
+            f"for prompt type {prompt_type}"
         )
+        self.embed_position = self.special_position_dict[position_type][-1]
+        self.position_type = position_type
+        self.str_labels = [
+            ''.join([model.to_str_tokens(prompt)[pos] for pos in label_positions]) 
+            for prompt in prompt_strings
+        ]
+
+    def __len__(self) -> int:
+        return len(self.prompt_strings)
     
-def check_overlap(trainset: Iterable[str], testset: Iterable[str]) -> None:
-    trainset = set(trainset)
-    testset = set(testset)
-    overlap = trainset.intersection(testset)
-    if len(overlap) > 0:
-        raise AssertionError(
-            'Overlap between train and test sets.\n'
-            f'Reduced test set: {testset - overlap}'
+    def __eq__(self, other: object) -> bool:
+        return set(self.prompt_strings) == set(other.prompt_strings)
+    
+    def embed(self, layer: int) -> Float[Tensor, "batch d_model"]:
+        assert 0 <= layer <= self.model.cfg.n_layers
+        hook = 'resid_pre'
+        if layer == self.model.cfg.n_layers:
+            hook = 'resid_post'
+            layer -= 1
+        _, cache = self.model.run_with_cache(
+            self.prompt_tokens, return_type=None, names_filter = lambda name: hook in name
         )
+        out: Float[Tensor, "batch pos d_model"] = cache[hook, layer]
+        return out[:, self.embed_position, :].cpu().detach()
+
+#%%
+def get_km_dataset(
+    model: HookedTransformer,
+    device: torch.device,
+    prompt_type: str = "simple_train",
+    position_type: str = 'ADJ',
+) -> KMeansDataset:
+    all_prompts, answer_tokens, clean_tokens, _ = get_dataset(model, device, prompt_type=prompt_type)
+    clean_labels = answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0]
     
-def prepend_space(tokens: Iterable[str]) -> List[str]:
-    return [' ' + token for token in tokens]
-
-
-def strip_space(tokens: Iterable[str]) -> List[str]:
-    return [token.strip() for token in tokens]
-#%%
-def get_adjectives_and_verbs():
-    train_positive_adjectives = [
-        'perfect',
-        'fantastic',
-        'delightful',
-        'cheerful',
-        'good',
-        'remarkable',
-        'satisfactory',
-        'wonderful',
-        'nice',
-        'fabulous',
-        'outstanding',
-        'satisfying',
-        'awesome',
-        'exceptional',
-        'adequate',
-        'incredible',
-        'extraordinary',
-        'amazing',
-        'decent',
-        'lovely',
-        'brilliant',
-        'charming',
-        'terrific',
-        'superb',
-        'spectacular',
-        'great',
-        'splendid',
-        'beautiful',
-        'positive',
-        'excellent',
-        'pleasant'
-    ]
-    train_negative_adjectives = [
-        'dreadful',
-        'bad',
-        'dull',
-        'depressing',
-        'miserable',
-        'tragic',
-        'nasty',
-        'inferior',
-        'horrific',
-        'terrible',
-        'ugly',
-        'disgusting',
-        'disastrous',
-        'annoying',
-        'boring',
-        'offensive',
-        'frustrating',
-        'wretched',
-        'inadequate',
-        'dire',
-        'unpleasant',
-        'horrible',
-        'disappointing',
-        'awful'
-    ]
-    train_adjectives = prepend_space(
-        train_positive_adjectives + train_negative_adjectives
+    assert len(all_prompts) == len(answer_tokens)
+    assert len(all_prompts) == len(clean_tokens)
+    return KMeansDataset(
+        all_prompts,
+        clean_tokens,
+        clean_labels,
+        position_type,
+        model,
+        prompt_type,
     )
-    train_true_labels = (
-        [1] * len(train_positive_adjectives) + 
-        [0] * len(train_negative_adjectives)
-    )
-    check_for_duplicates(train_adjectives)
-    check_single_tokens(train_adjectives)
-    test_positive_adjectives = [
-        'stunning', 'impressive', 'admirable', 'phenomenal', 
-        'radiant', 
-        'glorious', 'magical', 
-        'pleasing', 'movie'
-    ]
-
-    test_negative_adjectives = [
-        'foul', 
-        'vile', 'appalling', 
-        'rotten', 'grim', 
-        'dismal'
-    ]
-    test_adjectives = prepend_space(
-        test_positive_adjectives + test_negative_adjectives
-    )
-    test_true_labels = (
-        [1] * len(test_positive_adjectives) +
-        [0] * len(test_negative_adjectives)
-    )
-    check_overlap(train_positive_adjectives, test_positive_adjectives)
-    check_overlap(train_negative_adjectives, test_negative_adjectives)
-    check_single_tokens(test_positive_adjectives)
-    check_single_tokens(test_negative_adjectives)
-    check_for_duplicates(test_adjectives)
-    positive_verbs = [
-        'enjoyed', 'loved', 'liked', 'appreciated', 'admired', 
-    ]
-    negative_verbs = [
-        'hated', 'despised', 'disliked',
-    ]
-    all_verbs = prepend_space(positive_verbs + negative_verbs)
-    verb_true_labels = (
-        [1] * len(positive_verbs) +
-        [0] * len(negative_verbs)
-    )
-    check_for_duplicates(all_verbs)
-    check_single_tokens(positive_verbs)
-    check_single_tokens(negative_verbs)
-    return (
-        train_adjectives, train_true_labels,
-        test_adjectives, test_true_labels,
-        all_verbs, verb_true_labels
-    )
-
-# %%
-# ============================================================================ #
-# Embed
-#%%
-class EmbedType(Enum):
-    EMBED = 'embed_only'
-    UNEMBED = 'unembed_transpose'
-    MLP = 'embed_and_mlp0'
-    ATTN = 'embed_and_attn0'
-    RESID = 'resid_post'
-    CONTEXT = 'context'
-#%%
-def embed_and_mlp0(
-    tokens: Int[Tensor, "batch 1"],
-    transformer: HookedTransformer = model
-) -> Float[Tensor, "batch 1 d_model"]:
-    block0 = transformer.blocks[0]
-    resid_mid = transformer.embed(tokens)
-    mlp_out = block0.mlp((resid_mid))
-    resid_post = resid_mid + mlp_out
-    return block0.ln2(resid_post)
-#%%
-def embed_and_attn0(
-    tokens: Int[Tensor, "batch 2"],
-    transformer: HookedTransformer = model
-) -> Float[Tensor, "batch 1 d_model"]:
-    assert tokens.shape[1] == 2
-    _, cache = transformer.run_with_cache(
-        tokens, return_type=None, names_filter = lambda name: 'attn_out' in name
-    )
-    out: Float[Tensor, "batch pos d_model"] = cache['attn_out', 0]
-    return out[:, 1, :]
-#%%
-def resid_layer(
-    tokens: Int[Tensor, "batch 2"],
-    layer: int,
-    transformer: HookedTransformer = model
-) -> Float[Tensor, "batch 1 d_model"]:
-    assert tokens.shape[1] == 2
-    _, cache = transformer.run_with_cache(
-        tokens, return_type=None, names_filter = lambda name: 'resid_post' in name
-    )
-    out: Float[Tensor, "batch pos d_model"] = cache['resid_post', layer]
-    return out[:, 1, :]
-#%%
-def embed_str_tokens(
-    str_tokens: List[str],
-    embed_type: EmbedType,
-    layer: int = None,
-    transformer: HookedTransformer = model,
-) -> Float[Tensor, "batch d_model"]:
-    tokens: Int[Tensor, "batch 2"] = transformer.to_tokens(
-        str_tokens, prepend_bos=True
-    )
-    non_bos_tokens: Int[Tensor, "batch 1"] = tokens[:, 1:]
-    embeddings: Float[Tensor, "batch 1 d_model"]
-    if embed_type == EmbedType.EMBED:
-        embeddings = transformer.embed(non_bos_tokens)
-    elif embed_type == EmbedType.UNEMBED:
-        # one-hot encode tokens
-        oh_tokens: Int[Tensor, "batch 1 vocab"] = F.one_hot(
-            non_bos_tokens, num_classes=transformer.cfg.d_vocab
-        ).to(torch.float32)
-        wU: Float[Tensor, "model vocab"] = transformer.W_U
-        embeddings = oh_tokens @ wU.T
-    elif embed_type == EmbedType.MLP:
-        embeddings = embed_and_mlp0(non_bos_tokens)
-    elif embed_type == EmbedType.ATTN:
-        embeddings = embed_and_attn0(tokens)
-    elif embed_type == EmbedType.RESID:
-        embeddings = resid_layer(tokens, layer)
-    else:
-        raise ValueError(f'Unrecognised embed type: {embed_type}')
-    embeddings: Float[Tensor, "batch d_model"] = embeddings.squeeze(1)
-    assert len(embeddings.shape) == 2, (
-        f"Expected embeddings to be 2D, got {embeddings.shape}"
-    )
-    return embeddings.detach()
 #%% # helper functions
 def split_by_label(
     adjectives: List[str], labels: Int[np.ndarray, "batch"]
@@ -310,138 +168,420 @@ def split_by_label(
     return first_cluster, second_cluster
 
 
-
 def get_accuracy(
     predicted_positive: Iterable[str],
     predicted_negative: Iterable[str],
     actual_positive: Iterable[str],
     actual_negative: Iterable[str],
-    label: str,
 ) -> Tuple[str, int, int, float]:
-    print('get_accuracy')
-    print(predicted_positive, actual_positive)
-    print(predicted_negative, actual_negative)
     correct = (
         len(set(predicted_positive) & set(actual_positive)) +
         len(set(predicted_negative) & set(actual_negative))
     )
     total = len(actual_positive) + len(actual_negative)
     accuracy = correct / total
-    return label, correct, total, accuracy
+    return correct, total, accuracy
 
+#%%
+# ============================================================================ #
+# K-means
+def _fit_kmeans(
+    train_data: KMeansDataset, train_layer: int,
+    test_data: KMeansDataset, test_layer: int,
+    n_init: int = 10,
+    n_clusters: int = 2,
+    random_state: int = 0,
+):
+    train_embeddings = train_data.embed(train_layer)
+    test_embeddings = test_data.embed(test_layer)
+    train_positive_adjectives = [
+        adj.strip() for adj, label in zip(train_data.str_labels, train_data.binary_labels) if label == 1
+    ]
+    train_negative_adjectives = [
+        adj.strip() for adj, label in zip(train_data.str_labels, train_data.binary_labels) if label == 0
+    ]
+    test_positive_adjectives = [
+        adj.strip() for adj, label in zip(test_data.str_labels, test_data.binary_labels) if label == 1
+    ]
+    test_negative_adjectives = [
+        adj.strip() for adj, label in zip(test_data.str_labels, test_data.binary_labels) if label == 0
+    ]
+    kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
+    kmeans.fit(train_embeddings)
+    train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
+    test_km_labels = kmeans.predict(test_embeddings)
+    km_centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
 
-def plot_pca_1d(train_pcs, train_adjectives, train_pca_labels, pca_centroids):
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=train_pcs[:, 0],
-            y=np.zeros_like(train_pcs[:, 0]),
-            text=train_adjectives,
-            mode="markers",
-            marker=dict(
-                color=train_pca_labels,
-                colorscale="RdBu",
-                opacity=0.8,
-            ),
-            name="PCA in-sample",
+    km_first_cluster, km_second_cluster = split_by_label(
+        train_data.str_labels, train_km_labels
+    )
+    one_pos = len(set(km_first_cluster) & set(train_positive_adjectives))
+    one_neg = len(set(km_first_cluster) & set(train_negative_adjectives))
+    two_pos = len(set(km_second_cluster) & set(train_positive_adjectives))
+    two_neg = len(set(km_second_cluster) & set(train_negative_adjectives))
+    pos_first = one_pos + two_neg > one_neg + two_pos
+    if pos_first:
+        train_positive_cluster = km_first_cluster
+        train_negative_cluster = km_second_cluster
+        km_positive_centroid = km_centroids[0, :]
+        km_negative_centroid = km_centroids[1, :]
+        test_positive_cluster, test_negative_cluster = split_by_label(
+            test_data.str_labels, test_km_labels
         )
-    )
-    # fig.add_trace(
-    #     go.Scatter(
-    #         x=test_pcs[:, 0],
-    #         y=np.zeros_like(test_pcs[:, 0]),
-    #         mode="markers",
-    #         marker=dict(
-    #             color=test_labels,
-    #             colorscale="oryel",
-    #             opacity=0.8,
-    #         ),
-    #         name="PCA out-of-sample",
-    #     )
-    # )
-    fig.add_trace(
-        go.Scatter(
-            x=pca_centroids[:, 0],
-            y=np.zeros_like(pca_centroids[:, 0]),
-            mode="markers",
-            marker=dict(
-                color=["red", "blue"],
-                size=10,
-                opacity=1,
-            ),
-            name="PCA centroids",
+    else:
+        train_positive_cluster = km_second_cluster
+        train_negative_cluster = km_first_cluster
+        km_positive_centroid = km_centroids[1, :]
+        km_negative_centroid = km_centroids[0, :]
+        test_negative_cluster, test_positive_cluster = split_by_label(
+            test_data.str_labels, test_km_labels
         )
+        train_km_labels = 1 - train_km_labels
+        test_km_labels = 1 - test_km_labels
+    km_line: Float[np.ndarray, "d_model"] = (
+        km_positive_centroid - km_negative_centroid
     )
-    fig.update_layout(
-        xaxis=dict(
-            title="PC1",
-            # showgrid=False,
-            # zeroline=False,
-            # showline=False,
-            # showticklabels=False,
-        ),
-        yaxis=dict(
-            showgrid=False,
-            zeroline=False,
-            showline=False,
-            showticklabels=False,
-        ),
-        showlegend=True,
+    # get accuracy
+    _, _, insample_accuracy = get_accuracy(
+        train_positive_cluster,
+        train_negative_cluster,
+        train_positive_adjectives,
+        train_negative_adjectives,
     )
-    return fig
+    correct, total, accuracy = get_accuracy(
+        test_positive_cluster,
+        test_negative_cluster,
+        test_positive_adjectives,
+        test_negative_adjectives,
+    )
+    is_insample = (
+        train_data.prompt_type == test_data.prompt_type and
+        train_data.position_type == test_data.position_type and
+        train_layer == test_layer
+    )
+    if is_insample:
+        assert accuracy >= 0.5, (
+            f"Accuracy should be at least 50%, got {accuracy:.1%}, "
+            f"direct calc:{insample_accuracy:.1%}, "
+            f"train:{train_data.prompt_type.value}, layer:{train_layer}, \n"
+            f"positive cluster: {sorted(test_positive_cluster)}\n"
+            f"negative cluster: {sorted(test_negative_cluster)}\n"
+            f"positive adjectives: {sorted(test_positive_adjectives)}\n"
+            f"negative adjectives: {sorted(test_negative_adjectives)}\n"
+        )
+    
+    return km_line, correct, total, accuracy
+#%%
+def safe_cosine_sim(
+    line1: Float[np.ndarray, "d_model"], line2: Float[np.ndarray, "d_model"],
+    tol: float = 1e-6, min_value: float = -0.9,
+):
+    if np.linalg.norm(line1) < tol or np.linalg.norm(line2) < tol:
+        cosine_sim = 0
+    else:
+        cosine_sim = np.dot(line1, line2) / (
+            np.linalg.norm(line1) * np.linalg.norm(line2)
+        )
+    assert cosine_sim >= min_value, (
+        f"cosine sim very negative ({cosine_sim:.2f}), looks like a flipped sign"
+    )
+    return cosine_sim
+#%%
+def train_kmeans(
+    train_data: KMeansDataset, train_layer: int,
+    test_data: KMeansDataset, test_layer: int,
+    n_init: int = 10,
+    n_clusters: int = 2,
+    random_state: int = 0,
+):
+    km_line, correct, total, accuracy = _fit_kmeans(
+        train_data, train_layer,
+        test_data, test_layer,
+        n_init=n_init,
+        n_clusters=n_clusters,
+        random_state=random_state,
+    )
+    test_line, _, _, _ = _fit_kmeans(
+        test_data, test_layer,
+        test_data, test_layer,
+        n_init=n_init,
+        n_clusters=n_clusters,
+        random_state=random_state,
+    )
+    # write k means line to file
+    save_array(km_line, f"km_{train_data.prompt_type.value}_layer{train_layer}", model)
+
+    cosine_sim = safe_cosine_sim(km_line, test_line)
+    columns = [
+        'train_set', 'train_layer', 'train_pos',
+        'test_set', 'test_layer',  'test_pos',
+        'correct', 'total', 'accuracy', 'similarity',
+    ]
+    data = [[
+        train_data.prompt_type.value, train_layer, train_data.position_type,
+        test_data.prompt_type.value, test_layer, test_data.position_type,
+        correct, total, accuracy, cosine_sim,
+    ]]
+    stats_df = pd.DataFrame(data, columns=columns)
+    
+    update_csv(
+        stats_df, "km_stats", model, key_cols=CSV_COLS
+    )
+
+# %%
+# ============================================================================ #
+# PCA
+def train_pca(
+    train_data: KMeansDataset, train_layer: int,
+    test_data: KMeansDataset, test_layer: int,
+    n_init: int = 10,
+    n_clusters: int = 2,
+    random_state: int = 0,
+) -> Tuple[pd.DataFrame, go.Figure]:
+    train_embeddings = train_data.embed(train_layer)
+    test_embeddings = test_data.embed(test_layer)
+    train_positive_adjectives = [
+        adj.strip() for adj, label in zip(train_data.str_labels, train_data.binary_labels) if label == 1
+    ]
+    train_negative_adjectives = [
+        adj.strip() for adj, label in zip(train_data.str_labels, train_data.binary_labels) if label == 0
+    ]
+    test_positive_adjectives = [
+        adj.strip() for adj, label in zip(test_data.str_labels, test_data.binary_labels) if label == 1
+    ]
+    test_negative_adjectives = [
+        adj.strip() for adj, label in zip(test_data.str_labels, test_data.binary_labels) if label == 0
+    ]
+    pca = PCA(n_components=2)
+    train_pcs = pca.fit_transform(train_embeddings.numpy())
+    test_pcs = pca.transform(test_embeddings.numpy())
+    kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
+    kmeans.fit(train_pcs)
+    train_pca_labels: Int[np.ndarray, "batch"] = kmeans.labels_
+    test_pca_labels = kmeans.predict(test_pcs)
+    pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
+    # PCA components should already be normalised, but just in case
+    comp_unit = pca.components_[0, :] / np.linalg.norm(pca.components_[0, :])
+    save_array(comp_unit, f"pca_0_{train_data.prompt_type.value}_layer{train_layer}", model)
+    pca_first_cluster, pca_second_cluster = split_by_label(
+        train_data.str_labels, train_pca_labels
+    )
+    one_pos = len(set(pca_first_cluster) & set(train_positive_adjectives))
+    one_neg = len(set(pca_first_cluster) & set(train_negative_adjectives))
+    two_pos = len(set(pca_second_cluster) & set(train_positive_adjectives))
+    two_neg = len(set(pca_second_cluster) & set(train_negative_adjectives))
+    pca_pos_first = one_pos + two_neg > one_neg + two_pos
+    if pca_pos_first:
+        # positive first
+        train_pca_positive_cluster = pca_first_cluster
+        train_pca_negative_cluster = pca_second_cluster
+        test_pca_positive_cluster, test_pca_negative_cluster = split_by_label(
+            test_data.str_labels, test_pca_labels
+        )
+        pca_positive_centroid = pca_centroids[0, :]
+        pca_negative_centroid = pca_centroids[1, :]
+    else:
+        # negative first
+        train_pca_positive_cluster = pca_second_cluster
+        train_pca_negative_cluster = pca_first_cluster
+        test_pca_negative_cluster, test_pca_positive_cluster = split_by_label(
+            test_data.str_labels, test_pca_labels
+        )
+        pca_negative_centroid = pca_centroids[0, :]
+        pca_positive_centroid = pca_centroids[1, :]
+        train_pca_labels = 1 - train_pca_labels
+        test_pca_labels = 1 - test_pca_labels
+    
+    test_pca = PCA(n_components=2)
+    test_pca.fit_transform(train_embeddings.numpy())
+    test_comp_unit = test_pca.components_[0, :] / np.linalg.norm(test_pca.components_[0, :])
+    # compute cosine sim
+    if np.linalg.norm(test_comp_unit) < 1e-6:
+        cosine_sim = 0
+    else:
+        cosine_sim = np.dot(comp_unit, test_comp_unit) / (
+            np.linalg.norm(comp_unit) * np.linalg.norm(test_comp_unit)
+        )
+    correct, total, accuracy = get_accuracy(
+        test_pca_positive_cluster,
+        test_pca_negative_cluster,
+        test_positive_adjectives,
+        test_negative_adjectives,
+    )
+    columns = [
+        'train_set', 'train_layer', 'train_pos',
+        'test_set', 'test_layer',  'test_pos',
+        'correct', 'total', 'accuracy', 'similarity',
+    ]
+    data = [[
+        train_data.prompt_type.value, train_layer, train_data.position_type,
+        test_data.prompt_type.value, test_layer, test_data.position_type,
+        correct, total, accuracy, cosine_sim,
+    ]]
+    stats_df = pd.DataFrame(data, columns=columns)
+    update_csv(
+        stats_df, "pca_stats", model, key_cols=CSV_COLS
+    )
+    plot_data = [[
+         train_data.prompt_type.value, train_layer, train_data.position_type,
+        test_data.prompt_type.value, test_layer, test_data.position_type,
+        train_pcs, train_data.str_labels, train_data.binary_labels, 
+        test_pcs, test_data.str_labels, test_data.binary_labels,
+        pca_centroids
+    ]]
+    plot_columns = [
+        'train_set', 'train_layer', 'train_pos',
+        'test_set', 'test_layer',  'test_pos',
+        'train_pcs', 'train_str_labels', 'train_true_labels',
+        'test_pcs', 'test_str_labels', 'test_true_labels',
+        'pca_centroids',
+    ]
+    plot_df = pd.DataFrame(plot_data, columns=plot_columns)
+    update_csv(
+        plot_df, "pca_plot", model, key_cols=CSV_COLS
+    )
+#%%
+PROMPT_TYPES = [
+    PromptType.SIMPLE_TRAIN,
+    PromptType.SIMPLE_TEST,
+    PromptType.SIMPLE_ADVERB,
+    PromptType.SIMPLE_FRENCH,
+    PromptType.PROPER_NOUNS,
+    PromptType.MEDICAL,
+]
+LAYERS = list(range(model.cfg.n_layers + 1))
+BAR = tqdm(
+    itertools.product(PROMPT_TYPES, LAYERS, PROMPT_TYPES, LAYERS),
+    total=len(PROMPT_TYPES) ** 2 * len(LAYERS) ** 2,
+)
+for train_type, train_layer, test_type, test_layer in BAR:
+    BAR.set_description(f"trainset:{train_type.value}, train_layer:{train_layer}, testset:{test_type.value}, test_layer:{test_layer}")
+    if train_layer != test_layer or 'test' in train_type.value:
+        # Don't train/eval on different layers
+        # Don't train on test sets
+        continue
+    placeholders = itertools.product(
+        train_type.get_placeholders(), test_type.get_placeholders()
+    )
+    for train_pos, test_pos in placeholders:
+        if train_pos == 'VRB':
+            # Don't train on verbs as sample size is too small
+            continue
+        query = (
+            f"(train_set == '{train_type.value}') & "
+            f"(test_set == '{test_type.value}') & "
+            f"(train_layer == {train_layer}) & "
+            f"(test_layer == {test_layer}) &"
+            f"(train_pos == '{train_pos}') & "
+            f"(test_pos == '{test_pos}')"
+        )
+        # if eval_csv(query, "km_stats", model):
+        #     continue
+
+        trainset = get_km_dataset(model, device, prompt_type=train_type, position_type=train_pos)
+        testset = get_km_dataset(model, device, prompt_type=test_type, position_type=test_pos)
+        train_kmeans(
+            trainset, train_layer,
+            testset, test_layer,
+        )
+        train_pca(
+            trainset, train_layer,
+            testset, test_layer,
+        )
+#%%
+km_stats = get_csv("km_stats", model, key_cols=CSV_COLS)
+km_stats = km_stats.loc[
+    km_stats.train_set.isin(['simple_train']) & 
+    km_stats.train_pos.isin(['ADJ']) &
+    km_stats.test_set.isin(['simple_train', 'simple_test', 'simple_adverb'])
+]
+km_stats
+#%%
+km_stats.train_pos.value_counts()
+#%%
+def hide_nan(val):
+    return '' if pd.isna(val) else f"{val:.1%}"
+#%%
+accuracy_styler = km_stats.pivot(
+    index=["train_set", "train_pos", "train_layer", ],
+    columns=["test_set", "test_pos"],
+    values="accuracy",
+).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"K-means accuracy ({model.name})")
+save_html(accuracy_styler, "km_accuracy", model)
+display(accuracy_styler)
+#%%
+similarity_styler = km_stats.pivot(
+    index=["train_set",  "train_pos", "train_layer",],
+    columns=["test_set", "test_pos"],
+    values="similarity",
+).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"K-means cosine similarities ({model.name})")
+save_html(similarity_styler, "km_similarity", model)
+display(similarity_styler)
+#%%
+# hacky functions for reading from nested CSV
+def tensor_from_str(
+    string: str,
+    dim: int = 2,
+) -> Float[Tensor, "batch dim"]:
+    if dim == 2:
+        split_list = string.split('\n')
+        split_list = [el.replace('[', '').replace(']', '').strip().split() for el in split_list]
+        split_list = [[float(el) for el in row] for row in split_list]
+        return torch.tensor(split_list)
+    elif dim == 1:
+        s = string.replace("tensor([", "").replace("])", "")
+        # Splitting by comma and stripping spaces to get boolean values
+        bool_vals = [val.strip() == "True" for val in s.split(",")]
+        # Creating a tensor from the list of booleans
+        tensor_val = torch.tensor(bool_vals)
+        return tensor_val
 
 
+def list_from_str(
+    string: str,
+) -> List[str]:
+    split_list = string.split(',')
+    split_list = [el.replace('[', '').replace(']', '').replace("'", "").strip().replace(" ", "_") for el in split_list]
+    return split_list
+#%%
 def plot_pca_2d(
-    train_pcs, train_adjectives, train_true_labels, 
-    test_pcs, test_adjectives, test_true_labels,
-    verb_pcs, all_verbs, verb_true_labels,
-    pca_centroids, label
+    train_pcs, train_str_labels, train_true_labels, 
+    test_pcs, test_str_labels, test_true_labels,
+    pca_centroids, 
+    train_label: str = 'train', 
+    test_label: str = 'test',
 ):
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
             x=train_pcs[:, 0],
             y=train_pcs[:, 1],
-            text=train_adjectives,
+            text=train_str_labels,
             mode="markers",
             marker=dict(
-                color=train_true_labels,
+                color=train_true_labels.to(dtype=torch.int32),
                 colorscale="RdBu",
                 opacity=0.8,
             ),
-            name="PCA in-sample",
+            name=f"PCA in-sample ({train_label})",
         )
     )
     fig.add_trace(
         go.Scatter(
             x=test_pcs[:, 0],
             y=test_pcs[:, 1],
-            text=test_adjectives,
+            text=test_str_labels,
             mode="markers",
             marker=dict(
-                color=test_true_labels,
+                color=test_true_labels.to(dtype=torch.int32),
                 colorscale="RdBu",
                 opacity=0.8,
                 symbol="square",
             ),
-            name="PCA out-of-sample",
+            name=f"PCA out-of-sample ({test_label})",
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=verb_pcs[:, 0],
-            y=verb_pcs[:, 1],
-            text=all_verbs,
-            mode="markers",
-            marker=dict(
-                color=verb_true_labels,
-                colorscale="RdBu",
-                opacity=0.8,
-                symbol="star",
-            ),
-            name="PCA verbs",
-        )
-    )
+
     fig.add_trace(
         go.Scatter(
             x=pca_centroids[:, 0],
@@ -453,340 +593,53 @@ def plot_pca_2d(
     )
     fig.update_layout(
         title=(
-            f"PCA on {label} of single-token adjectives "
+            f"PCA in and out of sample "
             f"({model.name})"
         ),
         xaxis_title="PC1",
         yaxis_title="PC2",
     )
-    save_html(fig, f"PCA_{embedding_type.value}", model)
+    save_html(
+        fig, f"pca_{train_label}_{test_label}", model
+    )
+    return fig
+
+# %%
+def plot_pca_from_cache(
+    train_set: PromptType, train_pos: str, train_layer: int,
+    test_set: PromptType, test_pos: str, test_layer: int,
+):
+    plot_df = get_csv("pca_plot", model, key_cols=CSV_COLS)
+    plot_df = plot_df.loc[
+        (plot_df.train_set == train_set.value) &
+        (plot_df.train_pos == train_pos) &
+        (plot_df.train_layer == train_layer) &
+        (plot_df.test_set == test_set.value) &
+        (plot_df.test_pos == test_pos) &
+        (plot_df.test_layer == test_layer)
+    ]
+    assert len(plot_df) == 1, f"Found {len(plot_df)} rows for query"
+    plot_df = plot_df.iloc[0]
+    train_pcs = tensor_from_str(plot_df.train_pcs)
+    train_str_labels = list_from_str(plot_df.train_str_labels)
+    train_true_labels = tensor_from_str(plot_df.train_true_labels, dim=1)
+    test_pcs = tensor_from_str(plot_df.test_pcs)
+    test_str_labels = list_from_str(plot_df.test_str_labels)
+    test_true_labels = tensor_from_str(plot_df.test_true_labels, dim=1)
+    pca_centroids = tensor_from_str(plot_df.pca_centroids)
+    train_label = f"{train_set.value}_{train_pos}_layer{train_layer}"
+    test_label = f"{test_set.value}_{test_pos}_layer{test_layer}"
+    fig = plot_pca_2d(
+        train_pcs, train_str_labels, train_true_labels,
+        test_pcs, test_str_labels, test_true_labels,
+        pca_centroids, 
+        train_label=train_label, test_label=test_label,
+    )
     return fig
 #%%
-def get_embed_label(embedding_type: EmbedType, layer: int = None):
-    layer_suffix = f"_layer_{layer}" if embedding_type in (EmbedType.RESID, EmbedType.CONTEXT) else ""
-    return f"{embedding_type.value}{layer_suffix}"
-#%%
-# ============================================================================ #
-# K-means
-#%%
-def train_kmeans(
-    train_embeddings, train_adjectives, train_labels,
-    test_embeddings, test_adjectives, test_labels,
-    verb_embeddings, all_verbs, verb_labels,
-    embedding_type, layer
-) -> Tuple[KMeans, pd.DataFrame]:
-    train_positive_adjectives = [
-        adj.strip() for adj, label in zip(train_adjectives, train_labels) if label == 1
-    ]
-    train_negative_adjectives = [
-        adj.strip() for adj, label in zip(train_adjectives, train_labels) if label == 0
-    ]
-    test_positive_adjectives = [
-        adj.strip() for adj, label in zip(test_adjectives, test_labels) if label == 1
-    ]
-    test_negative_adjectives = [
-        adj.strip() for adj, label in zip(test_adjectives, test_labels) if label == 0
-    ]
-    positive_verbs = [
-        verb.strip() for verb, label in zip(all_verbs, verb_labels) if label == 1
-    ]
-    negative_verbs = [
-        verb.strip() for verb, label in zip(all_verbs, verb_labels) if label == 0
-    ]
-    kmeans = KMeans(n_clusters=2, n_init=10)
-    kmeans.fit(train_embeddings)
-    train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
-    test_km_labels = kmeans.predict(test_embeddings)
-    verb_km_labels = kmeans.predict(verb_embeddings)
-    km_centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
-
-    print('train adjectives and labels', train_adjectives, train_km_labels, train_labels)
-    km_first_cluster, km_second_cluster = split_by_label(
-        train_adjectives, train_km_labels
-    )
-    print('KM clusters', km_first_cluster, km_second_cluster)
-    pos_first = (
-        len(set(km_first_cluster) & set(train_positive_adjectives)) >
-        len(set(km_second_cluster) & set(train_positive_adjectives))
-    )
-    if pos_first:
-        train_positive_cluster = km_first_cluster
-        train_negative_cluster = km_second_cluster
-        km_positive_centroid = km_centroids[0, :]
-        km_negative_centroid = km_centroids[1, :]
-        test_positive_cluster, test_negative_cluster = split_by_label(
-            test_adjectives, test_km_labels
-        )
-        verb_positive_cluster, verb_negative_cluster = split_by_label(
-            all_verbs, verb_km_labels
-        )
-    else:
-        train_positive_cluster = km_second_cluster
-        train_negative_cluster = km_first_cluster
-        km_positive_centroid = km_centroids[1, :]
-        km_negative_centroid = km_centroids[0, :]
-        test_negative_cluster, test_positive_cluster = split_by_label(
-            test_adjectives, test_km_labels
-        )
-        verb_negative_cluster, verb_positive_cluster = split_by_label(
-            all_verbs, verb_km_labels
-        )
-        train_km_labels = 1 - train_km_labels
-        test_km_labels = 1 - test_km_labels
-        verb_km_labels = 1 - verb_km_labels
-    km_line: Float[np.ndarray, "d_model"] = (
-        km_positive_centroid - km_negative_centroid
-    )
-    # write k means line to file
-    embed_label = get_embed_label(embedding_type, layer)
-    save_array(km_line, f"km_2c_line_{embed_label}", model)
-    # get accuracy
-    print('pos/neg clusters', train_positive_cluster, train_positive_adjectives, train_negative_cluster, train_negative_adjectives)
-    accuracy_data = []
-    accuracy_data.append(get_accuracy(
-        train_positive_cluster,
-        train_negative_cluster,
-        train_positive_adjectives,
-        train_negative_adjectives,
-        "In-sample KMeans",
-    ))
-    accuracy_data.append(get_accuracy(
-        test_positive_cluster,
-        test_negative_cluster,
-        test_positive_adjectives,
-        test_negative_adjectives,
-        "Out-of-sample KMeans",
-    ))
-    accuracy_data.append(get_accuracy(
-        verb_positive_cluster,
-        verb_negative_cluster,
-        positive_verbs,
-        negative_verbs,
-        "Out-of-sample KMeans verbs",
-    ))
-    accuracy_df = pd.DataFrame(accuracy_data, columns=['partition', 'correct', 'total', 'accuracy'])
-    accuracy_df['embedding_type'] = embed_label
-    return kmeans, accuracy_df
-
-# %%
-# ============================================================================ #
-# PCA
-def train_pca(
-    train_embeddings, train_adjectives, train_labels,
-    test_embeddings, test_adjectives, test_labels,
-    verb_embeddings, all_verbs, verb_labels,
-    embedding_type, layer, 
-    kmeans: KMeans
-) -> Tuple[pd.DataFrame, go.Figure]:
-    train_positive_adjectives = [
-        adj.strip() for adj, label in zip(train_adjectives, train_labels) if label == 1
-    ]
-    train_negative_adjectives = [
-        adj.strip() for adj, label in zip(train_adjectives, train_labels) if label == 0
-    ]
-    test_positive_adjectives = [
-        adj.strip() for adj, label in zip(test_adjectives, test_labels) if label == 1
-    ]
-    test_negative_adjectives = [
-        adj.strip() for adj, label in zip(test_adjectives, test_labels) if label == 0
-    ]
-    positive_verbs = [
-        verb.strip() for verb, label in zip(all_verbs, verb_labels) if label == 1
-    ]
-    negative_verbs = [
-        verb.strip() for verb, label in zip(all_verbs, verb_labels) if label == 0
-    ]
-    embed_label = get_embed_label(embedding_type, layer)
-    pca = PCA(n_components=2)
-    train_pcs = pca.fit_transform(train_embeddings.numpy())
-    test_pcs = pca.transform(test_embeddings.numpy())
-    verb_pcs = pca.transform(verb_embeddings.numpy())
-    kmeans.fit(train_pcs)
-    train_pca_labels: Int[np.ndarray, "batch"] = kmeans.labels_
-    test_pca_labels = kmeans.predict(test_pcs)
-    verb_pca_labels = kmeans.predict(verb_pcs)
-    pca_centroids: Float[np.ndarray, "cluster pca"] = kmeans.cluster_centers_
-    for comp in range(pca.n_components_):
-        # PCA components should already be normalised, but just in case
-        comp_unit = pca.components_[comp, :] / np.linalg.norm(pca.components_[comp, :])
-        save_array(comp_unit, f"pca_{comp}_{embed_label}", model)
-    pca_first_cluster, pca_second_cluster = split_by_label(
-        train_adjectives, train_pca_labels
-    )
-    pca_pos_first = (
-        len(set(pca_first_cluster) & set(train_positive_adjectives)) >
-        len(set(pca_second_cluster) & set(train_positive_adjectives))
-    )
-    if pca_pos_first:
-        # positive first
-        train_pca_positive_cluster = pca_first_cluster
-        train_pca_negative_cluster = pca_second_cluster
-        test_pca_positive_cluster, test_pca_negative_cluster = split_by_label(
-            test_adjectives, test_pca_labels
-        )
-        verb_pca_positive_cluster, verb_pca_negative_cluster = split_by_label(
-            all_verbs, verb_pca_labels
-        )
-        pca_positive_centroid = pca_centroids[0, :]
-        pca_negative_centroid = pca_centroids[1, :]
-    else:
-        # negative first
-        train_pca_positive_cluster = pca_second_cluster
-        train_pca_negative_cluster = pca_first_cluster
-        test_pca_negative_cluster, test_pca_positive_cluster = split_by_label(
-            test_adjectives, test_pca_labels
-        )
-        verb_pca_negative_cluster, verb_pca_positive_cluster = split_by_label(
-            all_verbs, verb_pca_labels
-        )
-        pca_negative_centroid = pca_centroids[0, :]
-        pca_positive_centroid = pca_centroids[1, :]
-        train_pca_labels = 1 - train_pca_labels
-        test_pca_labels = 1 - test_pca_labels
-        verb_pca_labels = 1 - verb_pca_labels
-    accuracy_data = []
-    accuracy_data.append(get_accuracy(
-        train_pca_positive_cluster,
-        train_pca_negative_cluster,
-        train_positive_adjectives,
-        train_negative_adjectives,
-        "In-sample PCA",
-    ))
-    accuracy_data.append(get_accuracy(
-        test_pca_positive_cluster,
-        test_pca_negative_cluster,
-        test_positive_adjectives,
-        test_negative_adjectives,
-        "Out-of-sample PCA",
-    ))
-    accuracy_data.append(get_accuracy(
-        verb_pca_positive_cluster,
-        verb_pca_negative_cluster,
-        positive_verbs,
-        negative_verbs,
-        "Out-of-sample PCA verbs",
-    ))
-    accuracy_df = pd.DataFrame(accuracy_data, columns=['partition', 'correct', 'total', 'accuracy'])
-    accuracy_df['embedding_type'] = embed_label
-
-    if pca.n_components_== 1:
-        fig = plot_pca_1d()
-    elif pca.n_components_ == 2:
-        fig = plot_pca_2d(
-            train_pcs, train_adjectives, train_labels, 
-            test_pcs, test_adjectives, test_labels,
-            verb_pcs, all_verbs, verb_labels,
-            pca_centroids, embed_label
-        )
-    else:
-        fig = None
-    return accuracy_df, fig
-#%%
-def run_for_embedding(embedding_type: EmbedType, layer: int = None) -> Tuple[pd.DataFrame, go.Figure]:
-    (
-        train_adjectives, train_labels, 
-        test_adjectives, test_labels,
-        all_verbs, verb_labels
-    ) = get_adjectives_and_verbs()
-    train_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
-        train_adjectives, embedding_type, layer=layer
-    )
-    test_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
-        test_adjectives, embedding_type, layer=layer
-    )
-    verb_embeddings: Float[Tensor, "batch d_model"] = embed_str_tokens(
-        all_verbs, embedding_type, layer=layer
-    )
-    train_embeddings.shape, test_embeddings.shape, verb_embeddings.shape
-    kmeans, km_df = train_kmeans(
-        train_embeddings, train_adjectives, train_labels,
-        test_embeddings, test_adjectives, test_labels,
-        verb_embeddings, all_verbs, verb_labels,
-        embedding_type, layer
-    )
-    pca_df, fig = train_pca(
-        train_embeddings, train_adjectives, train_labels,
-        test_embeddings, test_adjectives, test_labels,
-        verb_embeddings, all_verbs, verb_labels,
-        embedding_type, layer, kmeans
-    )
-    return pd.concat([km_df, pca_df], axis=0), fig
-
-#%%
-def run_for_activation(embedding_type: EmbedType, layer: int = None) -> Tuple[pd.DataFrame, go.Figure]:
-    assert embedding_type == EmbedType.CONTEXT
-    train_size = len(clean_tokens) // 2
-    _, train_cache = model.run_with_cache(
-        clean_tokens[:train_size], return_type=None,
-    )
-    _, test_cache = model.run_with_cache(
-        clean_tokens[train_size:], return_type=None,
-    )
-    train_embeddings: Float[Tensor, "batch d_model"] = train_cache["resid_post", layer][:, -1, :]
-    test_embeddings: Float[Tensor, "batch d_model"] = test_cache["resid_post", layer][:, -1, :]
-    verb_embeddings: Float[Tensor, "batch d_model"] = test_cache["resid_post", layer][:, -1, :]
-    adjective_position = 6
-    train_adjectives = [model.to_str_tokens(tokens)[adjective_position] for tokens in clean_tokens[:train_size]]
-    test_adjectives = [model.to_str_tokens(tokens)[adjective_position] for tokens in clean_tokens[train_size:]]
-    all_verbs = test_adjectives
-    train_labels = [int((token == answer_tokens[0, 0, 0]).item()) for token in answer_tokens[:train_size, 0, 0]]
-    test_labels = [int((token == answer_tokens[0, 0, 0]).item()) for token in answer_tokens[train_size:, 0, 0]]
-    verb_labels = test_labels
-    print(train_adjectives)
-    kmeans, km_df = train_kmeans(
-        train_embeddings, train_adjectives, train_labels,
-        test_embeddings, test_adjectives, test_labels,
-        verb_embeddings, all_verbs, verb_labels,
-        embedding_type, layer
-    )
-    pca_df, fig = train_pca(
-        train_embeddings, train_adjectives, train_labels,
-        test_embeddings, test_adjectives, test_labels,
-        verb_embeddings, all_verbs, verb_labels,
-        embedding_type, layer, kmeans
-    )
-    return pd.concat([km_df, pca_df], axis=0), fig
-#%% # train, test embeddings
-embedding_type = EmbedType.CONTEXT # CHANGEME!!!!!!!!!!!!!
-layer_data = []
-layer_figs = []
-for layer in range(12):
-    layer_df, layer_fig = run_for_activation(embedding_type=embedding_type, layer=layer)
-    layer_data.append(layer_df)
-    layer_figs.append(layer_fig)
-accuracy_df = pd.concat(layer_data).reset_index(drop=True)
-accuracy_df
-#%%
-accuracy_df['layer'] = accuracy_df.embedding_type.str.extract(r'layer_(\d+)').astype(int)
-accuracy_df.pivot(
-    index="layer",
-    columns="partition",
-    values="accuracy",
-).style.background_gradient(cmap="Reds").format("{:.1%}")
-#%%
-# concatenate the list of figures
-fig = make_subplots(rows=len(layer_figs), cols=1, shared_xaxes=False, shared_yaxes=False)
-
-for i, layer_fig in enumerate(layer_figs):
-    if layer_fig is not None:
-        for trace in layer_fig.data:
-            fig.add_trace(trace, row=i+1, col=1)
-    fig.update_yaxes(title_text=f"Layer {i}", row=i+1, col=1)
-    
-
-# Add legend to the first subplot
-fig.update_traces(showlegend=True, row=1, col=1)
-
-# Hide legends in other subplots
-for i in range(2, len(layer_figs)+1):
-    fig.update_traces(showlegend=False, row=i, col=1)
-
-fig.update_layout(
-    title=f"PCA for {embedding_type.value} embeddings in each layer",
-    xaxis_title="PC1",
-    height=3000,
-    width=1000,
+fig = plot_pca_from_cache(
+    PromptType.SIMPLE_TRAIN, 'ADJ', 0,
+    PromptType.SIMPLE_TEST, 'ADJ', 0,
 )
-save_html(fig, f"pca_{embedding_type.value}_by_layer.html", model)
 fig.show()
-# %%
+#%%
