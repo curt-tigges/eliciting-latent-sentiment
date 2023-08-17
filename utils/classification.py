@@ -217,8 +217,8 @@ def train_direction(
         **kwargs,
     )
     test_line, _, _, _ = fitting_method(
-        test_data, test_layer,
-        test_data, test_layer,
+        test_data, test_pos, test_layer,
+        test_data, test_pos, test_layer,
         **kwargs,
     )
     # write k means line to file
