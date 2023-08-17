@@ -37,28 +37,6 @@ import wandb
 from utils.store import save_array, save_html, update_csv, get_csv, eval_csv
 from utils.prompts import get_dataset, filter_words_by_length, PromptType
 #%%
-def get_special_positions(format_string: str, token_list: List[str]) -> Dict[str, List[int]]:
-    # Loop through each token in the token_list
-    format_idx = 0
-    curr_sub_token = None
-    out = dict()
-    # print('get_special_positions', format_string, token_list)
-    for token_index, token in enumerate(token_list):
-        # Check if the token appears in the format_string
-        # print(token_index, token, format_idx, curr_sub_token, out)
-        if format_string[format_idx] == '{':
-            curr_sub_token = format_string[format_idx + 1:format_string.find('}', format_idx)]
-        if format_string.find(token, format_idx) >= 0:
-            format_idx = format_string.find(token, format_idx) + len(token)
-        elif curr_sub_token is not None:
-            out[curr_sub_token] = out.get(curr_sub_token, []) + [token_index]
-    
-    return out
-
-# Test
-format_string = "|endoftext|> When I hear the name{NOUN}, I feel very"
-token_list = ['0:<|endoftext|>', '1:When', '2: I', '3: hear', '4: the', '5: name', '6: Mandela', '7:,', '8: I', '9: feel', '10: very']
-print(get_special_positions(format_string, token_list)) 
 # ============================================================================ #
 # model loading
 
@@ -100,7 +78,7 @@ class KMeansDataset:
         self.prompt_type = prompt_type
         example_str_tokens = model.to_str_tokens(prompt_strings[0])
         self.example = [f"{i}:{tok}" for i, tok in enumerate(example_str_tokens)]
-        self.special_position_dict = get_special_positions(prompt_type.get_format_string(), example_str_tokens)
+        self.special_position_dict = prompt_type.get_placeholder_positions(example_str_tokens)
         label_positions = [pos for _, positions in self.special_position_dict.items() for pos in positions]
         assert position_type in self.special_position_dict.keys(), (
             f"Position type {position_type} not found in {self.special_position_dict.keys()} "
@@ -309,7 +287,7 @@ def train_kmeans(
         random_state=random_state,
     )
     # write k means line to file
-    save_array(km_line, f"km_{train_data.prompt_type.value}_layer{train_layer}", model)
+    save_array(km_line, f"km_{train_data.prompt_type.value}_{train_data.position_type}_layer{train_layer}", model)
 
     cosine_sim = safe_cosine_sim(km_line, test_line)
     columns = [

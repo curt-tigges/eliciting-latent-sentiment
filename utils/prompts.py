@@ -12,7 +12,6 @@ import re
 def extract_placeholders(text: str) -> List[str]:
     # Use regex to find all instances of {SOME_TEXT}
     matches = re.findall(r'\{(\w+)\}', text)
-    
     return matches
 
 
@@ -147,9 +146,31 @@ class PromptType(Enum):
         }
         return prompt_strings[self]
     
-    def get_placeholders(self):
+    def get_placeholders(self) -> List[str]:
+        '''
+        Example output: ['ADJ', 'VRB']
+        '''
         formatter = self.get_format_string()
         return extract_placeholders(formatter)
+    
+    def get_placeholder_positions(self, token_list: List[str]) -> Dict[str, List[int]]:
+        '''
+        Identifies placeholder positions in a list of string tokens.
+        Handles whether the placeholder is a single token or multi-token.
+        Example output: {'ADJ': [4, 5], 'VRB': [8]}
+        '''
+        format_string = self.get_format_string()
+        format_idx = 0
+        curr_sub_token = None
+        out = dict()
+        for token_index, token in enumerate(token_list):
+            if format_string[format_idx] == '{':
+                curr_sub_token = format_string[format_idx + 1:format_string.find('}', format_idx)]
+            if format_string.find(token, format_idx) >= 0:
+                format_idx = format_string.find(token, format_idx) + len(token)
+            elif curr_sub_token is not None:
+                out[curr_sub_token] = out.get(curr_sub_token, []) + [token_index]
+        return out
     
 
 prompt_config = PromptsConfig()
