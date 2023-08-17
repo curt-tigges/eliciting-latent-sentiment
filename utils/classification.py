@@ -1,9 +1,11 @@
+from enum import Enum
 from typing import Iterable, List, Tuple
 from jaxtyping import Int, Float
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression
 from transformer_lens import HookedTransformer
 from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
@@ -12,6 +14,12 @@ from utils.store import save_array, update_csv
 CSV_COLS = (
     'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
 )
+
+
+class FittingMethod(Enum):
+    KMEANS = "kmeans"
+    LOGISTIC_REGRESSION = "logistic_regression"
+    PCA = "pca"
 
 
 def safe_cosine_sim(
@@ -70,7 +78,7 @@ def _fit_kmeans(
     pca_components: int = None,
 ):
     train_embeddings = train_data.embed(train_pos, train_layer)
-    test_embeddings = test_data.embed(train_pos, test_layer)
+    test_embeddings = test_data.embed(test_pos, test_layer)
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
@@ -173,32 +181,51 @@ def _fit_kmeans(
     return line, correct, total, accuracy
 
 
-def train_kmeans(
+def _fit_logistic_regression(
     train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
     test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
-    model: HookedTransformer,
-    n_init: int = 10,
-    n_clusters: int = 2,
     random_state: int = 0,
-    pca_components: int = None,
 ):
-    km_line, correct, total, accuracy = _fit_kmeans(
+    train_embeddings = train_data.embed(train_pos, train_layer)
+    test_embeddings = test_data.embed(test_pos, test_layer)
+    lr = LogisticRegression(random_state=random_state)
+    lr.fit(train_embeddings, train_data.binary_labels)
+    total = len(test_data.binary_labels)
+    accuracy = lr.score(test_embeddings, test_data.binary_labels)
+    correct = int(accuracy * total)
+    line = lr.coef_[0, :]
+    return line, correct, total, accuracy
+
+
+
+def train_direction(
+    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
+    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
+    method: FittingMethod,
+    **kwargs,
+):
+    if method == FittingMethod.PCA:
+        assert 'pca_components' in kwargs, "Must specify pca_components"
+    model = train_data.model
+    if method == FittingMethod.LOGISTIC_REGRESSION:
+        fitting_method = _fit_logistic_regression
+    else:
+        fitting_method = _fit_kmeans
+    km_line, correct, total, accuracy = fitting_method(
         train_data, train_pos, train_layer,
         test_data, test_pos, test_layer,
-        n_init=n_init,
-        n_clusters=n_clusters,
-        random_state=random_state,
-        pca_components=pca_components,
+        **kwargs,
     )
-    test_line, _, _, _ = _fit_kmeans(
+    test_line, _, _, _ = fitting_method(
         test_data, test_layer,
         test_data, test_layer,
-        n_init=n_init,
-        n_clusters=n_clusters,
-        random_state=random_state,
+        **kwargs,
     )
     # write k means line to file
-    save_array(km_line, f"km_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
+    method_label = method.value
+    if method == FittingMethod.PCA:
+        method_label = f'{method_label}{kwargs.get("pca_components")}'
+    save_array(km_line, f"{method_label}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
 
     cosine_sim = safe_cosine_sim(km_line, test_line)
     columns = [
@@ -210,7 +237,7 @@ def train_kmeans(
     data = [[
         train_data.prompt_type.value, train_layer, train_pos,
         test_data.prompt_type.value, test_layer, test_pos,
-        'kmeans' if pca_components is None else f'pca{pca_components}',
+        method_label,
         correct, total, accuracy, cosine_sim,
     ]]
     stats_df = pd.DataFrame(data, columns=columns)

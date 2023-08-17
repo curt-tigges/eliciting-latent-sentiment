@@ -37,7 +37,7 @@ import wandb
 from utils.store import save_array, save_html, update_csv, get_csv, eval_csv
 from utils.prompts import get_dataset, filter_words_by_length, PromptType
 from utils.residual_stream import ResidualStreamDataset
-from utils.classification import train_kmeans, CSV_COLS
+from utils.classification import train_direction, CSV_COLS, FittingMethod
 #%%
 # ============================================================================ #
 # model loading
@@ -54,6 +54,11 @@ model = HookedTransformer.from_pretrained(
 )
 model.name = MODEL_NAME
 #%%
+METHODS = [
+    FittingMethod.KMEANS,
+    FittingMethod.LOGISTIC_REGRESSION,
+    FittingMethod.PCA,
+]
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
@@ -64,11 +69,14 @@ PROMPT_TYPES = [
 ]
 LAYERS = list(range(model.cfg.n_layers + 1))
 BAR = tqdm(
-    itertools.product(PROMPT_TYPES, LAYERS, PROMPT_TYPES, LAYERS),
-    total=len(PROMPT_TYPES) ** 2 * len(LAYERS) ** 2,
+    itertools.product(PROMPT_TYPES, LAYERS, PROMPT_TYPES, LAYERS, METHODS),
+    total=len(PROMPT_TYPES) ** 2 * len(LAYERS) ** 2 * len(METHODS),
 )
-for train_type, train_layer, test_type, test_layer in BAR:
-    BAR.set_description(f"trainset:{train_type.value}, train_layer:{train_layer}, testset:{test_type.value}, test_layer:{test_layer}")
+for train_type, train_layer, test_type, test_layer, method in BAR:
+    BAR.set_description(
+        f"trainset:{train_type.value}, train_layer:{train_layer}, "
+        f"testset:{test_type.value}, test_layer:{test_layer}"
+    )
     if train_layer != test_layer or 'test' in train_type.value:
         # Don't train/eval on different layers
         # Don't train on test sets
@@ -76,6 +84,9 @@ for train_type, train_layer, test_type, test_layer in BAR:
     placeholders = itertools.product(
         train_type.get_placeholders(), test_type.get_placeholders()
     )
+    kwargs = {}
+    if method == FittingMethod.PCA:
+        kwargs['pca_components'] = 2
     for train_pos, test_pos in placeholders:
         if train_pos == 'VRB':
             # Don't train on verbs as sample size is too small
@@ -86,21 +97,18 @@ for train_type, train_layer, test_type, test_layer in BAR:
             f"(train_layer == {train_layer}) & "
             f"(test_layer == {test_layer}) &"
             f"(train_pos == '{train_pos}') & "
-            f"(test_pos == '{test_pos}')"
+            f"(test_pos == '{test_pos}') &"
+            f"(method == '{method}')"
         )
         # if eval_csv(query, "km_stats", model):
         #     continue
 
         trainset = ResidualStreamDataset.get_dataset(model, device, prompt_type=train_type)
         testset = ResidualStreamDataset.get_dataset(model, device, prompt_type=test_type)
-        train_kmeans(
-            trainset, train_layer,
-            testset, test_layer,
-        )
-        train_kmeans(
-            trainset, train_layer,
-            testset, test_layer,
-            pca_components=2,
+        train_direction(
+            trainset, train_pos, train_layer,
+            testset, test_pos, test_layer,
+            **kwargs
         )
 #%%
 km_stats = get_csv("km_stats", model, key_cols=CSV_COLS)
