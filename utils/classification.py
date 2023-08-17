@@ -79,8 +79,6 @@ def _fit_kmeans(
 ):
     train_embeddings = train_data.embed(train_pos, train_layer)
     test_embeddings = test_data.embed(test_pos, test_layer)
-    print(f"train embeddings shape: {train_embeddings.shape}")
-    print(f"train embeddings type: {type(train_embeddings)}")
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)

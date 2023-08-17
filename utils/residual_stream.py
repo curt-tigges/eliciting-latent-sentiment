@@ -1,7 +1,6 @@
 from typing import List
 from jaxtyping import Int, Float
 from typeguard import typechecked
-import numpy as np
 import torch
 from torch import Tensor
 from transformer_lens import HookedTransformer
@@ -10,6 +9,7 @@ from utils.prompts import get_dataset
 
 class ResidualStreamDataset:
 
+    @typechecked
     def __init__(
         self, 
         prompt_strings: List[str], 
@@ -22,7 +22,7 @@ class ResidualStreamDataset:
         assert len(prompt_strings) == len(binary_labels)
         self.prompt_strings = prompt_strings
         self.prompt_tokens = prompt_tokens
-        self.binary_labels = binary_labels
+        self._binary_labels = binary_labels
         self.model = model
         self.prompt_type = prompt_type
         example_str_tokens = model.to_str_tokens(prompt_strings[0])
@@ -34,6 +34,10 @@ class ResidualStreamDataset:
             for prompt in prompt_strings
         ]
 
+    @property
+    def binary_labels(self) -> Int[Tensor, "batch"]:
+        return self._binary_labels.cpu().detach()
+
     def __len__(self) -> int:
         return len(self.prompt_strings)
     
@@ -41,7 +45,7 @@ class ResidualStreamDataset:
         return set(self.prompt_strings) == set(other.prompt_strings)
     
     @typechecked
-    def embed(self, position_type: str, layer: int) -> Float[np.ndarray, "batch d_model"]:
+    def embed(self, position_type: str, layer: int) -> Float[Tensor, "batch d_model"]:
         assert 0 <= layer <= self.model.cfg.n_layers
         assert position_type in self.placeholder_dict.keys(), (
             f"Position type {position_type} not found in {self.placeholder_dict.keys()} "
@@ -56,7 +60,7 @@ class ResidualStreamDataset:
             self.prompt_tokens, return_type=None, names_filter = lambda name: hook in name
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook, layer]
-        return out[:, embed_position, :].cpu().detach().numpy()
+        return out[:, embed_position, :].cpu().detach()
     
     @classmethod
     def get_dataset(
