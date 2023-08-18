@@ -62,7 +62,7 @@ def train_probe_at_layer_pos(
     test_size: float = 0.2, random_state: int = 42,
 ) -> Tuple[Pipeline, float]:
     """
-    
+    Train a logistic regression probe on a given layer and position.
     """
     # Get activations
     with open(os.path.join(act_folder, f"{component}_pos_{pos}_activations.pkl"), "rb") as f:
@@ -82,7 +82,9 @@ def train_probe_at_layer_pos(
 
 
 def get_probe_direction(pipeline: Pipeline) -> Tuple[float, float]:
-
+    """
+    Extracts the direction in the residual stream corresponding to a fitted logistic regression probe.
+    """
     # Get the standard deviation and mean from the StandardScaler
     scaler = pipeline.named_steps['standardscaler']
     std = scaler.scale_
@@ -185,7 +187,6 @@ def apply_probe_to_cache(
             # Scale the steering vector by the norm of the activations
             steering_effect = alpha * (probe_coef / torch.norm(probe_coef)) * torch.norm(new_cache[f"blocks.{layer}.{component}"][:, pos, :])
             
-
             # Add the steering effect to the activations
             new_cache[f"blocks.{layer}.{component}"][:, pos, :] += steering_effect
 
@@ -194,13 +195,12 @@ def apply_probe_to_cache(
             probe_coef = probe_coef.cpu()
 
             # Check that the activations have changed
-
             assert not torch.allclose(cache[f"blocks.{layer}.{component}"][:, pos, :], new_cache[f"blocks.{layer}.{component}"][:, pos, :])
-
-
     return new_cache
 
 
-# get cosine similarity between two vectors
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Get cosine similarity between two vectors.
+    """
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
