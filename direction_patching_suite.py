@@ -1,4 +1,5 @@
 #%%
+import itertools
 import einops
 import re
 from fancy_einsum import einsum
@@ -14,7 +15,7 @@ from utils.circuit_analysis import get_logit_diff
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
-from typing import Tuple, Union, List, Optional, Callable
+from typing import Iterable, Tuple, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
 from IPython.display import display, HTML
@@ -373,18 +374,11 @@ def run_layer_patching(
         disable=True,
     ) * 100
 #%%
-def get_results_for_metric(
-    prompt_type: PromptType, patching_metric_base: Callable,
-    direction_labels: List[str], directions: List[Float[Tensor, "d_model"]]
-):
+def get_results_metric_prompt_type_direction(
+    patching_metric_base: Callable, prompt_type: PromptType,
+    direction_label: str, direction: Float[Tensor, "d_model"]
+) -> List[float]:
     model.reset_hooks()
-    prompt_metric_label = (
-        "prompt_" + 
-        prompt_type.value + 
-        "_" + 
-        "metric_" + 
-        patching_metric_base.__name__.replace("_base", "").replace("_denoising", "")
-    )
     data_dict = load_data(prompt_type)
     if "logit" in patching_metric_base.__name__:
         clean_diff = data_dict["clean_logit_diff"]
@@ -399,27 +393,36 @@ def get_results_for_metric(
         clean_diff=clean_diff,
     )
 
-    bar = tqdm(zip(direction_labels, directions), total=len(direction_labels))
-    data = []
-    for label, direction in bar:
-        direction = direction / direction.norm()
-        new_cache = create_cache_for_dir_patching(
-            data_dict["clean_cache"], data_dict["corrupted_cache"], direction
-        )
-        result = run_layer_patching(model, data_dict["corrupted_tokens"], new_cache, patching_metric, label)
-        data.append(result)
-    layers_df = pd.DataFrame(data)
-    layers_df.columns = [patching_metric_base.__name__]
-    layers_df.index = direction_labels
-    layers_style = (
-        layers_df
-        .style
-        .background_gradient(cmap="RdBu", axis=None)
-        .format("{:.1f}%")
-        .set_caption(f"Layer direction patching ({prompt_metric_label})")
+    direction = direction / direction.norm()
+    new_cache = create_cache_for_dir_patching(
+        data_dict["clean_cache"], data_dict["corrupted_cache"], direction
     )
-    save_html(layers_style, f"layer_direction_patching_{prompt_metric_label}", model)
+    return run_layer_patching(model, data_dict["corrupted_tokens"], new_cache, patching_metric, direction_label)
+#%%
+def get_results_for_metric(
+    patching_metric_base: Callable, prompt_types: Iterable[PromptType], 
+    direction_labels: List[str], directions: List[Float[Tensor, "d_model"]]
+) -> Float[pd.DataFrame, "direction prompt"]:
+    metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
+    bar = tqdm(
+        itertools.product(prompt_types, zip(direction_labels, directions)), 
+        total=len(prompt_types) * len(direction_labels)
+    )
+    results = pd.DataFrame(columns=[prompt_type.value for prompt_type in prompt_types], index=direction_labels, dtype=float)
+    for prompt_type, (direction_label, direction) in bar:
+        bar.set_description(f"{prompt_type.value} {direction_label}")
+        result = get_results_metric_prompt_type_direction(patching_metric_base, prompt_type, direction_label, direction)
+        results.loc[direction_label, prompt_type.value] = result
+    layers_style = (
+        results
+        .style
+        .background_gradient(cmap="Reds", axis=None, low=0, high=1)
+        .format("{:.1f}%")
+        .set_caption(f"Layer direction patching ({metric_label})")
+    )
+    save_html(layers_style, f"layer_direction_patching_{metric_label}", model)
     display(layers_style)
+    return results
 #%%
 DIRECTIONS, DIRECTION_LABELS = get_directions(model)
 # %%
@@ -430,12 +433,11 @@ PROMPT_TYPES = [
 ]
 METRICS = [
     logit_diff_denoising_base,
-    logit_flip_metric_base,
-    prob_diff_denoising_base,
+    # logit_flip_metric_base,
+    # prob_diff_denoising_base,
 ]
 for metric in METRICS:
-    for prompt_type in PROMPT_TYPES:
-        get_results_for_metric(prompt_type, metric, DIRECTION_LABELS, DIRECTIONS)
-        break
-    break
+    results = get_results_for_metric(metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS)
 #%%
+# FIXME: replace layer patching with position-based patching
+# %%
