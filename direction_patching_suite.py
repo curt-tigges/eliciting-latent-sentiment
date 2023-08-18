@@ -1,5 +1,6 @@
 #%%
 import einops
+import re
 from fancy_einsum import einsum
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.store import save_array, load_array, save_html
+from utils.prompts import PromptType
 #%%
 torch.set_grad_enabled(False)
 pio.renderers.default = "notebook"
@@ -114,21 +116,11 @@ def name_filter(name: str):
         (name == 'blocks.0.attn.hook_q') or 
         (name == 'blocks.0.attn.hook_z')
     )
-def load_data(prompt_type: str):
+def load_data(prompt_type: str, verbose: bool = False):
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
-    print(all_prompts[:5])
-    print(clean_tokens.shape)
-    # positive -> negative
-    # all_prompts = all_prompts[::2]
-    # answer_tokens = answer_tokens[::2]
-    # clean_tokens = clean_tokens[::2]
-    # corrupted_tokens = corrupted_tokens[::2]
-
-    # negative -> positive
-    # all_prompts = all_prompts[1::2]
-    # answer_tokens = answer_tokens[1::2]
-    # clean_tokens = clean_tokens[1::2]
-    # corrupted_tokens = corrupted_tokens[1::2]
+    if verbose:
+        print(all_prompts[:5])
+        print(clean_tokens.shape)
     
     # Run model with cache
     # N.B. corrupt -> clean
@@ -136,16 +128,20 @@ def load_data(prompt_type: str):
         clean_tokens,
     )
     clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
-    print('clean logit diff', clean_logit_diff)
+    if verbose:
+        print('clean logit diff', clean_logit_diff)
     clean_prob_diff = get_prob_diff(clean_logits, answer_tokens, per_prompt=False)
-    print('clean prob diff', clean_prob_diff)
+    if verbose:
+        print('clean prob diff', clean_prob_diff)
     corrupted_logits, corrupted_cache = model.run_with_cache(
         corrupted_tokens
     )
     corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
-    print('corrupted logit diff', corrupted_logit_diff)
+    if verbose:
+        print('corrupted logit diff', corrupted_logit_diff)
     corrupted_prob_diff = get_prob_diff(corrupted_logits, answer_tokens, per_prompt=False)
-    print('corrupted prob diff', corrupted_prob_diff)
+    if verbose:
+        print('corrupted prob diff', corrupted_prob_diff)
     return {
         "all_prompts": all_prompts,
         "answer_tokens": answer_tokens,
@@ -202,45 +198,41 @@ def logit_flip_metric_base(
     clean_distances = (clean_diff - patched_logit_diff).abs()
     corrupt_distances = (corrupted_diff - patched_logit_diff).abs()
     return (clean_distances < corrupt_distances).float().mean().item()
+#%%
+def display_cosine_sims(direction_labels: List[str], directions: List[Float[Tensor, "d_model"]]):
+    cosine_similarities = []
+    for i, (label_i, direction_i) in enumerate(zip(direction_labels, directions)):
+        for j, (label_j, direction_j) in enumerate(zip(direction_labels, directions)):
+            similarity = einsum(
+                "d_model, d_model -> ", 
+                direction_i / direction_i.norm(), 
+                direction_j / direction_j.norm()
+            )
+            cosine_similarities.append([label_i, label_j, similarity.cpu().detach().item()])
+
+    sim_df = pd.DataFrame(cosine_similarities, columns=['direction1', 'direction2', 'cosine_similarity'])
+    sim_pt = sim_df.pivot(index='direction1', columns='direction2', values='cosine_similarity')
+    styled = sim_pt.style.background_gradient(cmap='Reds', axis=0).format("{:.2f}")
+    display(styled)
+    save_html(styled, "cosine_similarities", model)
+
+#%%
+def format_layer_string(s: str) -> str:
+    # Find numbers that directly follow the text "layer"
+    match = re.search(r'(?<=layer)\d+', s)
+    if match:
+        number = match.group()
+        # Replace the original number with the zero-padded version
+        s = s.replace('layer' + number, 'layer' + number.zfill(2))
+    return s
 
 #%% # Direction loading
-def get_directions(answer_tokens: Int[Tensor, "batch pair 2"]) -> Tuple[List[np.ndarray], List[str]]:
-    answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
-    logit_diff_directions = answer_residual_directions[:, 0, 0] - answer_residual_directions[:, 0, 1]
-    direction_labels = [
-        'km_2c_line_embed_and_attn0',
-        'km_2c_line_embed_and_mlp0',
-        'km_2c_line_resid_post_layer_0',
-        'km_2c_line_resid_post_layer_1',
-        'km_2c_line_resid_post_layer_2',
-        'km_2c_line_resid_post_layer_3',
-        'km_2c_line_resid_post_layer_4',
-        'km_2c_line_resid_post_layer_5',
-        'km_2c_line_resid_post_layer_6',
-        'km_2c_line_resid_post_layer_7',
-        'km_2c_line_resid_post_layer_8',
-        'km_2c_line_resid_post_layer_9',
-        'km_2c_line_resid_post_layer_10',
-        'km_2c_line_resid_post_layer_11',
-        'km_2c_line_context_layer_0',
-        'km_2c_line_context_layer_1',
-        'km_2c_line_context_layer_2',
-        'km_2c_line_context_layer_3',
-        'km_2c_line_context_layer_4',
-        'km_2c_line_context_layer_5',
-        'km_2c_line_context_layer_6',
-        'km_2c_line_context_layer_7',
-        'km_2c_line_context_layer_8',
-        'km_2c_line_context_layer_9',
-        'km_2c_line_context_layer_10',
-        'km_2c_line_context_layer_11',
-        'mean_ov_direction_10_4',
-        'ccs',
-        'adj_token_lr',
-        'end_token_lr',
-        'rotation_direction_adj_0',
-        'rotation_direction_end_0',
-    ]
+def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str]]:
+    direction_labels = (
+        [f'kmeans_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
+        [f'pca2_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
+        [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)]
+    )
     directions = [
         load_array(label, model) for label in direction_labels
     ]
@@ -248,25 +240,8 @@ def get_directions(answer_tokens: Int[Tensor, "batch pair 2"]) -> Tuple[List[np.
         if direction.ndim == 2:
             direction = direction.squeeze(0)
         directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
-    directions.append(logit_diff_directions[0])
-    direction_labels.append('logit_diff_direction')
-    dot_products = []
-    for label, direction in zip(direction_labels, directions):
-        average_logit_diff = einsum(
-            "d_model, d_model -> ", direction, logit_diff_directions[0]
-        )
-        dot_products.append([label, direction.norm().cpu().detach().item(), average_logit_diff.cpu().detach().item()])
-    dot_df = pd.DataFrame(dot_products, columns=['label', 'norm', 'dot_product'])
-    display(dot_df.style.background_gradient(cmap='Reds').format({'norm': "{:.2f}", 'dot_product': "{:.2f}"}))
-    # cosine similarity
-    cosine_similarities = []
-    for label, direction in zip(direction_labels, directions):
-        average_logit_diff = einsum(
-            "d_model, d_model -> ", direction / direction.norm(), logit_diff_directions[0] / logit_diff_directions[0].norm()
-        )
-        cosine_similarities.append([label, average_logit_diff.cpu().detach().item()])
-    sim_df = pd.DataFrame(cosine_similarities, columns=['label', 'cosine_similarity'])
-    display(sim_df.style.background_gradient(cmap='Reds', axis=0).format({'cosine_similarity': "{:.2f}"}))
+    direction_labels = [format_layer_string(label) for label in direction_labels]
+    display_cosine_sims(direction_labels, directions)
     return directions, direction_labels
 #%%
 # ============================================================================ #
@@ -433,17 +408,19 @@ def run_attn_mlp_patching(
     )
     return result_data, fig
 #%%
-def get_results_for_metric(prompt_type: str, patching_metric_base: Callable):
+def get_results_for_metric(
+    prompt_type: PromptType, patching_metric_base: Callable,
+    direction_labels: List[str], directions: List[Float[Tensor, "d_model"]]
+):
     model.reset_hooks()
     prompt_metric_label = (
         "prompt_" + 
-        prompt_type + 
+        prompt_type.value + 
         "_" + 
         "metric_" + 
         patching_metric_base.__name__.replace("_base", "").replace("_denoising", "")
     )
     data_dict = load_data(prompt_type)
-    directions, direction_labels = get_directions(data_dict["answer_tokens"])
     if "logit" in patching_metric_base.__name__:
         clean_diff = data_dict["clean_logit_diff"]
         corrupt_diff = data_dict["corrupted_logit_diff"]
@@ -513,8 +490,16 @@ def get_results_for_metric(prompt_type: str, patching_metric_base: Callable):
     )
     save_html(max_layer_style, f"layer_direction_patching_{prompt_metric_label}_max_layer", model)
     display(max_layer_style)
+#%%
+DIRECTIONS, DIRECTION_LABELS = get_directions(model)
 # %%
+PROMPT_TYPES = [
+    PromptType.SIMPLE_MOOD,
+    PromptType.COMPLETION,
+    PromptType.SIMPLE,
+]
 for metric in (logit_diff_denoising_base, logit_flip_metric_base, prob_diff_denoising_base):
-    for prompt_type in ("simple_mood", "completion", "simple"):
-        get_results_for_metric(prompt_type, metric)
+    for prompt_type in PROMPT_TYPES:
+        get_results_for_metric(prompt_type, metric, DIRECTION_LABELS, DIRECTIONS)
+        break
 #%%
