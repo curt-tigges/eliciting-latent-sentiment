@@ -86,22 +86,22 @@ def act_patch_simple(
 class RotationModule(torch.nn.Module):
     def __init__(
         self, 
-        model,
+        model: HookedTransformer,
         orig_tokens: Int[Tensor, "batch pos"],
         patching_metric: Callable,
         n_directions: int = 1,
     ):
         super().__init__()
         self.model = model
+        self.device = self.model.cfg.device
         self.register_buffer('orig_tokens', orig_tokens)
         self.d_model = model.cfg.d_model
         self.n_directions = n_directions
-        rotate_layer = RotateLayer(model.cfg.d_model)
+        rotate_layer = RotateLayer(model.cfg.d_model, self.device)
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(
             rotate_layer, use_trivialization=False
         )
         self.inverse_rotate_layer = InverseRotateLayer(self.rotate_layer)
-        self.device = self.model.cfg.device
         self.patching_metric = patching_metric
 
     def apply_rotation(
