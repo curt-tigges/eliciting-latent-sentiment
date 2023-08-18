@@ -262,7 +262,7 @@ def get_das_dataset(
         logit_diff_denoising, 
         answer_tokens=answer_tokens, 
         flipped_logit_diff=new_logit_diff, 
-        clean_logit_diff=orig_logit_diff
+        clean_logit_diff=orig_logit_diff,
         return_tensor=True,
     )
     return all_prompts, orig_tokens, orig_cache, new_cache, loss_fn
