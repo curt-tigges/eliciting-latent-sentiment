@@ -21,7 +21,7 @@ def handle_position(
 
 def resample_cache_component(
     component: Float[Tensor, "batch ..."], seed: int = 77
-) -> Float[Tensor, "batch..."]:
+) -> Float[Tensor, "batch ..."]:
     """Resample-ablates a batch tensor according to the index of the first dimension"""
     batch_size = component.shape[0]
     # set seeds
@@ -33,7 +33,7 @@ def resample_cache_component(
     return component
 
 
-def mean_over_cache_component(component: Float[Tensor, "batch..."]) -> Float[Tensor, "batch..."]:
+def mean_over_cache_component(component: Float[Tensor, "batch ..."]) -> Float[Tensor, "batch ..."]:
     """
     Mean-ablates a batch tensor
 
