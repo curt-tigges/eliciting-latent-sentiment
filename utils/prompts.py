@@ -254,6 +254,26 @@ def get_prompts(
             formatter.format(ADJ1=neutral_adjectives[i], ADJ2=neutral_adjectives[i + 1], ADJ3=neutral_adjectives[i + 2], ADJ4=neutral_top_adjectives[i], VRB=neutral_verbs[i])
             for i in range(n_prompts)
         ]
+    elif prompt_type == "multi_subject_1":
+        pos_prompts = [
+            (
+                f"Review A: I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)},"
+                f"and overall the movie was just very good.\n"
+                f"Review B: I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)},"
+                f"and overall the movie was just very bad.\n"
+                f"Review A Sentiment:"
+            ) for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            (
+                f"Review A: I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)},"
+                f"and overall the movie was just very good.\n"
+                f"Review B: I thought this movie was{get_adjective(negative_adjectives, i)}, I hated it. The acting was{get_adjective(negative_adjectives, i+1)}, the plot was{get_adjective(negative_adjectives, i+2)},"
+                f"and overall the movie was just very bad.\n"
+                f"Review B Sentiment:"
+            ) for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = None
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
     
