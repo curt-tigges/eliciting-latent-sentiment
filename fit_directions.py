@@ -35,9 +35,10 @@ from transformer_lens.hook_points import (
 )  # Hooking utilities
 import wandb
 from utils.store import save_array, save_html, update_csv, get_csv, eval_csv
-from utils.prompts import get_dataset, filter_words_by_length, PromptType
+from utils.prompts import PromptType
 from utils.residual_stream import ResidualStreamDataset
-from utils.classification import train_direction, FittingMethod
+from utils.classification import train_classifying_direction, ClassificationMethod
+from utils.das import FittingMethod, train_das_direction
 #%%
 # ============================================================================ #
 # model loading
@@ -58,9 +59,10 @@ model.name = MODEL_NAME
 # Training loop
 
 METHODS = [
-    FittingMethod.KMEANS,
-    FittingMethod.LOGISTIC_REGRESSION,
-    FittingMethod.PCA,
+    ClassificationMethod.KMEANS,
+    ClassificationMethod.LOGISTIC_REGRESSION,
+    ClassificationMethod.PCA,
+    FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
@@ -88,7 +90,7 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
         train_type.get_placeholders(), test_type.get_placeholders()
     )
     kwargs = {}
-    if method == FittingMethod.PCA:
+    if method == ClassificationMethod.PCA:
         kwargs['pca_components'] = 2
     for train_pos, test_pos in placeholders:
         if train_pos == 'VRB':
@@ -106,14 +108,21 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
         if eval_csv(query, "direction_fitting_stats", model):
             continue
 
-        trainset = ResidualStreamDataset.get_dataset(model, device, prompt_type=train_type)
-        testset = ResidualStreamDataset.get_dataset(model, device, prompt_type=test_type)
-        train_direction(
-            trainset, train_pos, train_layer,
-            testset, test_pos, test_layer,
-            method,
-            **kwargs
-        )
+        if method == FittingMethod.DAS:
+            train_das_direction(
+                model, device,
+                train_type, train_pos, train_layer,
+                test_type, test_pos, test_layer,
+            )
+        else:
+            trainset = ResidualStreamDataset.get_dataset(model, device, prompt_type=train_type)
+            testset = ResidualStreamDataset.get_dataset(model, device, prompt_type=test_type)
+            train_classifying_direction(
+                trainset, train_pos, train_layer,
+                testset, test_pos, test_layer,
+                method,
+                **kwargs
+            )
 #%%
 # ============================================================================ #
 # Summary stats
@@ -152,7 +161,7 @@ def plot_accuracy_similarity(df, label: str):
     display(similarity_styler)
 #%%
 for method in METHODS:
-    method_str = 'pca2' if method == FittingMethod.PCA else method.value
+    method_str = 'pca2' if method == ClassificationMethod.PCA else method.value
     plot_accuracy_similarity(
         fitting_stats.loc[fitting_stats.method.eq(method_str)],
         method.value,

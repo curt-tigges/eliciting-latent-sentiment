@@ -4,7 +4,16 @@ from typeguard import typechecked
 import torch
 from torch import Tensor
 from transformer_lens import HookedTransformer
+from transformer_lens.utils import get_act_name
 from utils.prompts import get_dataset, PromptType
+
+
+def get_resid_name(layer: int, model: HookedTransformer) -> str:
+    resid_type = 'resid_pre'
+    if layer == model.cfg.n_layers:
+        resid_type = 'resid_post'
+        layer -= 1
+    return get_act_name(resid_type, layer)
 
 
 class ResidualStreamDataset:
@@ -52,14 +61,11 @@ class ResidualStreamDataset:
             f"for prompt type {self.prompt_type}"
         )
         embed_position = self.placeholder_dict[position_type][-1]
-        hook = 'resid_pre'
-        if layer == self.model.cfg.n_layers:
-            hook = 'resid_post'
-            layer -= 1
+        hook = get_resid_name(layer, self.model)
         _, cache = self.model.run_with_cache(
-            self.prompt_tokens, return_type=None, names_filter = lambda name: hook in name
+            self.prompt_tokens, return_type=None, names_filter = lambda name: hook == name
         )
-        out: Float[Tensor, "batch pos d_model"] = cache[hook, layer]
+        out: Float[Tensor, "batch pos d_model"] = cache[hook]
         return out[:, embed_position, :].cpu().detach()
     
     @classmethod

@@ -107,16 +107,6 @@ def get_prob_diff(
 
     return (left_probs - right_probs).mean()
 #%% # Data loading
-def name_filter(name: str):
-    return (
-        name.endswith('result') or 
-        name.endswith('resid_pre') or
-        name.endswith('resid_post') or  
-        name.endswith('attn_out') or 
-        name.endswith('mlp_out') or 
-        (name == 'blocks.0.attn.hook_q') or 
-        (name == 'blocks.0.attn.hook_z')
-    )
 def load_data(prompt_type: str, model: HookedTransformer = model, verbose: bool = False):
     model.reset_hooks()
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
@@ -158,7 +148,7 @@ def load_data(prompt_type: str, model: HookedTransformer = model, verbose: bool 
         "corrupted_logit_diff": corrupted_logit_diff,
         "corrupted_prob_diff": corrupted_prob_diff,
     }
-#%%
+#%% # Metrics
 def logit_diff_denoising_base(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Float[Tensor, "batch 2"],
@@ -421,9 +411,11 @@ def get_results_for_metric(
 DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
 # %%
 PROMPT_TYPES = [
-    PromptType.SIMPLE_MOOD,
+    PromptType.SIMPLE_TRAIN,
+    PromptType.SIMPLE_TEST,
     PromptType.COMPLETION,
-    PromptType.SIMPLE,
+    PromptType.SIMPLE_ADVERB,
+    PromptType.SIMPLE_MOOD,
 ]
 METRICS = [
     logit_diff_denoising_base,

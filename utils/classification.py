@@ -13,7 +13,7 @@ from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
 
 
-class FittingMethod(Enum):
+class ClassificationMethod(Enum):
     KMEANS = "kmeans"
     LOGISTIC_REGRESSION = "logistic_regression"
     PCA = "pca"
@@ -206,16 +206,16 @@ def _fit_logistic_regression(
 
 
 
-def train_direction(
+def train_classifying_direction(
     train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
     test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
-    method: FittingMethod,
+    method: ClassificationMethod,
     **kwargs,
 ):
-    if method == FittingMethod.PCA:
+    if method == ClassificationMethod.PCA:
         assert 'pca_components' in kwargs, "Must specify pca_components"
     model = train_data.model
-    if method == FittingMethod.LOGISTIC_REGRESSION:
+    if method == ClassificationMethod.LOGISTIC_REGRESSION:
         fitting_method = _fit_logistic_regression
     else:
         fitting_method = _fit_kmeans
@@ -244,7 +244,7 @@ def train_direction(
             return
     # write k means line to file
     method_label = method.value
-    if method == FittingMethod.PCA:
+    if method == ClassificationMethod.PCA:
         method_label = f'{method_label}{kwargs.get("pca_components")}'
     save_array(train_line, f"{method_label}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
 
