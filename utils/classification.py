@@ -13,11 +13,6 @@ from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
 
 
-CSV_COLS = (
-    'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
-)
-
-
 class FittingMethod(Enum):
     KMEANS = "kmeans"
     LOGISTIC_REGRESSION = "logistic_regression"
@@ -177,7 +172,10 @@ def _fit_kmeans(
         ]
         plot_df = pd.DataFrame(plot_data, columns=plot_columns)
         update_csv(
-            plot_df, "pca_plot", train_data.model, key_cols=CSV_COLS
+            plot_df, "pca_plot", train_data.model, 
+            key_cols=(
+                'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+            )
         )
     
     return line, correct, total, accuracy
@@ -266,5 +264,8 @@ def train_direction(
     stats_df = pd.DataFrame(data, columns=columns)
     
     update_csv(
-        stats_df, "direction_fitting_stats", model, key_cols=CSV_COLS
+        stats_df, "direction_fitting_stats", model, 
+        key_cols=(
+            'method', 'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+        )
     )

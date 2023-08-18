@@ -37,7 +37,7 @@ import wandb
 from utils.store import save_array, save_html, update_csv, get_csv, eval_csv
 from utils.prompts import get_dataset, filter_words_by_length, PromptType
 from utils.residual_stream import ResidualStreamDataset
-from utils.classification import train_direction, CSV_COLS, FittingMethod
+from utils.classification import train_direction, FittingMethod
 #%%
 # ============================================================================ #
 # model loading
@@ -103,8 +103,8 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
             f"(test_pos == '{test_pos}') &"
             f"(method == '{method}')"
         )
-        # if eval_csv(query, "km_stats", model):
-        #     continue
+        if eval_csv(query, "direction_fitting_stats", model):
+            continue
 
         trainset = ResidualStreamDataset.get_dataset(model, device, prompt_type=train_type)
         testset = ResidualStreamDataset.get_dataset(model, device, prompt_type=test_type)
@@ -118,7 +118,7 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
 # ============================================================================ #
 # Summary stats
 
-fitting_stats = get_csv("direction_fitting_stats", model, key_cols=CSV_COLS)
+fitting_stats = get_csv("direction_fitting_stats", model)
 #%%
 fitting_stats.method.value_counts()
 #%%
@@ -148,11 +148,10 @@ def plot_accuracy_similarity(df, label: str):
     save_html(similarity_styler, f"{label}_similarity", model)
     display(similarity_styler)
 #%%
-for method in METHODS:
-    plot_accuracy_similarity(
-        fitting_stats.loc[fitting_stats.method.eq(method.value)],
-        method.value,
-    )
+plot_accuracy_similarity(
+    fitting_stats.loc[fitting_stats.method.eq(method.value)],
+    method.value,
+)
 #%%
 #%%
 # ============================================================================ #
@@ -250,7 +249,7 @@ def plot_pca_from_cache(
     train_set: PromptType, train_pos: str, train_layer: int,
     test_set: PromptType, test_pos: str, test_layer: int,
 ):
-    plot_df = get_csv("pca_plot", model, key_cols=CSV_COLS)
+    plot_df = get_csv("pca_plot", model)
     plot_df = plot_df.loc[
         (plot_df.train_set == train_set.value) &
         (plot_df.train_pos == train_pos) &
