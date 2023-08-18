@@ -255,6 +255,7 @@ def get_prompts(
             for i in range(n_prompts)
         ]
     elif prompt_type == "multi_subject_1":
+
         pos_prompts = [
             (
                 f"Review A: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, "
@@ -272,6 +273,7 @@ def get_prompts(
                 f"Review B Sentiment:"
             ) for i in range(len(positive_adjectives)-1)
         ]
+        pos_prompts = interleave_list(pos_prompts)
         neg_prompts = [
             (
                 f"Review A: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, "
@@ -289,6 +291,7 @@ def get_prompts(
                 f"Review A Sentiment:"
             ) for i in range(len(positive_adjectives)-1)
         ]
+        neg_prompts = interleave_list(neg_prompts)
         neutral_prompts = None
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
