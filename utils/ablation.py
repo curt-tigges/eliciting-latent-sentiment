@@ -152,5 +152,5 @@ def ablate_attn_head_pos_hook(
     if ablation_func is None:
         ablation_func = lambda x: x
     for p in pos:
-        component[:, p, head_idx, :] = ablation_func(cache[f"blocks.{layer}.{component_type}"][:, p, head_idx, :])
+        component[:, p, head_idx, :] = ablation_func(cache[f"blocks.{layer}.attn.{component_type}"][:, p, head_idx, :])
     return component
