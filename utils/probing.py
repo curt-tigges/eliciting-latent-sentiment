@@ -1,6 +1,7 @@
+from typing import Iterable, Tuple
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
 import copy
 
@@ -10,14 +11,20 @@ import numpy as np
 import pickle
 
 from transformer_lens import HookedTransformer, ActivationCache
+from jaxtyping import Float, Int
+from torch import Tensor
 
 
-def get_layer_act(model, prompts_tokens, layer):
-
+def get_layer_act(
+    model: HookedTransformer, prompts_tokens: Int[Tensor, "batch pos"], layer: int,
+    mb_size: int = 16
+) -> Float[np.ndarray, "batch pos d_model"]:
+    """
+    Gets resid_post for a given position and layer.
+    """
     layer_act_list = []
-
-    for i in range(0, prompts_tokens.shape[0], 16):
-        logits, cache = model.run_with_cache(prompts_tokens[i:i+16])
+    for batch_start in range(0, prompts_tokens.shape[0], mb_size):
+        _, cache = model.run_with_cache(prompts_tokens[batch_start:batch_start+mb_size], return_type=None)
         layer_resid = cache[f'blocks.{layer}.hook_resid_post']
         layer_act_list.append(layer_resid.squeeze().cpu().numpy())
 
@@ -25,19 +32,22 @@ def get_layer_act(model, prompts_tokens, layer):
     return layer_act
 
 
-def cache_and_save_component_activations(model, data, component, pos):
+def cache_and_save_component_activations(
+    model: HookedTransformer, tokens: Int[Tensor, "batch pos"], component: str, pos: int, mb_size: int = 16
+):
+    """
+    Gets resid_post for a given position across all layers
+    """
     batch_list = []
-    
-    for i in range(0, data.shape[0], 16):
-        logits, cache = model.run_with_cache(data[i:i+16])
+    for i in range(0, tokens.shape[0], mb_size):
+        _, cache = model.run_with_cache(tokens[i:i+mb_size], return_type=None)
         layer_list = []
         for l in range(model.cfg.n_layers):
             layer_act = cache[f'blocks.{l}.{component}'][:, pos, :]
             layer_list.append(layer_act.unsqueeze(1).cpu().numpy())
-        layer_list = np.concatenate(layer_list, axis=1)
+        layer_list: Float[np.ndarray, "batch layer dim"] = np.concatenate(layer_list, axis=1)
         batch_list.append(layer_list)
-    batch_list = np.concatenate(batch_list, axis=0)
-    # batch, layer, pos, dim
+    batch_list: Float[np.ndarray, "batch layer dim"] = np.concatenate(batch_list, axis=0)
     print(f"Activation shape: {batch_list.shape}")
     # save as pkl file
     with open(f"data/cached_activations/2_8b_mood_inference/{component}_pos_{pos}_activations.pkl", "wb") as f:
@@ -46,14 +56,19 @@ def cache_and_save_component_activations(model, data, component, pos):
     return batch_list
 
 
-def train_probe_at_layer_pos(model, act_folder, labels, layer, pos=0, component='hook_resid_post', with_scaler=True, max_iter=100):
-
+def train_probe_at_layer_pos(
+    model: HookedTransformer, act_folder: str, labels: Int[np.ndarray, "batch"], layer: int, pos: int = 0, 
+    component: str = 'hook_resid_post', with_scaler: bool = True, max_iter: int = 100,
+    test_size: float = 0.2, random_state: int = 42,
+) -> Tuple[Pipeline, float]:
+    """
+    
+    """
     # Get activations
     with open(os.path.join(act_folder, f"{component}_pos_{pos}_activations.pkl"), "rb") as f:
-        act_list = pickle.load(f)[:, layer, :]
+        act_list: Float[Tensor, "batch d_model"] = pickle.load(f)[:, layer, :]
 
-    X_train, X_test, y_train, y_test = train_test_split(act_list, labels, test_size=0.2, random_state=42)
-    #print(f"Data size: {X_train.shape} Label size: {y_train.shape}")
+    X_train, X_test, y_train, y_test = train_test_split(act_list, labels, test_size=test_size, random_state=random_state)
 
     if with_scaler:
         pipe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=max_iter))
@@ -66,7 +81,7 @@ def train_probe_at_layer_pos(model, act_folder, labels, layer, pos=0, component=
     return pipe, score
 
 
-def get_probe_direction(pipeline):
+def get_probe_direction(pipeline: Pipeline) -> Tuple[float, float]:
 
     # Get the standard deviation and mean from the StandardScaler
     scaler = pipeline.named_steps['standardscaler']
@@ -88,14 +103,14 @@ def get_probe_direction(pipeline):
 
 
 def cache_and_save_probe_coefficients(
-    model,
-    act_folder,
-    save_folder,
-    labels,
-    component,
-    seq_len,
-    with_scaler=True,
-    max_iter=100,
+    model: HookedTransformer,
+    act_folder: str,
+    save_folder: str,
+    labels: Int[np.ndarray, "batch"],
+    component: str,
+    seq_len: int,
+    with_scaler: bool = True,
+    max_iter: int = 100,
 ):
     """
     Cache and save probe coefficients for all layers and positions.
@@ -143,7 +158,7 @@ def apply_probe_to_cache(
     model: HookedTransformer,
     cache: ActivationCache,
     component: str,
-    probe_coefs: torch.Tensor,
+    probe_coefs: Float[Tensor, "layer pos d_model"],
     alpha: float = 1.0,
     device: str = "cuda",
     verbose: bool = False,
@@ -187,5 +202,5 @@ def apply_probe_to_cache(
 
 
 # get cosine similarity between two vectors
-def cosine_similarity(a, b):
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
