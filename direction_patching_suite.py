@@ -15,7 +15,7 @@ from utils.circuit_analysis import get_logit_diff
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
-from typing import Iterable, Tuple, Union, List, Optional, Callable
+from typing import Dict, Iterable, Tuple, Union, List, Optional, Callable
 from functools import partial
 from collections import defaultdict
 from IPython.display import display, HTML
@@ -117,7 +117,7 @@ def name_filter(name: str):
         (name == 'blocks.0.attn.hook_q') or 
         (name == 'blocks.0.attn.hook_z')
     )
-def load_data(prompt_type: str, verbose: bool = False):
+def load_data(prompt_type: str, verbose: bool = True):
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
     if verbose:
         print(all_prompts[:5])
@@ -326,60 +326,41 @@ def create_cache_for_dir_patching(
 
     return ActivationCache(cache_dict, model)
 #%%
-def run_head_patching(
+def run_position_patching(
     model: HookedTransformer,
     orig_input: Float[Tensor, "batch seq"],
     new_cache: ActivationCache,
     patching_metric: Callable,
-    label: str
-) -> Tuple[Float[Tensor, "layer head"], go.Figure]:
-    head_results: Float[Tensor, "layer head"] = act_patch(
-        model=model,
-        orig_input=orig_input,
-        new_cache=new_cache,
-        patching_nodes=IterNode(["result"]),
-        patching_metric=patching_metric,
-        verbose=False,
-    )['result'] * 100
-    fig = px.imshow(
-        head_results,
-        title=f"Patching {label} component of attention heads (corrupted -> clean)",
-        labels={"x": "Head", "y": "Layer", "color": patching_metric.__name__},
-        color_continuous_scale="RdBu",
-        color_continuous_midpoint=0,
-        width=600,
-    )
-    fig.update_layout(dict(
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        # border=True,
-        margin={"r": 100, "l": 100}
-    ))
-    return head_results, fig
-#%%
-def run_layer_patching(
-    model: HookedTransformer,
-    orig_input: Float[Tensor, "batch seq"],
-    new_cache: ActivationCache,
-    patching_metric: Callable,
-    label: str
+    seq_pos: int,
+    direction_label: str
 ) -> Tuple[Float[Tensor, ""], go.Figure]:
-    layer = extract_layer_from_string(label)
+    model.reset_hooks()
+    layer = extract_layer_from_string(direction_label)
+    node_name = 'resid_pre' if layer < model.cfg.n_layers else 'resid_post'
     return act_patch(
         model=model,
         orig_input=orig_input,
         new_cache=new_cache,
-        patching_nodes=Node("resid_post", layer=layer),
+        patching_nodes=Node("resid_post", layer=layer, seq_pos=seq_pos),
         patching_metric=patching_metric,
         verbose=False,
         disable=True,
     ) * 100
 #%%
-def get_results_metric_prompt_type_direction(
-    patching_metric_base: Callable, prompt_type: PromptType,
-    direction_label: str, direction: Float[Tensor, "d_model"]
+def get_results_for_direction_and_position(
+    patching_metric_base: Callable, 
+    prompt_type: PromptType,
+    position: str,
+    direction_label: str, 
+    direction: Float[Tensor, "d_model"],
+    model: HookedTransformer = model,
 ) -> List[float]:
-    model.reset_hooks()
     data_dict = load_data(prompt_type)
+    example_prompt = model.to_str_tokens(data_dict["all_prompts"][0])
+    if position == 'ALL':
+        seq_pos = None
+    else:
+        seq_pos = prompt_type.get_placeholder_positions(example_prompt)[position][-1]
     if "logit" in patching_metric_base.__name__:
         clean_diff = data_dict["clean_logit_diff"]
         corrupt_diff = data_dict["corrupted_logit_diff"]
@@ -397,7 +378,9 @@ def get_results_metric_prompt_type_direction(
     new_cache = create_cache_for_dir_patching(
         data_dict["clean_cache"], data_dict["corrupted_cache"], direction
     )
-    return run_layer_patching(model, data_dict["corrupted_tokens"], new_cache, patching_metric, direction_label)
+    return run_position_patching(
+        model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, direction_label
+    )
 #%%
 def get_results_for_metric(
     patching_metric_base: Callable, prompt_types: Iterable[PromptType], 
@@ -408,11 +391,16 @@ def get_results_for_metric(
         itertools.product(prompt_types, zip(direction_labels, directions)), 
         total=len(prompt_types) * len(direction_labels)
     )
-    results = pd.DataFrame(columns=[prompt_type.value for prompt_type in prompt_types], index=direction_labels, dtype=float)
+    results = pd.DataFrame(index=direction_labels, dtype=float)
     for prompt_type, (direction_label, direction) in bar:
         bar.set_description(f"{prompt_type.value} {direction_label}")
-        result = get_results_metric_prompt_type_direction(patching_metric_base, prompt_type, direction_label, direction)
-        results.loc[direction_label, prompt_type.value] = result
+        placeholders = prompt_type.get_placeholders() + ['ALL']
+        for position in placeholders:
+            column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
+            result = get_results_for_direction_and_position(
+                patching_metric_base, prompt_type, position, direction_label, direction
+            )
+            results.loc[direction_label, column] = result
     layers_style = (
         results
         .style
