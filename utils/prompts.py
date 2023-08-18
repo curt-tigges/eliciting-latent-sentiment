@@ -254,8 +254,15 @@ def get_prompts(
             formatter.format(ADJ1=neutral_adjectives[i], ADJ2=neutral_adjectives[i + 1], ADJ3=neutral_adjectives[i + 2], ADJ4=neutral_top_adjectives[i], VRB=neutral_verbs[i])
             for i in range(n_prompts)
         ]
+    elif prompt_type == "res_class_1":
+        pos_prompts = [
+            f"This restaurant was{get_adjective(positive_adjectives, i)}, I loved it. The food was{get_adjective(positive_adjectives, i+1)}, and the service was{get_adjective(positive_adjectives, i+2)}. Overall it was just great. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neg_prompts = [
+            f"This restaurant was{get_adjective(negative_adjectives, i)}, I hated it. The food was{get_adjective(negative_adjectives, i+1)}, and the service was{get_adjective(negative_adjectives, i+2)}. Overall it was just awful. Review Sentiment:" for i in range(len(positive_adjectives)-1)
+        ]
+        neutral_prompts = None
     elif prompt_type == "multi_subject_1":
-
         pos_prompts = [
             (
                 f"Review A: 'I thought this movie was{get_adjective(positive_adjectives, i)}, I loved it. The acting was{get_adjective(positive_adjectives, i+1)}, the plot was{get_adjective(positive_adjectives, i+2)}, "
