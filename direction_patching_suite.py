@@ -212,18 +212,27 @@ def display_cosine_sims(direction_labels: List[str], directions: List[Float[Tens
 
     sim_df = pd.DataFrame(cosine_similarities, columns=['direction1', 'direction2', 'cosine_similarity'])
     sim_pt = sim_df.pivot(index='direction1', columns='direction2', values='cosine_similarity')
-    styled = sim_pt.style.background_gradient(cmap='Reds', axis=0).format("{:.2f}")
+    styled = sim_pt.style.background_gradient(cmap='Reds', axis=0).format("{:.2f}").set_caption("Cosine similarities")
     display(styled)
     save_html(styled, "cosine_similarities", model)
 
 #%%
-def format_layer_string(s: str) -> str:
+def extract_layer_from_string(s: str) -> int:
     # Find numbers that directly follow the text "layer"
     match = re.search(r'(?<=layer)\d+', s)
     if match:
         number = match.group()
+        return int(number)
+    else:
+        return None
+
+#%%
+def zero_pad_layer_string(s: str) -> str:
+    # Find numbers that directly follow the text "layer"
+    number = extract_layer_from_string(s)
+    if number is not None:
         # Replace the original number with the zero-padded version
-        s = s.replace('layer' + number, 'layer' + number.zfill(2))
+        s = s.replace(f'layer{number}', f'layer{number:02d}')
     return s
 
 #%% # Direction loading
@@ -240,7 +249,7 @@ def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str
         if direction.ndim == 2:
             direction = direction.squeeze(0)
         directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
-    direction_labels = [format_layer_string(label) for label in direction_labels]
+    direction_labels = [zero_pad_layer_string(label) for label in direction_labels]
     display_cosine_sims(direction_labels, directions)
     return directions, direction_labels
 #%%
@@ -352,61 +361,17 @@ def run_layer_patching(
     new_cache: ActivationCache,
     patching_metric: Callable,
     label: str
-) -> Tuple[Float[Tensor, "layer"], go.Figure]:
-    layer_results: Float[Tensor, "layer"] = act_patch(
+) -> Tuple[Float[Tensor, ""], go.Figure]:
+    layer = extract_layer_from_string(label)
+    return act_patch(
         model=model,
         orig_input=orig_input,
         new_cache=new_cache,
-        patching_nodes=IterNode(["resid_post"]),
+        patching_nodes=Node("resid_post", layer=layer),
         patching_metric=patching_metric,
         verbose=False,
         disable=True,
-    )['resid_post'] * 100
-    fig = px.line(
-        layer_results,
-        title=f"Patching {label} component of residual stream (corrupted -> clean)",
-        labels={"index": "Layer", "value": "Logit diff (%)"},
-        width=600,
-    )
-    fig.update_layout(dict(
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        margin={"r": 100, "l": 100},
-        showlegend=False,
-    ))
-    return layer_results, fig
-#%%
-def run_attn_mlp_patching(
-    model: HookedTransformer,
-    orig_input: Float[Tensor, "batch seq"],
-    new_cache: ActivationCache,
-    patching_metric: Callable,
-    label: str
-) -> Tuple[Float[Tensor, "attn_mlp layer pos"], go.Figure]:
-    attn_mlp_results = act_patch(
-        model=model,
-        orig_input=orig_input,
-        new_cache=new_cache,
-        patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
-        patching_metric=patching_metric,
-        verbose=False,
-    )
-    result_data = torch.stack([r.T for r in attn_mlp_results.values()]) * 100
-    assert attn_mlp_results.keys() == {"resid_pre", "attn_out", "mlp_out"}
-    labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(orig_input[0]))]
-    fig = imshow_p(
-        result_data,
-        facet_col=0,
-        facet_labels=["resid_pre", "attn_out", "mlp_out"],
-        title=f"Patching {label} at resid stream & layer outputs (corrupted -> clean)",
-        labels={"x": "Sequence position", "y": "Layer", "color": patching_metric.__name__},
-        x=labels,
-        xaxis_tickangle=45,
-        coloraxis=dict(colorbar_ticksuffix = "%"),
-        border=True,
-        width=1300,
-        margin={"r": 100, "l": 100}
-    )
-    return result_data, fig
+    ) * 100
 #%%
 def get_results_for_metric(
     prompt_type: PromptType, patching_metric_base: Callable,
@@ -435,38 +400,16 @@ def get_results_for_metric(
     )
 
     bar = tqdm(zip(direction_labels, directions), total=len(direction_labels))
-    figures = []
     data = []
     for label, direction in bar:
         direction = direction / direction.norm()
         new_cache = create_cache_for_dir_patching(
             data_dict["clean_cache"], data_dict["corrupted_cache"], direction
         )
-        results, fig = run_layer_patching(model, data_dict["corrupted_tokens"], new_cache, patching_metric, label)
-        data.append(results.numpy())
-        figures.append(fig)
-    fig = make_subplots(
-        rows=len(direction_labels), cols=1,
-        subplot_titles=direction_labels,
-        shared_yaxes=False,
-        shared_xaxes=False,
-    )
-    for i, (label, direction) in enumerate(zip(direction_labels, directions)):
-        fig.add_trace(figures[i].data[0], row=i + 1, col=1)
-        if i == len(direction_labels) - 1:
-            fig.update_xaxes(title_text="Layer", row=i + 1, col=1)
-    fig.update_layout(
-        title=f"Patching residual stream by layer ({prompt_metric_label})",
-        height=6600,
-        width=1000,
-        showlegend=False,
-        margin={"r": 100, "l": 100}
-    )
-    fig.update_yaxes(title_text=patching_metric_base.__name__)
-    save_html(fig, f"layer_direction_patching_{prompt_metric_label}", model)
-    fig.show()
+        result = run_layer_patching(model, data_dict["corrupted_tokens"], new_cache, patching_metric, label)
+        data.append(result)
     layers_df = pd.DataFrame(data)
-    layers_df.columns.name = "layer"
+    layers_df.columns = [patching_metric_base.__name__]
     layers_df.index = direction_labels
     layers_style = (
         layers_df
@@ -477,19 +420,6 @@ def get_results_for_metric(
     )
     save_html(layers_style, f"layer_direction_patching_{prompt_metric_label}", model)
     display(layers_style)
-
-    max_layer_df = layers_df.max(axis=1).sort_values(ascending=False).reset_index()
-    max_layer_df.columns = ["direction", "max_layer"]
-    max_layer_style = (
-        max_layer_df
-        .style
-        .background_gradient(cmap="RdBu", axis=None)
-        .format({"max_layer": "{:.1f}%"})
-        .hide()
-        .set_caption(f"Layer direction patching max ({prompt_metric_label})")
-    )
-    save_html(max_layer_style, f"layer_direction_patching_{prompt_metric_label}_max_layer", model)
-    display(max_layer_style)
 #%%
 DIRECTIONS, DIRECTION_LABELS = get_directions(model)
 # %%
@@ -509,4 +439,3 @@ for metric in METRICS:
         break
     break
 #%%
-# FIXME: extract the layer from the direction and only patch that layer rather than taking the max
