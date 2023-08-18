@@ -16,3 +16,4 @@ neel-plotly
 data/cached_activations/
 data/2_8b_mood_inference/
 data/pythia-1.4b/
+circuits/
