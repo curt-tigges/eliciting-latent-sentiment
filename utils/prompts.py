@@ -206,7 +206,7 @@ def get_prompts(
         n_prompts = min(len(positive_adjectives), len(negative_adjectives))
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
-        neutral_prompts = [formatter.format(ADJ=neutral_adjectives[i]) for i in range(len(neutral_adjectives))]
+        neutral_prompts = [formatter.format(ADJ=neutral_adjectives[i], VRB=neutral_verbs[i]) for i in range(len(neutral_adjectives))]
     elif prompt_type == PromptType.SIMPLE_TRAIN:
         n_prompts = min(len(positive_adjectives), len(negative_adjectives))
         positive_adjectives = prompt_config.get("positive_adjectives_train", model, filter_length=1)
