@@ -54,6 +54,9 @@ model = HookedTransformer.from_pretrained(
 )
 model.name = MODEL_NAME
 #%%
+# ============================================================================ #
+# Training loop
+
 METHODS = [
     FittingMethod.KMEANS,
     FittingMethod.LOGISTIC_REGRESSION,
@@ -108,38 +111,53 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
         train_direction(
             trainset, train_pos, train_layer,
             testset, test_pos, test_layer,
+            method,
             **kwargs
         )
 #%%
-km_stats = get_csv("km_stats", model, key_cols=CSV_COLS)
-km_stats = km_stats.loc[
-    km_stats.method.eq('kmeans')
-    km_stats.train_set.isin(['simple_train']) & 
-    km_stats.train_pos.isin(['ADJ']) &
-    km_stats.test_set.isin(['simple_train', 'simple_test', 'simple_adverb'])
-]
-km_stats
+# ============================================================================ #
+# Summary stats
+
+fitting_stats = get_csv("direction_fitting_stats", model, key_cols=CSV_COLS)
 #%%
-km_stats.train_pos.value_counts()
+fitting_stats.method.value_counts()
+#%%
+fitting_stats.train_pos.value_counts()
 #%%
 def hide_nan(val):
     return '' if pd.isna(val) else f"{val:.1%}"
 #%%
-accuracy_styler = km_stats.pivot(
-    index=["train_set", "train_pos", "train_layer", ],
-    columns=["test_set", "test_pos"],
-    values="accuracy",
-).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"K-means accuracy ({model.name})")
-save_html(accuracy_styler, "km_accuracy", model)
-display(accuracy_styler)
+def plot_accuracy_similarity(df, label: str):
+    df = df.loc[
+        df.train_set.isin(['simple_train']) & 
+        df.train_pos.isin(['ADJ']) &
+        df.test_set.isin(['simple_train', 'simple_test', 'simple_adverb'])
+    ]
+    accuracy_styler = df.pivot(
+        index=["train_set", "train_pos", "train_layer", ],
+        columns=["test_set", "test_pos"],
+        values="accuracy",
+    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} accuracy ({model.name})")
+    save_html(accuracy_styler, f"{label}_accuracy", model)
+    display(accuracy_styler)
+    similarity_styler = df.pivot(
+        index=["train_set",  "train_pos", "train_layer",],
+        columns=["test_set", "test_pos"],
+        values="similarity",
+    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} cosine similarities ({model.name})")
+    save_html(similarity_styler, f"{label}_similarity", model)
+    display(similarity_styler)
 #%%
-similarity_styler = km_stats.pivot(
-    index=["train_set",  "train_pos", "train_layer",],
-    columns=["test_set", "test_pos"],
-    values="similarity",
-).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"K-means cosine similarities ({model.name})")
-save_html(similarity_styler, "km_similarity", model)
-display(similarity_styler)
+for method in METHODS:
+    plot_accuracy_similarity(
+        fitting_stats.loc[fitting_stats.method.eq(method.value)],
+        method.value,
+    )
+#%%
+#%%
+# ============================================================================ #
+# PCA plots
+
 #%%
 # hacky functions for reading from nested CSV
 def tensor_from_str(

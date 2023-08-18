@@ -5,8 +5,10 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
-from transformer_lens import HookedTransformer
+import sys
+import warnings
 from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
 
@@ -89,8 +91,8 @@ def _fit_kmeans(
         pca = PCA(n_components=pca_components)
         train_pcs = pca.fit_transform(train_embeddings.numpy())
         test_pcs = pca.transform(test_embeddings.numpy())
-        test_km_labels = kmeans.predict(test_pcs)
         kmeans.fit(train_pcs)
+        test_km_labels = kmeans.predict(test_pcs)
     train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
     km_centroids: Float[np.ndarray, "cluster d_model"] = kmeans.cluster_centers_
 
@@ -185,10 +187,18 @@ def _fit_logistic_regression(
     train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
     test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
     random_state: int = 0,
+    solver: str = 'liblinear',
+    max_iter: int = 1000,
+    tol: float = 1e-4,  
 ):
     train_embeddings = train_data.embed(train_pos, train_layer)
     test_embeddings = test_data.embed(test_pos, test_layer)
-    lr = LogisticRegression(random_state=random_state)
+    lr = LogisticRegression(
+        random_state=random_state,
+        solver=solver,
+        max_iter=max_iter,
+        tol=tol,
+    )
     lr.fit(train_embeddings, train_data.binary_labels)
     total = len(test_data.binary_labels)
     accuracy = lr.score(test_embeddings, test_data.binary_labels)
@@ -211,16 +221,29 @@ def train_direction(
         fitting_method = _fit_logistic_regression
     else:
         fitting_method = _fit_kmeans
-    train_line, correct, total, accuracy = fitting_method(
-        train_data, train_pos, train_layer,
-        test_data, test_pos, test_layer,
-        **kwargs,
-    )
-    test_line, _, _, _ = fitting_method(
-        test_data, test_pos, test_layer,
-        test_data, test_pos, test_layer,
-        **kwargs,
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConvergenceWarning)  # Turn the warning into an error
+        try:
+            train_line, correct, total, accuracy = fitting_method(
+                train_data, train_pos, train_layer,
+                test_data, test_pos, test_layer,
+                **kwargs,
+            )
+            test_line, _, _, _ = fitting_method(
+                test_data, test_pos, test_layer,
+                test_data, test_pos, test_layer,
+                **kwargs,
+            )
+        except ConvergenceWarning:
+            print(
+                f"Convergence warning for {method.value}; "
+                f"train type:{train_data.prompt_type.value}, pos: {train_pos}, layer:{train_layer}, "
+                f"test type:{test_data.prompt_type.value}, pos: {test_pos}, layer:{test_layer}, "
+                f"kwargs: {kwargs}\n"
+                f"train str_labels:{train_data.str_labels}\n"
+                f"test str_labels:{test_data.str_labels}\n"
+            )
+            return
     # write k means line to file
     method_label = method.value
     if method == FittingMethod.PCA:

@@ -450,9 +450,13 @@ negative_french_answers:
 
 positive_french_verbs:
   - adoré
+  - prisé
+
 
 negative_french_verbs:
   - détesté
+  - déplu
+
 
 positive_proper_nouns:
   - Mandela

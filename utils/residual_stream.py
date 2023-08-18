@@ -1,10 +1,10 @@
 from typing import List
-from jaxtyping import Int, Float
+from jaxtyping import Int, Float, Bool
 from typeguard import typechecked
 import torch
 from torch import Tensor
 from transformer_lens import HookedTransformer
-from utils.prompts import get_dataset
+from utils.prompts import get_dataset, PromptType
 
 
 class ResidualStreamDataset:
@@ -14,9 +14,9 @@ class ResidualStreamDataset:
         self, 
         prompt_strings: List[str], 
         prompt_tokens: Int[Tensor, "batch pos"], 
-        binary_labels: Int[Tensor, "batch"],
+        binary_labels: Bool[Tensor, "batch"],
         model: HookedTransformer,
-        prompt_type: str,
+        prompt_type: PromptType,
     ) -> None:
         assert len(prompt_strings) == len(prompt_tokens)
         assert len(prompt_strings) == len(binary_labels)
@@ -35,7 +35,7 @@ class ResidualStreamDataset:
         ]
 
     @property
-    def binary_labels(self) -> Int[Tensor, "batch"]:
+    def binary_labels(self) -> Bool[Tensor, "batch"]:
         return self._binary_labels.cpu().detach()
 
     def __len__(self) -> int:
