@@ -117,7 +117,8 @@ def name_filter(name: str):
         (name == 'blocks.0.attn.hook_q') or 
         (name == 'blocks.0.attn.hook_z')
     )
-def load_data(prompt_type: str, verbose: bool = True):
+def load_data(prompt_type: str, model: HookedTransformer = model, verbose: bool = False):
+    model.reset_hooks()
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
     if verbose:
         print(all_prompts[:5])
@@ -237,7 +238,7 @@ def zero_pad_layer_string(s: str) -> str:
     return s
 
 #%% # Direction loading
-def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str]]:
+def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List[np.ndarray], List[str]]:
     direction_labels = (
         [f'kmeans_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
         [f'pca2_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
@@ -251,7 +252,8 @@ def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str
             direction = direction.squeeze(0)
         directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
     direction_labels = [zero_pad_layer_string(label) for label in direction_labels]
-    display_cosine_sims(direction_labels, directions)
+    if display:
+        display_cosine_sims(direction_labels, directions)
     return directions, direction_labels
 #%%
 # ============================================================================ #
@@ -400,19 +402,23 @@ def get_results_for_metric(
             result = get_results_for_direction_and_position(
                 patching_metric_base, prompt_type, position, direction_label, direction
             )
+            # Ensure the column exists
+            if (prompt_type.value, position) not in results.columns:
+                results[column] = np.nan
             results.loc[direction_label, column] = result
+    results.columns = pd.MultiIndex.from_tuples(results.columns, names=['prompt', 'position'])
     layers_style = (
         results
         .style
         .background_gradient(cmap="Reds", axis=None, low=0, high=1)
         .format("{:.1f}%")
-        .set_caption(f"Layer direction patching ({metric_label})")
+        .set_caption(f"Direction patching ({metric_label})")
     )
-    save_html(layers_style, f"layer_direction_patching_{metric_label}", model)
+    save_html(layers_style, f"direction_patching_{metric_label}", model)
     display(layers_style)
     return results
 #%%
-DIRECTIONS, DIRECTION_LABELS = get_directions(model)
+DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
 # %%
 PROMPT_TYPES = [
     PromptType.SIMPLE_MOOD,
@@ -426,6 +432,4 @@ METRICS = [
 ]
 for metric in METRICS:
     results = get_results_for_metric(metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS)
-#%%
-# FIXME: replace layer patching with position-based patching
 # %%
