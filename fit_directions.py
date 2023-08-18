@@ -133,6 +133,9 @@ def plot_accuracy_similarity(df, label: str):
         df.train_pos.isin(['ADJ']) &
         df.test_set.isin(['simple_train', 'simple_test', 'simple_adverb'])
     ]
+    if df.empty:
+        print(f"No data to plot for {label}")
+        return
     accuracy_styler = df.pivot(
         index=["train_set", "train_pos", "train_layer", ],
         columns=["test_set", "test_pos"],
@@ -148,10 +151,12 @@ def plot_accuracy_similarity(df, label: str):
     save_html(similarity_styler, f"{label}_similarity", model)
     display(similarity_styler)
 #%%
-plot_accuracy_similarity(
-    fitting_stats.loc[fitting_stats.method.eq(method.value)],
-    method.value,
-)
+for method in METHODS:
+    method_str = 'pca2' if method == FittingMethod.PCA else method.value
+    plot_accuracy_similarity(
+        fitting_stats.loc[fitting_stats.method.eq(method_str)],
+        method.value,
+    )
 #%%
 #%%
 # ============================================================================ #

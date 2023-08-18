@@ -498,8 +498,15 @@ PROMPT_TYPES = [
     PromptType.COMPLETION,
     PromptType.SIMPLE,
 ]
-for metric in (logit_diff_denoising_base, logit_flip_metric_base, prob_diff_denoising_base):
+METRICS = [
+    logit_diff_denoising_base,
+    logit_flip_metric_base,
+    prob_diff_denoising_base,
+]
+for metric in METRICS:
     for prompt_type in PROMPT_TYPES:
         get_results_for_metric(prompt_type, metric, DIRECTION_LABELS, DIRECTIONS)
         break
+    break
 #%%
+# FIXME: extract the layer from the direction and only patch that layer rather than taking the max
