@@ -124,7 +124,7 @@ class PromptType(Enum):
             PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TRAIN: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TEST: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
-            PromptType.SIMPLE_MOOD: "The traveller was{ADV}{WALK} to their destination. Upon arrival, they felt{FEEL}. \nConclusion: The traveller is",
+            PromptType.SIMPLE_MOOD: "The traveller was{ADV} walking to their destination. Upon arrival, they felt{FEEL}. \nConclusion: The traveller is",
             PromptType.SIMPLE_ADVERB: "The traveller{ADV} walked to their destination. The traveller felt very",
             PromptType.SIMPLE_FRENCH: "Je pensais que ce film était{ADJ}, je l'ai{VRB}. \nConclusion: Ce film est",
             PromptType.PROPER_NOUNS: "When I hear the name{NOUN}, I feel very",
@@ -224,14 +224,13 @@ def get_prompts(
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
     elif prompt_type == PromptType.SIMPLE_MOOD:
-        walking_synonyms: CircularList[str]  = prompt_config.get("walk_synonyms", model)
         positive_feelings: CircularList[str] = prompt_config.get("positive_feelings", model)
         negative_feelings: CircularList[str] = prompt_config.get("negative_feelings", model)
         positive_adverbs: CircularList[str] = prompt_config.get("positive_adverbs", model)
         negative_adverbs: CircularList[str] = prompt_config.get("negative_adverbs", model)
-        n_prompts = min(len(positive_adverbs), len(walking_synonyms), len(positive_feelings), len(negative_adverbs), len(negative_feelings))
-        pos_prompts = [formatter.format(ADV=positive_adverbs[i], WALK=walking_synonyms[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
-        neg_prompts = [formatter.format(ADV=negative_adverbs[i], WALK=walking_synonyms[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
+        n_prompts = min(len(positive_adverbs), len(positive_feelings), len(negative_adverbs), len(negative_feelings))
+        pos_prompts = [formatter.format(ADV=positive_adverbs[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADV=negative_adverbs[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
         neutral_prompts = None
         pos_answers = prompt_config.get("positive_moods", model)
         neg_answers = prompt_config.get("negative_moods", model)
