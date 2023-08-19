@@ -34,7 +34,7 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import save_array, save_html, update_csv, get_csv, eval_csv
+from utils.store import save_array, save_html, update_csv, get_csv, eval_csv, is_file
 from utils.prompts import PromptType
 from utils.residual_stream import ResidualStreamDataset
 from utils.classification import train_classifying_direction, ClassificationMethod
@@ -60,9 +60,9 @@ model = model.requires_grad_(False)
 # Training loop
 
 METHODS = [
-    ClassificationMethod.KMEANS,
-    ClassificationMethod.LOGISTIC_REGRESSION,
-    ClassificationMethod.PCA,
+    # ClassificationMethod.KMEANS,
+    # ClassificationMethod.LOGISTIC_REGRESSION,
+    # ClassificationMethod.PCA,
     FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
@@ -112,12 +112,16 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
         if method == FittingMethod.DAS:
             if train_type != test_type or train_layer != test_layer:
                 continue
+            das_path = f"das_{train_type.value}_{train_pos}_layer{train_layer}"
+            if is_file(das_path, model):
+                continue
             train_das_direction(
                 model, device,
                 train_type, train_pos, train_layer,
                 test_type, test_pos, test_layer,
                 wandb_enabled=False,
             )
+            
         else:
             trainset = ResidualStreamDataset.get_dataset(model, device, prompt_type=train_type)
             testset = ResidualStreamDataset.get_dataset(model, device, prompt_type=test_type)

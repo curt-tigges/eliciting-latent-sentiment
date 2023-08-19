@@ -93,10 +93,11 @@ def act_patch_simple(
         orig_input,
         fwd_hooks=[(act_name, hook_fn)],
     )
-    assert logits.requires_grad or not model.training, (
+    assert logits.requires_grad, (
         "logits should require grad, otherwise we can't backpropagate through them. "
         f"Layer: {layer}, position: {position}, new_value.requires_grad: {new_value.requires_grad}, "
-        f"logits.requires_grad: {logits.requires_grad}, model.training: {model.training}"
+        f"logits.requires_grad: {logits.requires_grad}, model.training: {model.training}, "
+        f"act_name: {act_name}, layer: {layer}, position: {position}, "
     )
     return patching_metric(logits)
 
@@ -317,6 +318,6 @@ def train_das_direction(
         **config,
     )
     save_array(
-        direction.detach().cpu().numpy(), f'das_{train_type}_{train_pos}_layer{train_layer}', model
+        direction.detach().cpu().numpy(), f'das_{train_type.value}_{train_pos}_layer{train_layer}', model
     )
     return direction
