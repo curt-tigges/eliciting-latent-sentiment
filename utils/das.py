@@ -58,8 +58,16 @@ def hook_fn_base(
     assert 'resid' in hook.name
     if hook.layer() != layer:
         return input
-    input[:, position] = new_value
-    return input
+    position_index = einops.repeat(
+        torch.arange(input.shape[1], device=input.device),
+        "seq -> batch seq",
+        batch=input.shape[0],
+    )
+    return torch.where(
+        position_index == position,
+        new_value,
+        input,
+    )
     
 
 def act_patch_simple(
@@ -154,8 +162,20 @@ class RotationModule(torch.nn.Module):
 class TrainingConfig:
 
     def __init__(self, config_dict: dict):
+        self.seed = config_dict.get("seed", 0)
+        self.lr = config_dict.get("lr", 1e-3)
+        self.epochs = config_dict.get("epochs", 50)
+        self.n_directions = config_dict.get("n_directions", 1)
+        self.wandb_enabled = config_dict.get("wandb_enabled", True)
         for k, v in config_dict.items():
             setattr(self, k, v)
+
+    def to_dict(self):
+        return {
+            attr: getattr(self, attr) 
+            for attr in dir(self) 
+            if not callable(getattr(self, attr)) and not attr.startswith('_')
+        }
 
 
 def fit_rotation(
@@ -164,22 +184,13 @@ def fit_rotation(
     new_cache: ActivationCache,
     patching_metric: Callable,
     model: HookedTransformer, 
-    **given_config_dict
+    **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
+    config = TrainingConfig(config_dict)
     # Initialize wandb
-    config_dict = dict(
-        seed=0,
-        lr=1e-3,
-        epochs=50,
-        n_directions=1,
-        wandb_enabled=True,
-    )
-    config_dict.update(given_config_dict)
-    if config_dict["wandb_enabled"]:
-        wandb.init(project='train_rotation', config=config_dict)
+    if config.wandb_enabled:
+        wandb.init(project='train_rotation', config=config.to_dict())
         config = wandb.config
-    else:
-        config = TrainingConfig(config_dict)
 
     train_act_name = get_resid_name(config.train_layer, model)
     eval_act_name = get_resid_name(config.eval_layer, model)
