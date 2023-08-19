@@ -65,9 +65,15 @@ def hook_fn_base(
         batch=batch_size,
         d_model=d_model,
     )
+    new_value_repeat = einops.repeat(
+        new_value,
+        "d_model -> batch seq d_model",
+        batch=batch_size,
+        seq=seq_len,
+    )
     return torch.where(
         position_index == position,
-        new_value,
+        new_value_repeat,
         resid,
     )
     
