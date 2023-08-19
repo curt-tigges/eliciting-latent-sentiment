@@ -49,7 +49,7 @@ class RotateLayer(torch.nn.Module):
 
 
 def hook_fn_base(
-    input: Float[Tensor, "batch seq d_model"],
+    resid: Float[Tensor, "batch seq d_model"],
     hook: HookPoint,
     layer: int,
     position: int,
@@ -57,17 +57,13 @@ def hook_fn_base(
 ):
     assert 'resid' in hook.name
     if hook.layer() != layer:
-        return input
-    position_index = einops.repeat(
-        torch.arange(input.shape[1], device=input.device),
-        "seq -> batch seq",
-        batch=input.shape[0],
-    )
-    return torch.where(
-        position_index == position,
-        new_value,
-        input,
-    )
+        return resid
+    # Split the tensor at the desired position
+    before_position = resid[:, :position, :]
+    after_position = resid[:, position + 1 :, :]
+    # Create a new tensor using torch.cat
+    modified_resid = torch.cat([before_position, new_value.unsqueeze(0), after_position], dim=1)
+    return modified_resid
     
 
 def act_patch_simple(
