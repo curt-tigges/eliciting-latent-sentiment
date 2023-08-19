@@ -13,6 +13,7 @@ import wandb
 from utils.circuit_analysis import get_logit_diff, logit_diff_denoising
 from utils.prompts import PromptType, get_dataset
 from utils.residual_stream import get_resid_name
+from utils.store import save_array
 
 
 class FittingMethod(Enum):
@@ -307,7 +308,7 @@ def train_das_direction(
         eval_position=placeholders[test_pos][-1],
     )
     config.update(config_arg)
-    return fit_rotation(
+    direction = fit_rotation(
         orig_tokens=orig_tokens,
         orig_cache=orig_cache,
         new_cache=new_cache,
@@ -315,3 +316,7 @@ def train_das_direction(
         model=model,
         **config,
     )
+    save_array(
+        direction.cpu().numpy(), f'das_{train_type}_{train_pos}_layer{train_layer}', model
+    )
+    return direction
