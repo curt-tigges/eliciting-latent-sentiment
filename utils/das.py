@@ -94,7 +94,8 @@ def act_patch_simple(
     )
     assert logits.requires_grad or not model.training, (
         "logits should require grad, otherwise we can't backpropagate through them. "
-        f"Layer: {layer}, position: {position}, new_value: {new_value.requires_grad}"
+        f"Layer: {layer}, position: {position}, new_value.requires_grad: {new_value.requires_grad}, "
+        f"logits.requires_grad: {logits.requires_grad}, model.training: {model.training}"
     )
     return patching_metric(logits)
 
