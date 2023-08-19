@@ -317,6 +317,6 @@ def train_das_direction(
         **config,
     )
     save_array(
-        direction.cpu().numpy(), f'das_{train_type}_{train_pos}_layer{train_layer}', model
+        direction.detach().cpu().numpy(), f'das_{train_type}_{train_pos}_layer{train_layer}', model
     )
     return direction
