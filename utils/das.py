@@ -53,7 +53,7 @@ def hook_fn_base(
     hook: HookPoint,
     layer: int,
     position: int,
-    new_value: Float[Tensor, "d_model"],
+    new_value: Float[Tensor, "batch d_model"],
 ):
     batch_size, seq_len, d_model = resid.shape
     assert 'resid' in hook.name
@@ -67,8 +67,7 @@ def hook_fn_base(
     )
     new_value_repeat = einops.repeat(
         new_value,
-        "d_model -> batch seq d_model",
-        batch=batch_size,
+        "batch d_model -> batch seq d_model",
         seq=seq_len,
     )
     return torch.where(
