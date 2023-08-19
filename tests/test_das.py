@@ -1,7 +1,9 @@
 import unittest
 import torch
+from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
-from utils.das import RotateLayer, InverseRotateLayer, hook_fn_base, act_patch_simple, RotationModule, TrainingConfig
+from utils.das import RotateLayer, InverseRotateLayer, hook_fn_base, act_patch_simple, TrainingConfig, train_das_direction
+from utils.prompts import PromptType
 
 class TestFunctions(unittest.TestCase):
 
@@ -52,6 +54,21 @@ class TestFunctions(unittest.TestCase):
         self.assertEqual(config.seed, 42)
         self.assertEqual(config.to_dict(), config_dict)
 
+    def test_train_das_direction(self):
+        device = 'cpu'
+        model = HookedTransformer.from_pretrained(
+            'attn-only-1l',
+            device=device,
+        )
+        model.name = 'test'
+        direction = train_das_direction(
+            model, device,
+            PromptType.SIMPLE, 'ADJ', 0,
+            PromptType.SIMPLE, 'ADJ', 0,
+            wandb_enabled=False,
+            epochs=1,
+        )
+        self.assertTrue(isinstance(direction, torch.Tensor))
 
 if __name__ == "__main__":
     unittest.main()
