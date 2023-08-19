@@ -85,16 +85,17 @@ def get_probe_direction(pipeline: Pipeline, with_scaler: bool = True) -> Tuple[f
     """
     Extracts the direction in the residual stream corresponding to a fitted logistic regression probe.
     """
+
+    # Get the coefficients and intercept from the LogisticRegression
+    logistic_regression_model = pipeline.named_steps['logisticregression']
+    scaled_coef = logistic_regression_model.coef_
+    scaled_intercept = logistic_regression_model.intercept_
+
     if with_scaler:
         # Get the standard deviation and mean from the StandardScaler
         scaler = pipeline.named_steps['standardscaler']
         std = scaler.scale_
         mean = scaler.mean_
-
-        # Get the coefficients and intercept from the LogisticRegression
-        logistic_regression_model = pipeline.named_steps['logisticregression']
-        scaled_coef = logistic_regression_model.coef_
-        scaled_intercept = logistic_regression_model.intercept_
 
         # Unscale the coefficients
         probe_coef = scaled_coef / std
@@ -102,9 +103,8 @@ def get_probe_direction(pipeline: Pipeline, with_scaler: bool = True) -> Tuple[f
         # Unscale the intercept
         probe_intercept = scaled_intercept - (scaled_coef * mean / std).sum(axis=1)
     else:
-        logistic_regression_model = pipeline.named_steps['logisticregression']
-        probe_coef = logistic_regression_model.coef_
-        probe_intercept = logistic_regression_model.intercept_
+        probe_coef = scaled_coef
+        probe_intercept = scaled_intercept
 
     return probe_coef, probe_intercept
 
@@ -175,7 +175,7 @@ def apply_probe_to_cache(
     """
     new_cache = copy.deepcopy(cache)
     n_layers = model.cfg.n_layers
-    seq_len = cache["blocks.0.hook_mlp_out"].shape[1]
+    seq_len = cache[f"blocks.0.{component}"].shape[1]
     d_model = model.cfg.d_model
 
     assert probe_coefs.shape == (n_layers, seq_len, d_model)
