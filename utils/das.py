@@ -8,7 +8,6 @@ from jaxtyping import Float, Int
 from typing import Callable, Union, List, Tuple
 from transformer_lens.hook_points import HookPoint
 from transformer_lens import HookedTransformer, ActivationCache
-from transformer_lens.utils import get_act_name
 import wandb
 from utils.circuit_analysis import get_logit_diff, logit_diff_denoising
 from utils.prompts import PromptType, get_dataset
@@ -86,18 +85,13 @@ def act_patch_simple(
     position: int,
     patching_metric: Callable,
 ) -> Float[Tensor, ""]:
+    assert layer <= model.cfg.n_layers
+    act_name, patch_layer = get_resid_name(layer, model)
     model.reset_hooks()
-    hook_fn = partial(hook_fn_base, layer=layer, position=position, new_value=new_value)
-    act_name = get_resid_name(layer, model)
+    hook_fn = partial(hook_fn_base, layer=patch_layer, position=position, new_value=new_value)
     logits = model.run_with_hooks(
         orig_input,
         fwd_hooks=[(act_name, hook_fn)],
-    )
-    assert logits.requires_grad, (
-        "logits should require grad, otherwise we can't backpropagate through them. "
-        f"Layer: {layer}, position: {position}, new_value.requires_grad: {new_value.requires_grad}, "
-        f"logits.requires_grad: {logits.requires_grad}, model.training: {model.training}, "
-        f"act_name: {act_name}, layer: {layer}, position: {position}, "
     )
     return patching_metric(logits)
 
@@ -202,8 +196,8 @@ def fit_rotation(
         wandb.init(project='train_rotation', config=config.to_dict())
         config = wandb.config
 
-    train_act_name = get_resid_name(config.train_layer, model)
-    eval_act_name = get_resid_name(config.eval_layer, model)
+    train_act_name, _ = get_resid_name(config.train_layer, model)
+    eval_act_name, _ = get_resid_name(config.eval_layer, model)
 
     # Create a list to store the losses and models
     losses = []
@@ -225,19 +219,26 @@ def fit_rotation(
     for epoch in range(config.epochs):
         rotation_module.train()
         optimizer.zero_grad()
+        orig_resid_train = orig_cache[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
+        new_resid_train = new_cache[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
         loss = rotation_module(
-            orig_cache[train_act_name][:, config.train_position, :],
-            new_cache[train_act_name][:, config.train_position, :],
+            orig_resid_train,
+            new_resid_train,
             layer=config.train_layer,
             position=config.train_position,
+        )
+        assert loss.requires_grad, (
+            "The loss must be a scalar that requires grad. \n"
+            f"train layer: {config.train_layer}, train position: {config.train_position}, "
+            f"train act name: {train_act_name}"
         )
         loss.backward()
         optimizer.step()
         rotation_module.eval()
         with torch.inference_mode():
             eval_loss = rotation_module(
-                orig_cache[eval_act_name][:, config.eval_position, :],
-                new_cache[eval_act_name][:, config.eval_position, :],
+                orig_cache[eval_act_name][:, config.eval_position, :].clone(),
+                new_cache[eval_act_name][:, config.eval_position, :].clone(),
                 layer=config.eval_layer,
                 position=config.eval_position,
             )
@@ -268,13 +269,14 @@ def get_das_dataset(
     prompt_type: PromptType, layer: int, model: HookedTransformer, device: torch.device,
 ):
     all_prompts, answer_tokens, new_tokens, orig_tokens = get_dataset(model, device, prompt_type=prompt_type)
-    name_filter = lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model))
-    orig_logits, orig_cache = model.run_with_cache(
-        orig_tokens, names_filter=name_filter
-    )
-    new_logits, new_cache = model.run_with_cache(
-        new_tokens, names_filter=name_filter
-    )
+    name_filter = lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0])
+    with torch.inference_mode():
+        orig_logits, orig_cache = model.run_with_cache(
+            orig_tokens, names_filter=name_filter
+        )
+        new_logits, new_cache = model.run_with_cache(
+            new_tokens, names_filter=name_filter
+        )
     orig_cache.to(device)
     new_cache.to(device)
     orig_logit_diff = get_logit_diff(orig_logits, answer_tokens)

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 from jaxtyping import Int, Float, Bool
 from typeguard import typechecked
 import torch
@@ -8,12 +8,12 @@ from transformer_lens.utils import get_act_name
 from utils.prompts import get_dataset, PromptType
 
 
-def get_resid_name(layer: int, model: HookedTransformer) -> str:
+def get_resid_name(layer: int, model: HookedTransformer) -> Tuple[str, int]:
     resid_type = 'resid_pre'
     if layer == model.cfg.n_layers:
         resid_type = 'resid_post'
         layer -= 1
-    return get_act_name(resid_type, layer)
+    return get_act_name(resid_type, layer), layer
 
 
 class ResidualStreamDataset:
