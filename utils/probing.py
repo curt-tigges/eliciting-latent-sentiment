@@ -50,7 +50,7 @@ def cache_and_save_component_activations(
     batch_list: Float[np.ndarray, "batch layer dim"] = np.concatenate(batch_list, axis=0)
     print(f"Activation shape: {batch_list.shape}")
     # save as pkl file
-    with open(f"data/cached_activations/2_8b_mood_inference/{component}_pos_{pos}_activations.pkl", "wb") as f:
+    with open(f"data/cached_activations/2_8b_mood_inference/{model.cfg.model_name}_{component}_pos_{pos}_activations.pkl", "wb") as f:
         pickle.dump(batch_list, f)
 
     return batch_list
@@ -65,7 +65,7 @@ def train_probe_at_layer_pos(
     Train a logistic regression probe on a given layer and position.
     """
     # Get activations
-    with open(os.path.join(act_folder, f"{component}_pos_{pos}_activations.pkl"), "rb") as f:
+    with open(os.path.join(act_folder, f"{model.cfg.model_name}_{component}_pos_{pos}_activations.pkl"), "rb") as f:
         act_list: Float[Tensor, "batch d_model"] = pickle.load(f)[:, layer, :]
 
     X_train, X_test, y_train, y_test = train_test_split(act_list, labels, test_size=test_size, random_state=random_state)
@@ -81,25 +81,30 @@ def train_probe_at_layer_pos(
     return pipe, score
 
 
-def get_probe_direction(pipeline: Pipeline) -> Tuple[float, float]:
+def get_probe_direction(pipeline: Pipeline, with_scaler: bool = True) -> Tuple[float, float]:
     """
     Extracts the direction in the residual stream corresponding to a fitted logistic regression probe.
     """
-    # Get the standard deviation and mean from the StandardScaler
-    scaler = pipeline.named_steps['standardscaler']
-    std = scaler.scale_
-    mean = scaler.mean_
+    if with_scaler:
+        # Get the standard deviation and mean from the StandardScaler
+        scaler = pipeline.named_steps['standardscaler']
+        std = scaler.scale_
+        mean = scaler.mean_
 
-    # Get the coefficients and intercept from the LogisticRegression
-    logistic_regression_model = pipeline.named_steps['logisticregression']
-    scaled_coef = logistic_regression_model.coef_
-    scaled_intercept = logistic_regression_model.intercept_
+        # Get the coefficients and intercept from the LogisticRegression
+        logistic_regression_model = pipeline.named_steps['logisticregression']
+        scaled_coef = logistic_regression_model.coef_
+        scaled_intercept = logistic_regression_model.intercept_
 
-    # Unscale the coefficients
-    probe_coef = scaled_coef / std
+        # Unscale the coefficients
+        probe_coef = scaled_coef / std
 
-    # Unscale the intercept
-    probe_intercept = scaled_intercept - (scaled_coef * mean / std).sum(axis=1)
+        # Unscale the intercept
+        probe_intercept = scaled_intercept - (scaled_coef * mean / std).sum(axis=1)
+    else:
+        logistic_regression_model = pipeline.named_steps['logisticregression']
+        probe_coef = logistic_regression_model.coef_
+        probe_intercept = logistic_regression_model.intercept_
 
     return probe_coef, probe_intercept
 
@@ -135,7 +140,7 @@ def cache_and_save_probe_coefficients(
                 max_iter=max_iter,
             )
 
-            probe_coef, probe_intercept = get_probe_direction(probe)
+            probe_coef, probe_intercept = get_probe_direction(probe, with_scaler)
             
             probe_coefficients[layer, pos] = torch.tensor(probe_coef)
             probe_intercepts[layer, pos] = torch.tensor(probe_intercept)
