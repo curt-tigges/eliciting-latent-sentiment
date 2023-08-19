@@ -55,15 +55,21 @@ def hook_fn_base(
     position: int,
     new_value: Float[Tensor, "d_model"],
 ):
+    batch_size, seq_len, d_model = resid.shape
     assert 'resid' in hook.name
     if hook.layer() != layer:
         return resid
-    # Split the tensor at the desired position
-    before_position = resid[:, :position, :]
-    after_position = resid[:, position + 1 :, :]
-    # Create a new tensor using torch.cat
-    modified_resid = torch.cat([before_position, new_value.unsqueeze(0), after_position], dim=1)
-    return modified_resid
+    position_index = einops.repeat(
+        torch.arange(seq_len, device=resid.device),
+        "seq -> batch seq d_model",
+        batch=batch_size,
+        d_model=d_model,
+    )
+    return torch.where(
+        position_index == position,
+        new_value,
+        resid,
+    )
     
 
 def act_patch_simple(
