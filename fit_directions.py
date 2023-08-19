@@ -54,6 +54,7 @@ model = HookedTransformer.from_pretrained(
     device=device,
 )
 model.name = MODEL_NAME
+model = model.requires_grad_(False)
 #%%
 # ============================================================================ #
 # Training loop
@@ -109,10 +110,13 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
             continue
 
         if method == FittingMethod.DAS:
+            if train_type != test_type or train_layer != test_layer:
+                continue
             train_das_direction(
                 model, device,
                 train_type, train_pos, train_layer,
                 test_type, test_pos, test_layer,
+                wandb_enabled=False,
             )
         else:
             trainset = ResidualStreamDataset.get_dataset(model, device, prompt_type=train_type)
