@@ -83,7 +83,7 @@ def _fit(
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
-    if method == ClassificationMethod.KMEANS:
+    if method == ClassificationMethod.KMEANS or method == ClassificationMethod.MEAN_DIFF:
         kmeans.fit(train_embeddings)
         test_km_labels = kmeans.predict(test_embeddings)
     elif method == ClassificationMethod.PCA:
@@ -142,6 +142,12 @@ def _fit(
     elif method == ClassificationMethod.SVD:
         line: Float[np.ndarray, "d_model"]  = (
             v_train[:, 0] / np.linalg.norm(v_train[:, 0])
+        )
+    elif method == ClassificationMethod.MEAN_DIFF:
+        train_pos_embeddings = train_embeddings[train_data.binary_labels == 1, :]
+        train_neg_embeddings = train_embeddings[train_data.binary_labels == 0, :]
+        line: Float[np.ndarray, "d_model"]  = (
+            np.mean(train_pos_embeddings, axis=0) - np.mean(train_neg_embeddings, axis=0)
         )
     # get accuracy
     _, _, insample_accuracy = get_accuracy(

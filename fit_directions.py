@@ -64,6 +64,7 @@ METHODS = [
     # ClassificationMethod.LOGISTIC_REGRESSION,
     # ClassificationMethod.PCA,
     ClassificationMethod.SVD,
+    ClassificationMethod.MEAN_DIFF,
     # FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
