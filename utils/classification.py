@@ -93,9 +93,9 @@ def _fit(
         kmeans.fit(train_pcs)
         test_km_labels = kmeans.predict(test_pcs)
     elif method == ClassificationMethod.SVD:
-        u_train: Float[np.ndarray, "batch batch"]
-        s_train: Float[np.ndarray, "batch d_model"]
-        v_train: Float[np.ndarray, "d_model d_model"]
+        u_train: Float[np.ndarray, "batch s_vector"]
+        s_train: Float[np.ndarray, "s_vector"]
+        v_train: Float[np.ndarray, "s_vector d_model"]
         u_train, s_train, v_train = np.linalg.svd(train_embeddings.numpy())
         train_pcs = train_embeddings @ v_train[:, :n_components]
         _, _, v_test = np.linalg.svd(test_embeddings.numpy())
@@ -142,7 +142,7 @@ def _fit(
     elif method == ClassificationMethod.SVD:
         line: Float[np.ndarray, "d_model"]  = (
             v_train[:, 0] / np.linalg.norm(v_train[:, 0])
-        ) * np.sign(s_train[0, 0])
+        ) * np.sign(s_train[0])
     elif method == ClassificationMethod.MEAN_DIFF:
         train_pos_embeddings = train_embeddings[train_data.binary_labels == 1, :]
         train_neg_embeddings = train_embeddings[train_data.binary_labels == 0, :]
