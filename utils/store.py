@@ -142,8 +142,11 @@ def eval_csv(
 def save_array(
     array: Union[np.ndarray, torch.Tensor], 
     label: str, 
-    model: Union[HookedTransformer, str]
+    model: Union[HookedTransformer, str],
+    root: str = 'data',
 ):
+    if not os.path.exists(root):
+        os.mkdir(root)
     model: str = get_model_name(model)
     if isinstance(array, torch.Tensor):
         array = array.cpu().detach().numpy()
