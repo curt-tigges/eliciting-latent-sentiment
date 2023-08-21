@@ -426,9 +426,9 @@ DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=True)
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
-    PromptType.COMPLETION,
-    PromptType.SIMPLE_ADVERB,
-    PromptType.SIMPLE_MOOD,
+    # PromptType.COMPLETION,
+    # PromptType.SIMPLE_ADVERB,
+    # PromptType.SIMPLE_MOOD,
 ]
 METRICS = [
     logit_diff_denoising_base,

@@ -62,18 +62,18 @@ model = model.requires_grad_(False)
 METHODS = [
     # ClassificationMethod.KMEANS,
     # ClassificationMethod.LOGISTIC_REGRESSION,
-    # ClassificationMethod.PCA,
+    ClassificationMethod.PCA,
     ClassificationMethod.SVD,
-    ClassificationMethod.MEAN_DIFF,
+    # ClassificationMethod.MEAN_DIFF,
     # FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
-    PromptType.SIMPLE_ADVERB,
-    PromptType.SIMPLE_FRENCH,
-    PromptType.PROPER_NOUNS,
-    PromptType.MEDICAL,
+    # PromptType.SIMPLE_ADVERB,
+    # PromptType.SIMPLE_FRENCH,
+    # PromptType.PROPER_NOUNS,
+    # PromptType.MEDICAL,
 ]
 LAYERS = list(range(model.cfg.n_layers + 1))
 BAR = tqdm(
@@ -93,9 +93,7 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
     placeholders = itertools.product(
         train_type.get_placeholders(), test_type.get_placeholders()
     )
-    kwargs = {}
-    if method == ClassificationMethod.PCA:
-        kwargs['pca_components'] = 2
+    kwargs = dict(n_components=2)
     for train_pos, test_pos in placeholders:
         if train_pos == 'VRB':
             # Don't train on verbs as sample size is too small
@@ -172,9 +170,8 @@ def plot_accuracy_similarity(df, label: str):
     display(similarity_styler)
 #%%
 for method in METHODS:
-    method_str = 'pca2' if method == ClassificationMethod.PCA else method.value
     plot_accuracy_similarity(
-        fitting_stats.loc[fitting_stats.method.eq(method_str)],
+        fitting_stats.loc[fitting_stats.method.eq(method.value)],
         method.value,
     )
 #%%
@@ -209,10 +206,15 @@ def list_from_str(
     split_list = [el.replace('[', '').replace(']', '').replace("'", "").strip().replace(" ", "_") for el in split_list]
     return split_list
 #%%
-def plot_pca_2d(
-    train_pcs, train_str_labels, train_true_labels, 
-    test_pcs, test_str_labels, test_true_labels,
-    pca_centroids, 
+def plot_pca_svd_2d(
+    method: ClassificationMethod,
+    train_pcs: Float[Tensor, "batch d_model"], 
+    train_str_labels: List[str], 
+    train_true_labels: Float[Tensor, "batch d_model"],
+    test_pcs: Float[Tensor, "batch d_model"],
+    test_str_labels: List[str],
+    test_true_labels: Float[Tensor, "batch d_model"],
+    pca_centroids: Float[Tensor, "centroid d_model"],
     train_label: str = 'train', 
     test_label: str = 'test',
 ):
@@ -228,7 +230,7 @@ def plot_pca_2d(
                 colorscale="RdBu",
                 opacity=0.8,
             ),
-            name=f"PCA in-sample ({train_label})",
+            name=f"{method.value} in-sample ({train_label})",
         )
     )
     fig.add_trace(
@@ -243,10 +245,9 @@ def plot_pca_2d(
                 opacity=0.8,
                 symbol="square",
             ),
-            name=f"PCA out-of-sample ({test_label})",
+            name=f"{method.value} out-of-sample ({test_label})",
         )
     )
-
     fig.add_trace(
         go.Scatter(
             x=pca_centroids[:, 0],
@@ -258,24 +259,26 @@ def plot_pca_2d(
     )
     fig.update_layout(
         title=(
-            f"PCA in and out of sample "
+            f"{method.value} in and out of sample "
             f"({model.name})"
         ),
         xaxis_title="PC1",
         yaxis_title="PC2",
     )
     save_html(
-        fig, f"pca_{train_label}_{test_label}", model
+        fig, f"{method.value}_{train_label}_{test_label}", model
     )
     return fig
 
 # %%
 def plot_pca_from_cache(
+    method: ClassificationMethod, 
     train_set: PromptType, train_pos: str, train_layer: int,
     test_set: PromptType, test_pos: str, test_layer: int,
 ):
-    plot_df = get_csv("pca_plot", model)
+    plot_df = get_csv("pca_svd_plot", model)
     plot_df = plot_df.loc[
+        (plot_df.method == method.value) &
         (plot_df.train_set == train_set.value) &
         (plot_df.train_pos == train_pos) &
         (plot_df.train_layer == train_layer) &
@@ -285,16 +288,17 @@ def plot_pca_from_cache(
     ]
     assert len(plot_df) == 1, f"Found {len(plot_df)} rows for query"
     plot_df = plot_df.iloc[0]
-    train_pcs = tensor_from_str(plot_df.train_pcs)
-    train_str_labels = list_from_str(plot_df.train_str_labels)
-    train_true_labels = tensor_from_str(plot_df.train_true_labels, dim=1)
-    test_pcs = tensor_from_str(plot_df.test_pcs)
-    test_str_labels = list_from_str(plot_df.test_str_labels)
-    test_true_labels = tensor_from_str(plot_df.test_true_labels, dim=1)
-    pca_centroids = tensor_from_str(plot_df.pca_centroids)
+    train_pcs: Float[Tensor, "batch d_model"] = tensor_from_str(plot_df.train_pcs)
+    train_str_labels: List[str] = list_from_str(plot_df.train_str_labels)
+    train_true_labels: Float[Tensor, "batch d_model"] = tensor_from_str(plot_df.train_true_labels, dim=1)
+    test_pcs: Float[Tensor, "batch d_model"] = tensor_from_str(plot_df.test_pcs)
+    test_str_labels: List[str] = list_from_str(plot_df.test_str_labels)
+    test_true_labels: Float[Tensor, "batch d_model"] = tensor_from_str(plot_df.test_true_labels, dim=1)
+    pca_centroids: Float[Tensor, "centroid d_model"] = tensor_from_str(plot_df.pca_centroids)
     train_label = f"{train_set.value}_{train_pos}_layer{train_layer}"
     test_label = f"{test_set.value}_{test_pos}_layer{test_layer}"
-    fig = plot_pca_2d(
+    fig = plot_pca_svd_2d(
+        method, 
         train_pcs, train_str_labels, train_true_labels,
         test_pcs, test_str_labels, test_true_labels,
         pca_centroids, 
@@ -303,6 +307,14 @@ def plot_pca_from_cache(
     return fig
 #%%
 fig = plot_pca_from_cache(
+    ClassificationMethod.PCA,
+    PromptType.SIMPLE_TRAIN, 'ADJ', 0,
+    PromptType.SIMPLE_TEST, 'ADJ', 0,
+)
+fig.show()
+#%%
+fig = plot_pca_from_cache(
+    ClassificationMethod.SVD,
     PromptType.SIMPLE_TRAIN, 'ADJ', 0,
     PromptType.SIMPLE_TEST, 'ADJ', 0,
 )
