@@ -142,7 +142,7 @@ def _fit(
     elif method == ClassificationMethod.SVD:
         line: Float[np.ndarray, "d_model"]  = (
             v_train[:, 0] / np.linalg.norm(v_train[:, 0])
-        )
+        ) * np.sign(s_train[0, 0])
     elif method == ClassificationMethod.MEAN_DIFF:
         train_pos_embeddings = train_embeddings[train_data.binary_labels == 1, :]
         train_neg_embeddings = train_embeddings[train_data.binary_labels == 0, :]
