@@ -272,7 +272,7 @@ def train_classifying_direction(
     cosine_sim = safe_cosine_sim(
         train_line, 
         test_line,
-        min_value=-.1 if method == ClassificationMethod.SVD else -.9,
+        min_value=-1.0 if method == ClassificationMethod.SVD else -.9,
         )
     columns = [
         'train_set', 'train_layer', 'train_pos',
