@@ -26,7 +26,7 @@ import os
 import itertools
 from IPython.display import display, HTML
 import circuitsvis as cv
-from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache
+from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.utils import test_prompt
 import transformer_lens.evals as evals
 from transformer_lens.hook_points import (
@@ -83,7 +83,8 @@ BAR = tqdm(
 for train_type, train_layer, test_type, test_layer, method in BAR:
     BAR.set_description(
         f"trainset:{train_type.value}, train_layer:{train_layer}, "
-        f"testset:{test_type.value}, test_layer:{test_layer}"
+        f"testset:{test_type.value}, test_layer:{test_layer}, "
+        f"method:{method.value}"
     )
     if train_layer != test_layer or 'test' in train_type.value:
         # Don't train/eval on different layers

@@ -23,6 +23,7 @@ from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.store import save_array, load_array, save_html
 from utils.prompts import PromptType
+from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
 pio.renderers.default = "notebook"
@@ -204,7 +205,14 @@ def display_cosine_sims(direction_labels: List[str], directions: List[Float[Tens
 
     sim_df = pd.DataFrame(cosine_similarities, columns=['direction1', 'direction2', 'cosine_similarity'])
     sim_pt = sim_df.pivot(index='direction1', columns='direction2', values='cosine_similarity')
-    styled = sim_pt.style.background_gradient(cmap='Reds', axis=0).format("{:.2f}").set_caption("Cosine similarities")
+    styled = (
+        sim_pt
+        .style
+        .background_gradient(cmap='Reds', axis=0)
+        .format("{:.1%}")
+        .set_caption("Cosine similarities")
+        .set_properties(**{'text-align': 'center'})
+    )
     display(styled)
     save_html(styled, "cosine_similarities", model)
 
@@ -229,11 +237,14 @@ def zero_pad_layer_string(s: str) -> str:
 
 #%% # Direction loading
 def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List[np.ndarray], List[str]]:
+    n_layers = model.cfg.n_layers + 1
     direction_labels = (
-        [f'kmeans_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
-        [f'pca2_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
-        [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
-        [f'das_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)]
+        [f'kmeans_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        [f'pca2_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        [f'svd_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        [f'mean_diff_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        [f'das_simple_train_ADJ_layer{l}' for l in range(n_layers)]
     )
     directions = [
         load_array(label, model) for label in direction_labels
@@ -329,12 +340,13 @@ def run_position_patching(
 ) -> Tuple[Float[Tensor, ""], go.Figure]:
     model.reset_hooks()
     layer = extract_layer_from_string(direction_label)
-    node_name = 'resid_pre' if layer < model.cfg.n_layers else 'resid_post'
+    act_name, hook_layer = get_resid_name(layer, model)
+    node_name = act_name.split('hook_')[-1]
     return act_patch(
         model=model,
         orig_input=orig_input,
         new_cache=new_cache,
-        patching_nodes=Node("resid_post", layer=layer, seq_pos=seq_pos),
+        patching_nodes=Node(node_name, layer=hook_layer, seq_pos=seq_pos),
         patching_metric=patching_metric,
         verbose=False,
         disable=True,
@@ -409,7 +421,7 @@ def get_results_for_metric(
     display(layers_style)
     return results
 #%%
-DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
+DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=True)
 # %%
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
