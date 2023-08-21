@@ -232,7 +232,8 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
     direction_labels = (
         [f'kmeans_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
         [f'pca2_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
-        [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)]
+        [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)] +
+        [f'das_simple_train_ADJ_layer{l}' for l in range(model.cfg.n_layers)]
     )
     directions = [
         load_array(label, model) for label in direction_labels
