@@ -40,7 +40,7 @@ def add_styling(html):
     }}
 
     /* Freeze first column */   
-    #{table_id} tbody td:first-child, #{table_id} thead th:first-child {{
+    #{table_id} .level0 {{
         background-color: #ddd;
         position: -webkit-sticky;
         position: sticky;
