@@ -23,25 +23,41 @@ def add_styling(html):
     styles = f"""
     /* General styles */
     #{table_id} {{
-    border-collapse: collapse;
-    width: 300px; /* Specify the width you want */
-    height: 200px; /* Specify the height you want */
-    overflow: auto;
-    position: relative;
+        border-collapse: collapse;
+        width: 300px; /* Specify the width you want */
+        height: 200px; /* Specify the height you want */
+        overflow: auto;
+        position: relative;
     }}
 
     #{table_id} th, #{table_id} td {{
-    padding: 8px 12px;
-    border: 1px solid #d4d4d4;
-    text-align: left;
-    min-width: 50px;
-    box-sizing: border-box;
-    position: relative;
+        padding: 8px 12px;
+        border: 1px solid #d4d4d4;
+        text-align: center;
+        min-width: 50px;
+        box-sizing: border-box;
+        position: relative;
     }}
 
-    /* Freeze first column */
+    /* Freeze first column */   
     #{table_id} tbody td:first-child, #{table_id} thead th:first-child {{
-    background-color: #ddd;
+        background-color: #ddd;
+        position: -webkit-sticky;
+        position: sticky;
+        left: 0;
+        z-index: 1;
+    }}
+
+    /* Freeze first row */
+    #{table_id} thead {{
+        position: -webkit-sticky;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }}
+
+    #{table_id} thead {{
+        background-color: #ddd;
     }}
     """
     
