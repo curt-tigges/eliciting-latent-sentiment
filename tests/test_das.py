@@ -8,12 +8,14 @@ from utils.prompts import PromptType
 class TestFunctions(unittest.TestCase):
 
     def test_rotate_layer(self):
+        torch.manual_seed(42)
         layer = RotateLayer(5, torch.device('cpu'))
         x = torch.randn(3, 5)
         y = layer(x)
         self.assertEqual(y.shape, x.shape)
 
     def test_inverse_rotate_layer(self):
+        torch.manual_seed(42)
         layer = RotateLayer(5, torch.device('cpu'))
         x = torch.randn(3, 5)
         inv_layer = InverseRotateLayer(layer)

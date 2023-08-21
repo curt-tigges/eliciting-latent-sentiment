@@ -55,6 +55,10 @@ class ResidualStreamDataset:
     
     @typechecked
     def embed(self, position_type: str, layer: int) -> Float[Tensor, "batch d_model"]:
+        """
+        Returns a dataset of embeddings at the specified position and layer.
+        Useful for training classifiers on the residual stream.
+        """
         assert 0 <= layer <= self.model.cfg.n_layers
         assert position_type in self.placeholder_dict.keys(), (
             f"Position type {position_type} not found in {self.placeholder_dict.keys()} "

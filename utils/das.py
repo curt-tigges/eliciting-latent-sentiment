@@ -190,6 +190,10 @@ def fit_rotation(
     model: HookedTransformer, 
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
+    """
+    Entrypoint for training a DAS direction given
+    a counterfactual patching dataset.
+    """
     config = TrainingConfig(config_dict)
     # Initialize wandb
     if config.wandb_enabled:
@@ -271,6 +275,9 @@ def fit_rotation(
 def get_das_dataset(
     prompt_type: PromptType, layer: int, model: HookedTransformer, device: torch.device,
 ):
+    """
+    Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
+    """
     all_prompts, answer_tokens, new_tokens, orig_tokens = get_dataset(model, device, prompt_type=prompt_type)
     name_filter = lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0])
     with torch.inference_mode():
@@ -300,6 +307,10 @@ def train_das_direction(
     test_type: PromptType, test_pos: str, test_layer: int,
     **config_arg,
 ):
+    """
+    Entrypoint to be used in directional patching experiments
+    Given training/validation datasets, train a DAS direction
+    """
     assert train_type == test_type, "train and test prompts must be the same"
     assert train_layer == test_layer, "train and test layers must be the same"
     all_prompts, orig_tokens, orig_cache, new_cache, loss_fn = get_das_dataset(
