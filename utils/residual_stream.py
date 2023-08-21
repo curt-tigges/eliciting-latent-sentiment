@@ -61,11 +61,11 @@ class ResidualStreamDataset:
             f"for prompt type {self.prompt_type}"
         )
         embed_position = self.placeholder_dict[position_type][-1]
-        hook = get_resid_name(layer, self.model)
+        hook, _ = get_resid_name(layer, self.model)
         _, cache = self.model.run_with_cache(
             self.prompt_tokens, return_type=None, names_filter = lambda name: hook == name
         )
-        out: Float[Tensor, "batch pos d_model"] = cache[hook.split('hook_')[-1], layer]
+        out: Float[Tensor, "batch pos d_model"] = cache[hook]
         return out[:, embed_position, :].cpu().detach()
     
     @classmethod
