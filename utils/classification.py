@@ -147,7 +147,7 @@ def _fit(
         train_pos_embeddings = train_embeddings[train_data.binary_labels == 1, :]
         train_neg_embeddings = train_embeddings[train_data.binary_labels == 0, :]
         line: Float[np.ndarray, "d_model"]  = (
-            np.mean(train_pos_embeddings, axis=0) - np.mean(train_neg_embeddings, axis=0)
+            train_pos_embeddings.mean(axis=0) - train_neg_embeddings.mean(axis=0)
         )
     # get accuracy
     _, _, insample_accuracy = get_accuracy(
