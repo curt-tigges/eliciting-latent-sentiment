@@ -8,11 +8,11 @@ jobs:
     
     steps:
     - name: Set up Node.js 16.x
-      uses: actions/setup-node@v2
+      uses: actions/setup-node@v4
       with:
         node-version: '16.x'
-    - name: Checkout code
-      uses: actions/checkout@v2
+    - name: Checkout code 
+      uses: actions/checkout@v3
       
     - name: Run unit tests in Docker container
       run: |
