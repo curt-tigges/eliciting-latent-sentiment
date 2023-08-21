@@ -7,8 +7,9 @@ plots/
 generated_hidden_states/
 results.json
 .devcontainer
-ccs_act_patching*.html
 *.html
-!data
 neel-plotly
 .vscode/
+.ipynb_checkpoints/
+data/
+circuits/

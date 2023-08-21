@@ -15,7 +15,11 @@ from jaxtyping import Float, Int
 from collections import defaultdict
 import einops
 import re
-
+import pickle
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 # %%
 
 _SeqPos = Optional[Int[Tensor, "batch pos"]]

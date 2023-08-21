@@ -16,12 +16,30 @@ def extract_placeholders(text: str) -> List[str]:
     return matches
 
 
-def dedup_list(input_list):
+def dedup_list(input_list: list) -> list:
     seen = set()
     return [x for x in input_list if x not in seen and not seen.add(x)]
 
 
-def filter_words_by_length(model, words: list, length: int, verbose=False) -> list:
+def interleave_list(lst: list) -> list:
+    """
+    Reorders a list to interleave its first and second halves.
+    If the list has an odd length, the extra element will be included in the first half.
+    """
+    midpoint = len(lst) // 2 + len(lst) % 2  # This ensures the first half gets the extra element if length is odd
+    first_half = lst[:midpoint]
+    second_half = lst[midpoint:]
+    
+    result = []
+    for i in range(midpoint):
+        result.append(first_half[i])
+        if i < len(second_half):  # Make sure we don't go out of bounds for the second half
+            result.append(second_half[i])
+
+    return result
+
+
+def filter_words_by_length(model: HookedTransformer, words: list, length: int, verbose=False) -> list:
     if verbose:
         print("Filtering words by length")
     new_words = []
@@ -35,7 +53,7 @@ def filter_words_by_length(model, words: list, length: int, verbose=False) -> li
     return new_words
 
 
-def truncate_words_by_length(model, words: list, length: int, verbose=False) -> list:
+def truncate_words_by_length(model: HookedTransformer, words: list, length: int, verbose=False) -> list:
     if verbose:
         print("Truncating words by length")
     new_words = []
@@ -100,6 +118,7 @@ class PromptType(Enum):
     SIMPLE_FRENCH = "simple_french"
     PROPER_NOUNS = "proper_nouns"
     MEDICAL = "medical"
+    MULTI_SUBJECT_1 = "multi_subject_1"
 
     def get_format_string(self):
         prompt_strings = {
@@ -118,6 +137,13 @@ class PromptType(Enum):
             PromptType.CLASSIFICATION_3: "Review Text: I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. Review Sentiment:",
             PromptType.CLASSIFICATION_4: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. Review Sentiment:",
             PromptType.RES_CLASS_1: "This restaurant was{ADJ1}, I{VRB} it. The food was{ADJ2}, and the service was{ADJ3}. Overall it was just",
+            PromptType.MULTI_SUBJECT_1: (
+                "Review A: 'I thought this movie was{SUBJ1_ADJ1}, I {SUBJ1_VRB} it. The acting was{SUBJ1_ADJ2}, the plot was{SUBJ1_ADJ3}, "
+                "and overall the movie was just very {SUBJ1_ADJ4}.'\n"
+                "Review B: 'I thought this movie was{SUBJ2_ADJ1}, I {SUBJ2_VRB} it. The acting was{SUBJ2_ADJ2}, the plot was{SUBJ2_ADJ3}, "
+                "and overall the movie was just very {SUBJ2_ADJ4}.'\n"
+                "Review {SUBJ} Sentiment:"
+            )
         }
         return prompt_strings[self]
     
@@ -254,6 +280,37 @@ def get_prompts(
             formatter.format(ADJ1=neutral_adjectives[i], ADJ2=neutral_adjectives[i + 1], ADJ3=neutral_adjectives[i + 2], ADJ4=neutral_top_adjectives[i], VRB=neutral_verbs[i])
             for i in range(n_prompts)
         ]
+    elif prompt_type == PromptType.MULTI_SUBJECT_1:
+        n_prompts = min(len(positive_adjectives), len(negative_adjectives))
+        pos_prompts = [
+            formatter.format(
+                SUBJ1_ADJ1=positive_adjectives[i], SUBJ1_ADJ2=positive_adjectives[i + 1], SUBJ1_ADJ3=positive_adjectives[i + 2], SUBJ1_ADJ4=positive_top_adjectives[i], SUBJ1_VRB=positive_verbs[i],
+                SUBJ2_ADJ1=negative_adjectives[i], SUBJ2_ADJ2=negative_adjectives[i + 1], SUBJ2_ADJ3=negative_adjectives[i + 2], SUBJ2_VRB=negative_verbs[i], SUBJ2_ADJ4=negative_top_adjectives[i],
+                SUBJ="A",
+            ) for i in range(n_prompts)
+        ] + [
+            formatter.format(
+                SUBJ1_ADJ1=negative_adjectives[i], SUBJ1_ADJ2=negative_adjectives[i + 1], SUBJ1_ADJ3=negative_adjectives[i + 2], SUBJ1_VRB=negative_verbs[i], SUBJ1_ADJ4=negative_top_adjectives[i],
+                SUBJ2_ADJ1=positive_adjectives[i], SUBJ2_ADJ2=positive_adjectives[i + 1], SUBJ2_ADJ3=positive_adjectives[i + 2], SUBJ2_VRB=positive_verbs[i], SUBJ2_ADJ4=positive_top_adjectives[i],
+                SUBJ="B",
+            ) for i in range(n_prompts)
+        ]
+        neg_prompts = [
+            formatter.format(
+                SUBJ1_ADJ1=positive_adjectives[i], SUBJ1_ADJ2=positive_adjectives[i + 1], SUBJ1_ADJ3=positive_adjectives[i + 2], SUBJ1_VRB=positive_verbs[i], SUBJ1_ADJ4=positive_top_adjectives[i],
+                SUBJ2_ADJ1=negative_adjectives[i], SUBJ2_ADJ2=negative_adjectives[i + 1], SUBJ2_ADJ3=negative_adjectives[i + 2], SUBJ2_VRB=negative_verbs[i], SUBJ2_ADJ4=negative_top_adjectives[i],
+                SUBJ="B",
+            ) for i in range(n_prompts)
+        ] + [
+            formatter.format(
+                SUBJ1_ADJ1=negative_adjectives[i], SUBJ1_ADJ2=negative_adjectives[i + 1], SUBJ1_ADJ3=negative_adjectives[i + 2], SUBJ1_VRB=negative_verbs[i], SUBJ1_ADJ4=negative_top_adjectives[i],
+                SUBJ2_ADJ1=positive_adjectives[i], SUBJ2_ADJ2=positive_adjectives[i + 1], SUBJ2_ADJ3=positive_adjectives[i + 2], SUBJ2_VRB=positive_verbs[i], SUBJ2_ADJ4=positive_top_adjectives[i],
+                SUBJ="A",
+            ) for i in range(n_prompts)
+        ]
+        pos_prompts = interleave_list(pos_prompts)
+        neg_prompts = interleave_list(neg_prompts)
+        neutral_prompts = None
     else:
         raise ValueError(f"Invalid prompt type: {prompt_type}")
     
