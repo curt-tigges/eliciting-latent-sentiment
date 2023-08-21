@@ -178,17 +178,16 @@ def _fit(
             f"positive adjectives: {sorted(test_positive_str_labels)}\n"
             f"negative adjectives: {sorted(test_negative_str_labels)}\n"
         )
-    if method == ClassificationMethod.PCA:
-        # 
+    if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
         plot_data = [[
-            train_data.prompt_type.value, train_layer, train_pos,
+            method.value, train_data.prompt_type.value, train_layer, train_pos,
             test_data.prompt_type.value, test_layer, test_pos,
             train_pcs, train_data.str_labels, train_data.binary_labels, 
             test_pcs, test_data.str_labels, test_data.binary_labels,
             km_centroids
         ]]
         plot_columns = [
-            'train_set', 'train_layer', 'train_pos',
+            'method', 'train_set', 'train_layer', 'train_pos',
             'test_set', 'test_layer',  'test_pos',
             'train_pcs', 'train_str_labels', 'train_true_labels',
             'test_pcs', 'test_str_labels', 'test_true_labels',
@@ -196,9 +195,9 @@ def _fit(
         ]
         plot_df = pd.DataFrame(plot_data, columns=plot_columns)
         update_csv(
-            plot_df, "pca_plot", train_data.model, 
+            plot_df, "pca_svd_plot", train_data.model, 
             key_cols=(
-                'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+                'method', 'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
             )
         )
     
@@ -239,8 +238,8 @@ def train_classifying_direction(
     """
     Main entrypoint for training a direction using classification methods
     """
-    if method == ClassificationMethod.PCA:
-        assert 'n_components' in kwargs, "Must specify n_components for PCA"
+    if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
+        assert 'n_components' in kwargs, "Must specify n_components for PCA/SVD"
     model = train_data.model
     if method == ClassificationMethod.LOGISTIC_REGRESSION:
         fitting_method = _fit_logistic_regression
