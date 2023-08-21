@@ -65,7 +65,7 @@ class ResidualStreamDataset:
         _, cache = self.model.run_with_cache(
             self.prompt_tokens, return_type=None, names_filter = lambda name: hook == name
         )
-        out: Float[Tensor, "batch pos d_model"] = cache[hook]
+        out: Float[Tensor, "batch pos d_model"] = cache[hook.split('hook_')[-1], layer]
         return out[:, embed_position, :].cpu().detach()
     
     @classmethod
