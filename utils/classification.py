@@ -102,11 +102,10 @@ def _fit(
             train_embeddings,
             vh_train[:n_components, :],
         )
-        _, _, vh_test = np.linalg.svd(test_embeddings.numpy())
         test_pcs = np.einsum(
             "bd,cd->bc",
             test_embeddings,
-            vh_test[:n_components, :],
+            vh_train[:n_components, :],
         )
         kmeans.fit(train_pcs)
         test_km_labels = kmeans.predict(test_pcs)
