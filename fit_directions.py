@@ -63,7 +63,8 @@ METHODS = [
     # ClassificationMethod.KMEANS,
     # ClassificationMethod.LOGISTIC_REGRESSION,
     # ClassificationMethod.PCA,
-    FittingMethod.DAS,
+    ClassificationMethod.SVD,
+    # FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,

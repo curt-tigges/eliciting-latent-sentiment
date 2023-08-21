@@ -1,13 +1,14 @@
 from enum import Enum
+from functools import partial
 from typing import Iterable, List, Tuple
 from jaxtyping import Int, Float
+from torch import Tensor
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
-import sys
 import warnings
 from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
@@ -17,6 +18,8 @@ class ClassificationMethod(Enum):
     KMEANS = "kmeans"
     LOGISTIC_REGRESSION = "logistic_regression"
     PCA = "pca"
+    SVD = "svd"
+    MEAN_DIFF = "mean_diff"
 
 
 def safe_cosine_sim(
@@ -66,26 +69,37 @@ def get_accuracy(
     return correct, total, accuracy
 
 
-def _fit_kmeans(
+def _fit(
     train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
     test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
     n_init: int = 10,
     n_clusters: int = 2,
     random_state: int = 0,
-    pca_components: int = None,
+    n_components: int = None,
+    method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
-    train_embeddings = train_data.embed(train_pos, train_layer)
-    test_embeddings = test_data.embed(test_pos, test_layer)
+    train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(train_pos, train_layer)
+    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(test_pos, test_layer)
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
-    if pca_components is None:
+    if method == ClassificationMethod.KMEANS:
         kmeans.fit(train_embeddings)
         test_km_labels = kmeans.predict(test_embeddings)
-    else:
-        pca = PCA(n_components=pca_components)
+    elif method == ClassificationMethod.PCA:
+        pca = PCA(n_components=n_components)
         train_pcs = pca.fit_transform(train_embeddings.numpy())
         test_pcs = pca.transform(test_embeddings.numpy())
+        kmeans.fit(train_pcs)
+        test_km_labels = kmeans.predict(test_pcs)
+    elif method == ClassificationMethod.SVD:
+        u_train: Float[np.ndarray, "batch batch"]
+        s_train: Float[np.ndarray, "batch d_model"]
+        v_train: Float[np.ndarray, "d_model d_model"]
+        u_train, s_train, v_train = np.linalg.svd(train_embeddings.numpy())
+        train_pcs = train_embeddings @ v_train[:, :n_components]
+        _, _, v_test = np.linalg.svd(test_embeddings.numpy())
+        test_pcs = test_embeddings @ v_test[:, :n_components]
         kmeans.fit(train_pcs)
         test_km_labels = kmeans.predict(test_pcs)
     train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
@@ -117,13 +131,17 @@ def _fit_kmeans(
         )
         train_km_labels = 1 - train_km_labels
         test_km_labels = 1 - test_km_labels
-    if pca_components is None:
+    if method == ClassificationMethod.KMEANS:
         line: Float[np.ndarray, "d_model"] = (
             km_positive_centroid - km_negative_centroid
         )
-    else:
+    elif method == ClassificationMethod.PCA:
         line: Float[np.ndarray, "d_model"]  = (
             pca.components_[0, :] / np.linalg.norm(pca.components_[0, :])
+        )
+    elif method == ClassificationMethod.SVD:
+        line: Float[np.ndarray, "d_model"]  = (
+            v_train[:, 0] / np.linalg.norm(v_train[:, 0])
         )
     # get accuracy
     _, _, insample_accuracy = get_accuracy(
@@ -154,7 +172,7 @@ def _fit_kmeans(
             f"positive adjectives: {sorted(test_positive_str_labels)}\n"
             f"negative adjectives: {sorted(test_negative_str_labels)}\n"
         )
-    if pca_components is not None:
+    if method == ClassificationMethod.PCA:
         # 
         plot_data = [[
             train_data.prompt_type.value, train_layer, train_pos,
@@ -213,12 +231,12 @@ def train_classifying_direction(
     **kwargs,
 ):
     if method == ClassificationMethod.PCA:
-        assert 'pca_components' in kwargs, "Must specify pca_components"
+        assert 'n_components' in kwargs, "Must specify n_components for PCA"
     model = train_data.model
     if method == ClassificationMethod.LOGISTIC_REGRESSION:
         fitting_method = _fit_logistic_regression
     else:
-        fitting_method = _fit_kmeans
+        fitting_method = partial(_fit, method=method)
     with warnings.catch_warnings():
         warnings.simplefilter("error", ConvergenceWarning)  # Turn the warning into an error
         try:
@@ -242,11 +260,8 @@ def train_classifying_direction(
                 f"test str_labels:{test_data.str_labels}\n"
             )
             return
-    # write k means line to file
-    method_label = method.value
-    if method == ClassificationMethod.PCA:
-        method_label = f'{method_label}{kwargs.get("pca_components")}'
-    save_array(train_line, f"{method_label}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
+    # write line to file
+    save_array(train_line, f"{method.value}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
 
     cosine_sim = safe_cosine_sim(train_line, test_line)
     columns = [
@@ -258,7 +273,7 @@ def train_classifying_direction(
     data = [[
         train_data.prompt_type.value, train_layer, train_pos,
         test_data.prompt_type.value, test_layer, test_pos,
-        method_label,
+        method.value,
         correct, total, accuracy, cosine_sim,
     ]]
     stats_df = pd.DataFrame(data, columns=columns)
