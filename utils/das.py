@@ -229,8 +229,11 @@ def fit_rotation(
         )
         assert loss.requires_grad, (
             "The loss must be a scalar that requires grad. \n"
+            f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
             f"train layer: {config.train_layer}, train position: {config.train_position}, "
-            f"train act name: {train_act_name}"
+            f"train act name: {train_act_name}, "
+            f"orig_resid_train.requires_grad: {orig_resid_train.requires_grad}, "
+            f"new_resid_train.requires_grad: {new_resid_train.requires_grad}"
         )
         loss.backward()
         optimizer.step()

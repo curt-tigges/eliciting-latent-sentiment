@@ -34,7 +34,6 @@ class TestTransformerLens(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        torch.set_grad_enabled(False)
         cls.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         MODEL_NAME = "gpt2-small"
         cls.model = HookedTransformer.from_pretrained(

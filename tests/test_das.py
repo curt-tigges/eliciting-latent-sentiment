@@ -54,12 +54,15 @@ class TestFunctions(unittest.TestCase):
         self.assertEqual(config.seed, 42)
         self.assertEqual(config.to_dict(), config_dict)
 
+    def test_global_grad_enabled(self):
+        self.assertTrue(torch.is_grad_enabled())
+
     def test_train_das_direction(self):
         device = 'cpu'
         model = HookedTransformer.from_pretrained(
             'attn-only-1l',
             device=device,
-        )
+        ).train()
         model.name = 'test'
         direction = train_das_direction(
             model, device,
@@ -72,3 +75,5 @@ class TestFunctions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# %%
