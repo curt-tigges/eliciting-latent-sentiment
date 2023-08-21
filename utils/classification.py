@@ -97,9 +97,17 @@ def _fit(
         s_train: Float[np.ndarray, "s_vector"]
         vh_train: Float[np.ndarray, "s_vector d_model"]
         u_train, s_train, vh_train = np.linalg.svd(train_embeddings.numpy())
-        train_pcs = train_embeddings @ vh_train[:n_components, :]
+        train_pcs = np.einsum(
+            "bd,cd->bc",
+            train_embeddings,
+            vh_train[:n_components, :],
+        )
         _, _, vh_test = np.linalg.svd(test_embeddings.numpy())
-        test_pcs = test_embeddings @ vh_test[:n_components, :]
+        test_pcs = np.einsum(
+            "bd,cd->bc",
+            test_embeddings,
+            vh_test[:n_components, :],
+        )
         kmeans.fit(train_pcs)
         test_km_labels = kmeans.predict(test_pcs)
     train_km_labels: Int[np.ndarray, "batch"] = kmeans.labels_
