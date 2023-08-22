@@ -115,7 +115,9 @@ BAR = tqdm(
 model = None
 for model_name, train_type, test_type, method in BAR:
     BAR.set_description(
-        f"trainset:{train_type.value}"
+        f"model:{model_name},"
+        f"trainset:{train_type.value},"
+        f"testset:{test_type.value},"
         f"method:{method.value}"
     )
     if model is None or model.name != model_name:
@@ -143,7 +145,7 @@ for model_name, train_type, test_type, method in BAR:
             f"(test_layer == {test_layer}) &"
             f"(train_pos == '{train_pos}') & "
             f"(test_pos == '{test_pos}') &"
-            f"(method == '{method}')"
+            f"(method == '{method.value}')"
         )
         if eval_csv(query, "direction_fitting_stats", model):
             continue
@@ -151,7 +153,7 @@ for model_name, train_type, test_type, method in BAR:
         if method == FittingMethod.DAS:
             if train_type != test_type or train_layer != test_layer:
                 continue
-            das_path = f"das_{train_type.value}_{train_pos}_layer{train_layer}"
+            das_path = f"das_{train_type.value}_{train_pos}_layer{train_layer}.npy"
             if is_file(das_path, model):
                 continue
             train_das_direction(
