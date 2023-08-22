@@ -48,9 +48,12 @@ class TestFunctions(unittest.TestCase):
         config_dict = {
             "seed": 42,
             "lr": 0.001,
+            "weight_decay": 0.0,
+            "betas": (0.9, 0.999),
             "epochs": 10,
             "n_directions": 2,
-            "wandb_enabled": False
+            "wandb_enabled": False,
+
         }
         config = TrainingConfig(config_dict)
         self.assertEqual(config.seed, 42)
