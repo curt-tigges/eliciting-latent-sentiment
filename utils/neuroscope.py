@@ -111,7 +111,7 @@ def plot_neuroscope(
         if verbose:
             print("Computing activations")
         activations: Float[Tensor, "batch pos layer"] = get_projections_for_text(
-            tokens
+            tokens, special_dir=special_dir, model=model
         )
         activations: Float[Tensor, "pos layer 1"] = einops.rearrange(
             activations, "batch pos layer -> pos layer batch"

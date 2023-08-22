@@ -23,10 +23,11 @@ from plotly.subplots import make_subplots
 import os
 import pandas as pd
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text
+from utils.neuroscope import plot_neuroscope
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
-MODEL_NAME = "gpt2-small"
+MODEL_NAME = "EleutherAI/pythia-2.8b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -37,79 +38,9 @@ model = HookedTransformer.from_pretrained(
 )
 model.name = MODEL_NAME
 #%%
-sentiment_dir = load_array("km_2c_line_embed_and_mlp0", model)
+sentiment_dir = load_array("kmeans_simple_train_ADJ_layer9", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
-#%%
-def names_filter(name: str):
-    return name.endswith('resid_post') or name == get_act_name('resid_pre', 0)
-#%%
-def get_activations_for_input(
-    tokens: Int[Tensor, "batch pos"],
-) -> Float[Tensor, "batch pos layer"]:
-    _, cache = model.run_with_cache(
-        tokens, 
-        names_filter=names_filter
-    )
-    acts_by_layer = []
-    for layer in range(-1, model.cfg.n_layers):
-        if layer >= 0:
-            emb: Int[Tensor, "batch pos d_model"] = cache["resid_post", layer]
-        else:
-            emb: Int[Tensor, "batch pos d_model"] = cache["resid_pre", 0]
-        emb /= emb.norm(dim=-1, keepdim=True)
-        act: Float[Tensor, "batch pos"] = einops.einsum(
-            emb, sentiment_dir,
-            "batch pos d_model, d_model -> batch pos"
-        ).to(device="cpu")
-        acts_by_layer.append(act)
-    acts_by_layer: Float[Tensor, "batch pos layer"] = torch.stack(acts_by_layer, dim=2)
-    return acts_by_layer
-#%%
-def plot_neuroscope(
-    text: Union[str, List[str]], centred: bool, activations: Float[Tensor, "pos layer 1"] = None,
-    verbose=False,
-):
-    tokens: Int[Tensor, "batch pos"] = model.to_tokens(text)
-    if isinstance(text, str):
-        str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
-    else:
-        str_tokens = text
-    if verbose:
-        print(f"Tokens shape: {tokens.shape}")
-    if activations is None:
-        if verbose:
-            print("Computing activations")
-        activations: Float[Tensor, "batch pos layer"] = get_activations_for_input(tokens)
-        activations: Float[Tensor, "pos layer 1"] = einops.rearrange(
-            activations, "batch pos layer -> pos layer batch"
-        )
-        if verbose:
-            print(f"Activations shape: {activations.shape}")
-    if centred:
-        if verbose:
-            print("Centering activations")
-        layer_means = einops.reduce(activations, "pos layer 1 -> 1 layer 1", reduction="mean")
-        layer_means = einops.repeat(layer_means, "1 layer 1 -> pos layer 1", pos=activations.shape[0])
-        activations -= layer_means
-    elif verbose:
-        print("Activations already centered")
-    assert (
-        activations.ndim == 3
-    ), f"activations must be of shape [tokens x layers x neurons], found {activations.shape}"
-    assert len(str_tokens) == activations.shape[0], (
-        f"tokens and activations must have the same length, found tokens={len(str_tokens)} and acts={activations.shape[0]}, "
-        f"tokens={str_tokens}, "
-        f"activations={activations.shape}"
-
-    )
-    return text_neuron_activations(
-        tokens=str_tokens, 
-        activations=activations,
-        first_dimension_name="Layer (resid_pre)",
-        second_dimension_name="Model",
-        second_dimension_labels=["gpt2-small"],
-    )
 #%%
 # ============================================================================ #
 # Harry Potter example
@@ -137,9 +68,9 @@ harry_potter_start = """
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
 """
 #%%
-# harry_potter_neuroscope = plot_neuroscope(harry_potter_start, centred=True, verbose=False)
-# save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-# harry_potter_neuroscope
+harry_potter_neuroscope = plot_neuroscope(harry_potter_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
+harry_potter_neuroscope
 #%%
 # ============================================================================ #
 # Harry Potter in French
@@ -395,7 +326,9 @@ class ClearCache:
 #%%
 if is_file("sentiment_activations.npy", model):
     sentiment_activations = load_array("sentiment_activations", model)
-    sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(sentiment_activations, device=device, dtype=torch.float32)
+    sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(
+        sentiment_activations, device=device, dtype=torch.float32
+    )
 else:
     with ClearCache():
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(dataloader)
