@@ -240,8 +240,8 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
     n_layers = model.cfg.n_layers + 1
     direction_labels = (
         [f'kmeans_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'pca2_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'svd_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        # [f'pca2_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        # [f'svd_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         [f'mean_diff_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         [f'das_simple_train_ADJ_layer{l}' for l in range(n_layers)]
@@ -415,7 +415,7 @@ def get_results_for_metric(
         .style
         .background_gradient(cmap="Reds", axis=None, low=0, high=1)
         .format("{:.1f}%")
-        .set_caption(f"Direction patching ({metric_label})")
+        .set_caption(f"Direction patching ({metric_label}) in {model.name}")
     )
     save_html(layers_style, f"direction_patching_{metric_label}", model)
     display(layers_style)

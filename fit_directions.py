@@ -57,15 +57,39 @@ model.name = MODEL_NAME
 model = model.requires_grad_(False)
 #%%
 # ============================================================================ #
+# DAS sweep with wandb
+
+#%%
+sweep_func = partial(
+    train_das_direction,
+    model=model, device=device,
+    train_type=PromptType.SIMPLE_TRAIN, train_pos='ADJ', train_layer=1,
+    test_type=PromptType.SIMPLE_TRAIN, test_pos='ADJ', test_layer=1,
+    wandb_enabled=True,
+)
+sweep_config = {
+    "method": "grid",
+    "metric": {"name": "loss", "goal": "minimize"},
+    "parameters": {
+        "lr": {"values": [1e-4, 1e-3, 1e-2]},
+        "epochs": {"values": [512]},
+        "weight_decay": {"values": [0.0]},
+        "betas": {"values": [[0.9, 0.999]]},
+    },
+}
+sweep_id = wandb.sweep(sweep_config, project="train_das_direction")
+# wandb.agent(sweep_id, function=sweep_func)
+#%%
+# ============================================================================ #
 # Training loop
 
 METHODS = [
     # ClassificationMethod.KMEANS,
     # ClassificationMethod.LOGISTIC_REGRESSION,
-    ClassificationMethod.PCA,
-    ClassificationMethod.SVD,
+    # ClassificationMethod.PCA,
+    # ClassificationMethod.SVD,
     # ClassificationMethod.MEAN_DIFF,
-    # FittingMethod.DAS,
+    FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
@@ -177,7 +201,7 @@ for method in METHODS:
 #%%
 #%%
 # ============================================================================ #
-# PCA plots
+# PCA/SVD plots
 
 #%%
 # hacky functions for reading from nested CSV
@@ -271,7 +295,7 @@ def plot_pca_svd_2d(
     return fig
 
 # %%
-def plot_pca_from_cache(
+def plot_components_from_cache(
     method: ClassificationMethod, 
     train_set: PromptType, train_pos: str, train_layer: int,
     test_set: PromptType, test_pos: str, test_layer: int,
@@ -306,14 +330,14 @@ def plot_pca_from_cache(
     )
     return fig
 #%%
-fig = plot_pca_from_cache(
+fig = plot_components_from_cache(
     ClassificationMethod.PCA,
     PromptType.SIMPLE_TRAIN, 'ADJ', 0,
     PromptType.SIMPLE_TEST, 'ADJ', 0,
 )
 fig.show()
 #%%
-fig = plot_pca_from_cache(
+fig = plot_components_from_cache(
     ClassificationMethod.SVD,
     PromptType.SIMPLE_TRAIN, 'ADJ', 0,
     PromptType.SIMPLE_TEST, 'ADJ', 0,
