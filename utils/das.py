@@ -44,7 +44,7 @@ class RotateLayer(torch.nn.Module):
             weight, requires_grad=True,
         ).to(device)
         
-    def forward(self, x):
+    def forward(self, x: Float[Tensor, "batch d_model"]):
         return torch.matmul(x, self.weight)
 
 
@@ -168,7 +168,9 @@ class TrainingConfig:
     def __init__(self, config_dict: dict):
         self.seed = config_dict.get("seed", 0)
         self.lr = config_dict.get("lr", 1e-3)
-        self.epochs = config_dict.get("epochs", 50)
+        self.weight_decay = config_dict.get("weight_decay", 0)
+        self.betas = config_dict.get("betas", (0.9, 0.999))
+        self.epochs = config_dict.get("epochs", 64)
         self.n_directions = config_dict.get("n_directions", 1)
         self.wandb_enabled = config_dict.get("wandb_enabled", True)
         for k, v in config_dict.items():
@@ -218,7 +220,12 @@ def fit_rotation(
     )
 
     # Define the optimizer
-    optimizer = torch.optim.Adam(rotation_module.parameters(), lr=config.lr)
+    optimizer = torch.optim.Adam(
+        rotation_module.parameters(), 
+        lr=config.lr,
+        weight_decay=config.weight_decay,
+        betas=config.betas,
+    )
 
     for epoch in range(config.epochs):
         rotation_module.train()
@@ -256,7 +263,7 @@ def fit_rotation(
         losses.append(loss.item())
         models.append(rotation_module.state_dict())
         step += 1
-    direction = rotation_module.rotate_layer.weight[0, :]
+    direction = rotation_module.rotate_layer.weight[:, 0]
 
     best_model_idx = min(range(len(losses)), key=losses.__getitem__)
 
