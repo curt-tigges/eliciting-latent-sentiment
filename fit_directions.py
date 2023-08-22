@@ -42,19 +42,44 @@ from utils.das import FittingMethod, train_das_direction
 #%%
 # ============================================================================ #
 # model loading
-
-#%%
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-MODEL_NAME = 'gpt2-small'
-model = HookedTransformer.from_pretrained(
-    MODEL_NAME,
-    center_unembed=True,
-    center_writing_weights=True,
-    fold_ln=True,
-    device=device,
-)
-model.name = MODEL_NAME
-model = model.requires_grad_(False)
+MODELS = [
+    'gpt2-small',
+    'gpt2-medium',
+    'gpt2-large',
+    'gpt2-xl',
+    'EleutherAI/pythia-160m',
+    'EleutherAI/pythia-410m',
+    'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b'
+]
+METHODS = [
+    ClassificationMethod.KMEANS,
+    ClassificationMethod.LOGISTIC_REGRESSION,
+    ClassificationMethod.PCA,
+    ClassificationMethod.SVD,
+    ClassificationMethod.MEAN_DIFF,
+    FittingMethod.DAS,
+]
+PROMPT_TYPES = [
+    PromptType.SIMPLE_TRAIN,
+    PromptType.SIMPLE_TEST,
+    PromptType.SIMPLE_ADVERB,
+    # PromptType.SIMPLE_FRENCH,
+    # PromptType.PROPER_NOUNS,
+    # PromptType.MEDICAL,
+]
+#%%
+def get_model(name: str):
+    model = HookedTransformer.from_pretrained(
+        name,
+        center_unembed=True,
+        center_writing_weights=True,
+        fold_ln=True,
+        device=device,
+    ).requires_grad_(False)
+    model.name = name
+    return model
 #%%
 # ============================================================================ #
 # DAS sweep with wandb
@@ -62,7 +87,7 @@ model = model.requires_grad_(False)
 #%%
 sweep_func = partial(
     train_das_direction,
-    model=model, device=device,
+    model=get_model(MODELS[0]), device=device,
     train_type=PromptType.SIMPLE_TRAIN, train_pos='ADJ', train_layer=1,
     test_type=PromptType.SIMPLE_TRAIN, test_pos='ADJ', test_layer=1,
     wandb_enabled=True,
@@ -77,48 +102,37 @@ sweep_config = {
         "betas": {"values": [[0.9, 0.999]]},
     },
 }
-sweep_id = wandb.sweep(sweep_config, project="train_das_direction")
+# sweep_id = wandb.sweep(sweep_config, project="train_das_direction")
 # wandb.agent(sweep_id, function=sweep_func)
 #%%
 # ============================================================================ #
 # Training loop
 
-METHODS = [
-    # ClassificationMethod.KMEANS,
-    # ClassificationMethod.LOGISTIC_REGRESSION,
-    # ClassificationMethod.PCA,
-    # ClassificationMethod.SVD,
-    # ClassificationMethod.MEAN_DIFF,
-    FittingMethod.DAS,
-]
-PROMPT_TYPES = [
-    PromptType.SIMPLE_TRAIN,
-    PromptType.SIMPLE_TEST,
-    # PromptType.SIMPLE_ADVERB,
-    # PromptType.SIMPLE_FRENCH,
-    # PromptType.PROPER_NOUNS,
-    # PromptType.MEDICAL,
-]
-LAYERS = list(range(model.cfg.n_layers + 1))
 BAR = tqdm(
-    itertools.product(PROMPT_TYPES, LAYERS, PROMPT_TYPES, LAYERS, METHODS),
-    total=len(PROMPT_TYPES) ** 2 * len(LAYERS) ** 2 * len(METHODS),
+    itertools.product(MODELS, PROMPT_TYPES, PROMPT_TYPES, METHODS),
+    total=len(PROMPT_TYPES) ** 2 * len(MODELS) * len(METHODS),
 )
-for train_type, train_layer, test_type, test_layer, method in BAR:
+model = None
+for model_name, train_type, test_type, method in BAR:
     BAR.set_description(
-        f"trainset:{train_type.value}, train_layer:{train_layer}, "
-        f"testset:{test_type.value}, test_layer:{test_layer}, "
+        f"trainset:{train_type.value}"
         f"method:{method.value}"
     )
-    if train_layer != test_layer or 'test' in train_type.value:
-        # Don't train/eval on different layers
+    if model is None or model.name != model_name:
+        model = get_model(model_name)
+    if 'test' in train_type.value:
         # Don't train on test sets
         continue
-    placeholders = itertools.product(
-        train_type.get_placeholders(), test_type.get_placeholders()
+    placeholders_layers = itertools.product(
+        train_type.get_placeholders(), 
+        test_type.get_placeholders(),
+        range(model.cfg.n_layers + 1)
     )
-    kwargs = dict(n_components=2)
-    for train_pos, test_pos in placeholders:
+    kwargs = dict()
+    if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
+        kwargs['n_components'] = 2
+    for train_pos, test_pos, train_layer in placeholders_layers:
+        test_layer = train_layer # Don't train/eval on different layers
         if train_pos == 'VRB':
             # Don't train on verbs as sample size is too small
             continue
@@ -160,16 +174,11 @@ for train_type, train_layer, test_type, test_layer, method in BAR:
 # ============================================================================ #
 # Summary stats
 
-fitting_stats = get_csv("direction_fitting_stats", model)
-#%%
-fitting_stats.method.value_counts()
-#%%
-fitting_stats.train_pos.value_counts()
 #%%
 def hide_nan(val):
     return '' if pd.isna(val) else f"{val:.1%}"
 #%%
-def plot_accuracy_similarity(df, label: str):
+def plot_accuracy_similarity(df, label: str, model: HookedTransformer):
     df = df.loc[
         df.train_set.isin(['simple_train']) & 
         df.train_pos.isin(['ADJ']) &
@@ -193,11 +202,14 @@ def plot_accuracy_similarity(df, label: str):
     save_html(similarity_styler, f"{label}_similarity", model)
     display(similarity_styler)
 #%%
-for method in METHODS:
-    plot_accuracy_similarity(
-        fitting_stats.loc[fitting_stats.method.eq(method.value)],
-        method.value,
-    )
+for model in MODELS:
+    fitting_stats = get_csv("direction_fitting_stats", model)
+    for method in METHODS:
+        plot_accuracy_similarity(
+            fitting_stats.loc[fitting_stats.method.eq(method.value)],
+            method.value,
+            model,
+        )
 #%%
 #%%
 # ============================================================================ #
@@ -231,6 +243,7 @@ def list_from_str(
     return split_list
 #%%
 def plot_pca_svd_2d(
+    model: HookedTransformer,
     method: ClassificationMethod,
     train_pcs: Float[Tensor, "batch d_model"], 
     train_str_labels: List[str], 
@@ -296,6 +309,7 @@ def plot_pca_svd_2d(
 
 # %%
 def plot_components_from_cache(
+    model: HookedTransformer,
     method: ClassificationMethod, 
     train_set: PromptType, train_pos: str, train_layer: int,
     test_set: PromptType, test_pos: str, test_layer: int,
@@ -322,6 +336,7 @@ def plot_components_from_cache(
     train_label = f"{train_set.value}_{train_pos}_layer{train_layer}"
     test_label = f"{test_set.value}_{test_pos}_layer{test_layer}"
     fig = plot_pca_svd_2d(
+        model,
         method, 
         train_pcs, train_str_labels, train_true_labels,
         test_pcs, test_str_labels, test_true_labels,
@@ -330,17 +345,13 @@ def plot_components_from_cache(
     )
     return fig
 #%%
-fig = plot_components_from_cache(
-    ClassificationMethod.PCA,
-    PromptType.SIMPLE_TRAIN, 'ADJ', 0,
-    PromptType.SIMPLE_TEST, 'ADJ', 0,
-)
-fig.show()
-#%%
-fig = plot_components_from_cache(
-    ClassificationMethod.SVD,
-    PromptType.SIMPLE_TRAIN, 'ADJ', 0,
-    PromptType.SIMPLE_TEST, 'ADJ', 0,
-)
-fig.show()
+for model in MODELS:
+    for method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
+        fig = plot_components_from_cache(
+            model,
+            ClassificationMethod.PCA,
+            PromptType.SIMPLE_TRAIN, 'ADJ', 0,
+            PromptType.SIMPLE_TEST, 'ADJ', 0,
+        )
+        fig.show()
 #%%
