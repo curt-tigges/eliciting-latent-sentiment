@@ -14,10 +14,9 @@ from utils.prompts import get_dataset
 from utils.circuit_analysis import get_logit_diff
 import torch
 from torch import Tensor
-from transformer_lens import ActivationCache, HookedTransformer, HookedTransformerConfig, utils
+from transformer_lens import ActivationCache, HookedTransformer, utils
 from typing import Dict, Iterable, Tuple, Union, List, Optional, Callable
 from functools import partial
-from collections import defaultdict
 from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
@@ -60,16 +59,27 @@ def imshow_p(tensor, **kwargs):
     return fig
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-MODEL_NAME = "gpt2-small"
-model = HookedTransformer.from_pretrained(
-    MODEL_NAME,
-    center_unembed=True,
-    center_writing_weights=True,
-    fold_ln=True,
-    device=device,
-)
-model.set_use_attn_result(True)
-model.name = MODEL_NAME
+MODELS = [
+    # 'gpt2-small',
+    # 'gpt2-medium',
+    # 'gpt2-large',
+    # 'gpt2-xl',
+    # 'EleutherAI/pythia-160m',
+    # 'EleutherAI/pythia-410m',
+    # 'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b'
+]
+#%%
+def get_model(name: str) -> HookedTransformer:
+    model = HookedTransformer.from_pretrained(
+        name,
+        center_unembed=True,
+        center_writing_weights=True,
+        fold_ln=True,
+        device=device,
+    )
+    model.name = name
+    return model
 #%%
 def get_prob_diff(
     logits: Float[Tensor, "batch pos vocab"],
@@ -108,7 +118,7 @@ def get_prob_diff(
 
     return (left_probs - right_probs).mean()
 #%% # Data loading
-def load_data(prompt_type: str, model: HookedTransformer = model, verbose: bool = False):
+def load_data(prompt_type: str, model: HookedTransformer, verbose: bool = False) -> dict:
     model.reset_hooks()
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
     if verbose:
@@ -192,7 +202,10 @@ def logit_flip_metric_base(
     corrupt_distances = (corrupted_diff - patched_logit_diff).abs()
     return (clean_distances < corrupt_distances).float().mean().item()
 #%%
-def display_cosine_sims(direction_labels: List[str], directions: List[Float[Tensor, "d_model"]]):
+def display_cosine_sims(
+    direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
+    model: Union[str, HookedTransformer]
+):
     cosine_similarities = []
     for i, (label_i, direction_i) in enumerate(zip(direction_labels, directions)):
         for j, (label_j, direction_j) in enumerate(zip(direction_labels, directions)):
@@ -264,7 +277,8 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
 def create_cache_for_dir_patching(
     clean_cache: ActivationCache, 
     corrupted_cache: ActivationCache, 
-    sentiment_dir: Float[Tensor, "d_model"]
+    sentiment_dir: Float[Tensor, "d_model"],
+    model: HookedTransformer,
 ) -> ActivationCache:
     '''
     We patch the sentiment direction from corrupt to clean
@@ -358,9 +372,9 @@ def get_results_for_direction_and_position(
     position: str,
     direction_label: str, 
     direction: Float[Tensor, "d_model"],
-    model: HookedTransformer = model,
+    model: HookedTransformer,
 ) -> List[float]:
-    data_dict = load_data(prompt_type)
+    data_dict = load_data(prompt_type, model)
     example_prompt = model.to_str_tokens(data_dict["all_prompts"][0])
     if position == 'ALL':
         seq_pos = None
@@ -381,7 +395,7 @@ def get_results_for_direction_and_position(
 
     direction = direction / direction.norm()
     new_cache = create_cache_for_dir_patching(
-        data_dict["clean_cache"], data_dict["corrupted_cache"], direction
+        data_dict["clean_cache"], data_dict["corrupted_cache"], direction, model
     )
     return run_position_patching(
         model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, direction_label
@@ -389,12 +403,15 @@ def get_results_for_direction_and_position(
 #%%
 def get_results_for_metric(
     patching_metric_base: Callable, prompt_types: Iterable[PromptType], 
-    direction_labels: List[str], directions: List[Float[Tensor, "d_model"]]
+    direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
+    model: HookedTransformer,
+    disable_tqdm: bool = False,
 ) -> Float[pd.DataFrame, "direction prompt"]:
     metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
     bar = tqdm(
         itertools.product(prompt_types, zip(direction_labels, directions)), 
-        total=len(prompt_types) * len(direction_labels)
+        total=len(prompt_types) * len(direction_labels),
+        disable=disable_tqdm,
     )
     results = pd.DataFrame(index=direction_labels, dtype=float)
     for prompt_type, (direction_label, direction) in bar:
@@ -403,7 +420,7 @@ def get_results_for_metric(
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
             result = get_results_for_direction_and_position(
-                patching_metric_base, prompt_type, position, direction_label, direction
+                patching_metric_base, prompt_type, position, direction_label, direction, model
             )
             # Ensure the column exists
             if (prompt_type.value, position) not in results.columns:
@@ -420,21 +437,29 @@ def get_results_for_metric(
     save_html(layers_style, f"direction_patching_{metric_label}", model)
     display(layers_style)
     return results
-#%%
-DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=True)
 # %%
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
-    # PromptType.COMPLETION,
-    # PromptType.SIMPLE_ADVERB,
-    # PromptType.SIMPLE_MOOD,
+    PromptType.COMPLETION,
+    PromptType.SIMPLE_ADVERB,
+    PromptType.SIMPLE_MOOD,
 ]
 METRICS = [
     logit_diff_denoising_base,
     # logit_flip_metric_base,
     # prob_diff_denoising_base,
 ]
-for metric in METRICS:
-    results = get_results_for_metric(metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS)
+model_metric_bar = tqdm(
+    itertools.product(MODELS, METRICS), total=len(MODELS) * len(METRICS)
+)
+model = None
+for model_name, metric in model_metric_bar:
+    model_metric_bar.set_description(f"{model_name} {metric.__name__}")
+    if model is None or model.name != model_name:
+        model = get_model(model_name)
+    DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
+    results = get_results_for_metric(
+        metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model
+    )
 # %%
