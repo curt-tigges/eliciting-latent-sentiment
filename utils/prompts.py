@@ -12,7 +12,6 @@ import re
 def extract_placeholders(text: str) -> List[str]:
     # Use regex to find all instances of {SOME_TEXT}
     matches = re.findall(r'\{(\w+)\}', text)
-    
     return matches
 
 
@@ -125,7 +124,7 @@ class PromptType(Enum):
             PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TRAIN: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TEST: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
-            PromptType.SIMPLE_MOOD: "The traveller was{ADV}{WALK} to their destination. Upon arrival, they felt{FEEL}. \nConclusion: The traveller is",
+            PromptType.SIMPLE_MOOD: "The traveller was{ADV} walking to their destination. Upon arrival, they felt{FEEL}. \nConclusion: The traveller is",
             PromptType.SIMPLE_ADVERB: "The traveller{ADV} walked to their destination. The traveller felt very",
             PromptType.SIMPLE_FRENCH: "Je pensais que ce film était{ADJ}, je l'ai{VRB}. \nConclusion: Ce film est",
             PromptType.PROPER_NOUNS: "When I hear the name{NOUN}, I feel very",
@@ -147,9 +146,31 @@ class PromptType(Enum):
         }
         return prompt_strings[self]
     
-    def get_placeholders(self):
+    def get_placeholders(self) -> List[str]:
+        '''
+        Example output: ['ADJ', 'VRB']
+        '''
         formatter = self.get_format_string()
         return extract_placeholders(formatter)
+    
+    def get_placeholder_positions(self, token_list: List[str]) -> Dict[str, List[int]]:
+        '''
+        Identifies placeholder positions in a list of string tokens.
+        Handles whether the placeholder is a single token or multi-token.
+        Example output: {'ADJ': [4, 5], 'VRB': [8]}
+        '''
+        format_string = self.get_format_string()
+        format_idx = 0
+        curr_sub_token = None
+        out = dict()
+        for token_index, token in enumerate(token_list):
+            if format_string[format_idx] == '{':
+                curr_sub_token = format_string[format_idx + 1:format_string.find('}', format_idx)]
+            if format_string.find(token, format_idx) >= 0:
+                format_idx = format_string.find(token, format_idx) + len(token)
+            elif curr_sub_token is not None:
+                out[curr_sub_token] = out.get(curr_sub_token, []) + [token_index]
+        return out
     
 
 prompt_config = PromptsConfig()
@@ -185,7 +206,7 @@ def get_prompts(
         n_prompts = min(len(positive_adjectives), len(negative_adjectives))
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
-        neutral_prompts = [formatter.format(ADJ=neutral_adjectives[i]) for i in range(len(neutral_adjectives))]
+        neutral_prompts = [formatter.format(ADJ=neutral_adjectives[i], VRB=neutral_verbs[i]) for i in range(len(neutral_adjectives))]
     elif prompt_type == PromptType.SIMPLE_TRAIN:
         n_prompts = min(len(positive_adjectives), len(negative_adjectives))
         positive_adjectives = prompt_config.get("positive_adjectives_train", model, filter_length=1)
@@ -203,14 +224,13 @@ def get_prompts(
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
     elif prompt_type == PromptType.SIMPLE_MOOD:
-        walking_synonyms: CircularList[str]  = prompt_config.get("walk_synonyms", model)
         positive_feelings: CircularList[str] = prompt_config.get("positive_feelings", model)
         negative_feelings: CircularList[str] = prompt_config.get("negative_feelings", model)
         positive_adverbs: CircularList[str] = prompt_config.get("positive_adverbs", model)
         negative_adverbs: CircularList[str] = prompt_config.get("negative_adverbs", model)
-        n_prompts = min(len(positive_adverbs), len(walking_synonyms), len(positive_feelings), len(negative_adverbs), len(negative_feelings))
-        pos_prompts = [formatter.format(ADV=positive_adverbs[i], WALK=walking_synonyms[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
-        neg_prompts = [formatter.format(ADV=negative_adverbs[i], WALK=walking_synonyms[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
+        n_prompts = min(len(positive_adverbs), len(positive_feelings), len(negative_adverbs), len(negative_feelings))
+        pos_prompts = [formatter.format(ADV=positive_adverbs[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADV=negative_adverbs[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
         neutral_prompts = None
         pos_answers = prompt_config.get("positive_moods", model)
         neg_answers = prompt_config.get("negative_moods", model)

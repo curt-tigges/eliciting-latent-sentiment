@@ -98,24 +98,26 @@ def get_logit_diff(
     n_pairs = answer_tokens.shape[1]
     if len(logits.shape) == 3:
         # Get final logits only
-        logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
-    logits = einops.repeat(
-        logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
+        final_token_logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
+    else:
+        final_token_logits = logits
+    repeated_logits = einops.repeat(
+        final_token_logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
     )
-    left_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
+    left_logits: Float[Tensor, "batch n_pairs"] = repeated_logits.gather(
         -1, answer_tokens[:, :, 0].unsqueeze(-1)
     )
-    right_logits: Float[Tensor, "batch n_pairs"] = logits.gather(
+    right_logits: Float[Tensor, "batch n_pairs"] = repeated_logits.gather(
         -1, answer_tokens[:, :, 1].unsqueeze(-1)
     )
     if per_completion:
         print(left_logits - right_logits)
-    left_logits: Float[Tensor, "batch"] = left_logits.mean(dim=1)
-    right_logits: Float[Tensor, "batch"] = right_logits.mean(dim=1)
+    left_logits_batch: Float[Tensor, "batch"] = left_logits.mean(dim=1)
+    right_logits_batch: Float[Tensor, "batch"] = right_logits.mean(dim=1)
     if per_prompt:
-        return left_logits - right_logits
+        return left_logits_batch - right_logits_batch
 
-    return (left_logits - right_logits).mean()
+    return (left_logits_batch - right_logits_batch).mean()
 
 def get_log_probs(
     logits: Float[Tensor, "batch seq d_vocab"],
@@ -133,18 +135,18 @@ def get_log_probs(
     log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
     
     # get the log probs for the answer tokens
-    log_probs = einops.repeat(
+    log_probs_repeated = einops.repeat(
         log_probs, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
     )
-    answer_log_probs: Float[Tensor, "batch n_pairs"] = log_probs.gather(
+    answer_log_probs: Float[Tensor, "batch n_pairs"] = log_probs_repeated.gather(
         -1, answer_tokens.unsqueeze(-1)
     )
     # average over the answer tokens
-    answer_log_probs: Float[Tensor, "batch"] = answer_log_probs.mean(dim=1)
+    answer_log_probs_batch: Float[Tensor, "batch"] = answer_log_probs.mean(dim=1)
     if per_prompt:
-        return answer_log_probs
+        return answer_log_probs_batch
     else:
-        return answer_log_probs.mean()
+        return answer_log_probs_batch.mean()
 
 
 def log_prob_diff_noising(
@@ -155,22 +157,26 @@ def log_prob_diff_noising(
     return_tensor: bool = False,
 ) -> Float[Tensor, ""]:
     """
+    Linear function of log prob, calibrated so that it equals 0 when performance is
+    same as on clean input, and 1 when performance is same as on flipped input.
     """
     log_prob = get_log_probs(logits, answer_tokens)
-    ld = ((log_prob - flipped_log_prob) / (clean_log_prob  - flipped_log_prob))
+    ld = ((log_prob - clean_log_prob) / (flipped_log_prob  - clean_log_prob))
     if return_tensor:
         return ld
     else:
         return ld.item()
     
 def log_prob_diff_denoising(
-        logits: Float[Tensor, "batch seq d_vocab"],
-        answer_tokens: Float[Tensor, "batch n_pairs 2"],
-        flipped_log_prob: float,
-        clean_log_prob: float,
-        return_tensor: bool = False,
+    logits: Float[Tensor, "batch seq d_vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs 2"],
+    flipped_log_prob: float,
+    clean_log_prob: float,
+    return_tensor: bool = False,
 ) -> Float[Tensor, ""]:
     """
+    Linear function of log prob, calibrated so that it equals 0 when performance is
+    same as on flipped input, and 1 when performance is same as on clean input.
     """
     log_prob = get_log_probs(logits, answer_tokens)
     ld = ((log_prob - flipped_log_prob) / (clean_log_prob  - flipped_log_prob))
@@ -199,23 +205,23 @@ def logit_diff_denoising(
 
 
 def logit_diff_noising(
-        logits: Float[Tensor, "batch seq d_vocab"],
-        clean_logit_diff: float,
-        corrupted_logit_diff: float,
-        answer_tokens: Float[Tensor, "batch n_pairs 2"],
-        return_tensor: bool = False,
-    ) -> float:
-        '''
-        We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
-        and -1 when performance has been destroyed (i.e. is same as ABC dataset).
-        '''
-        patched_logit_diff = get_logit_diff(logits, answer_tokens)
-        ld = ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff))
+    logits: Float[Tensor, "batch seq d_vocab"],
+    clean_logit_diff: float,
+    corrupted_logit_diff: float,
+    answer_tokens: Float[Tensor, "batch n_pairs 2"],
+    return_tensor: bool = False,
+) -> float:
+    '''
+    We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
+    and -1 when performance has been destroyed (i.e. is same as ABC dataset).
+    '''
+    patched_logit_diff = get_logit_diff(logits, answer_tokens)
+    ld = ((patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff))
 
-        if return_tensor:
-            return ld
-        else:
-            return ld.item()
+    if return_tensor:
+        return ld
+    else:
+        return ld.item()
 
 
 # =============== LOGIT LENS UTILS ===============

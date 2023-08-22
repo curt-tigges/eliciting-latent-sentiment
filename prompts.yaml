@@ -172,23 +172,6 @@ negative_adverbs:
   - scandalously
   - shamelessly
 
-walk_synonyms:
-  - strolling
-  - marching
-  - striding
-  - hiking
-  - trekking
-  - ambling
-  - roaming
-  - wandering
-  - trudging
-  - meandering
-  - pacing
-  - tramping
-  - slogging
-  - treading
-  - rambling
-
 positive_feelings:
   - happy
   - glad
@@ -450,9 +433,13 @@ negative_french_answers:
 
 positive_french_verbs:
   - adoré
+  - prisé
+
 
 negative_french_verbs:
   - détesté
+  - déplu
+
 
 positive_proper_nouns:
   - Mandela
