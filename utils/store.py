@@ -88,11 +88,9 @@ def get_model_name(model: Union[HookedTransformer, str]) -> str:
     return model
 
 
-def update_csv(
-    data: pd.DataFrame,
-    label: str, 
-    model: Union[HookedTransformer, str], 
-    key_cols: Iterable[str] = None,
+def get_csv_path(
+    label: str,
+    model: Union[HookedTransformer, str],
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -100,6 +98,16 @@ def update_csv(
     if not os.path.exists(model_path):
         os.mkdir(model_path)
     path = os.path.join(model_path, label + '.csv')
+    return path
+
+
+def update_csv(
+    data: pd.DataFrame,
+    label: str, 
+    model: Union[HookedTransformer, str], 
+    key_cols: Iterable[str] = None,
+):
+    path = get_csv_path(label, model)
     curr = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
     curr = pd.concat([curr, data], axis=0)
     if key_cols is not None:
@@ -113,16 +121,23 @@ def get_csv(
     model: Union[HookedTransformer, str],
     key_cols: Iterable[str] = None,
 ) -> pd.DataFrame:
-    model: str = get_model_name(model)
-    label = clean_label(label)
-    model_path = os.path.join('data', model)
-    path = os.path.join(model_path, label + '.csv')
+    path = get_csv_path(label, model)
     if not os.path.exists(path):
         return pd.DataFrame()
     df = pd.read_csv(path)
     if key_cols is not None:
         df = df.drop_duplicates(subset=key_cols)
     return df
+
+
+def to_csv(
+    data: Union[pd.DataFrame, pd.Series],
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    path = get_csv_path(label, model)
+    data.to_csv(path, index=False)
+    return path
 
 
 def eval_csv(

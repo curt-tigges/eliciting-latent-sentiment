@@ -20,7 +20,7 @@ from functools import partial
 from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
-from utils.store import save_array, load_array, save_html
+from utils.store import save_array, load_array, save_html, to_csv
 from utils.prompts import PromptType
 from utils.residual_stream import get_resid_name
 #%%
@@ -427,6 +427,7 @@ def get_results_for_metric(
                 results[column] = np.nan
             results.loc[direction_label, column] = result
     results.columns = pd.MultiIndex.from_tuples(results.columns, names=['prompt', 'position'])
+    to_csv(results, f"direction_patching_{metric_label}", model)
     layers_style = (
         results
         .style
