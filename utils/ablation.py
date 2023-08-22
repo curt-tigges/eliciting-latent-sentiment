@@ -54,6 +54,23 @@ def zero_cache_component(component: torch.tensor) -> torch.tensor:
     return torch.zeros_like(component)
 
 
+def zero_attention_pos_hook(
+    pattern: Float[Tensor, "batch head seq_Q seq_K"], hook: HookPoint,
+    pos_by_batch: List[List[int]], layer: int = 0, head_idx: int = 0,
+) -> Float[Tensor, "batch head seq_Q seq_K"]:
+    """Zero-ablates an attention pattern tensor at a particular position"""
+    assert 'pattern' in hook.name
+
+    batch_size = pattern.shape[0]
+    assert len(pos_by_batch) == batch_size
+
+    for i in range(batch_size):
+        for p in pos_by_batch[i]:
+            pattern[i, head_idx, p, p] = 0
+            
+    return pattern
+
+
 def freeze_attn_pattern_hook(
     pattern: Float[Tensor, "batch head seq_Q seq_K"], hook: HookPoint, cache: ActivationCache, 
     layer: int = 0, head_idx: int = 0,
