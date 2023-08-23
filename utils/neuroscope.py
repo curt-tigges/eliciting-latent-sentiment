@@ -38,7 +38,7 @@ harry_potter_start = """
 
 def get_dataloader(
     model: HookedTransformer,
-    name: str = "openwebtext-10k",
+    name: str = "stas/openwebtext-10k",
     split: str = "train",
     batch_size: int = 64,
     shuffle: bool = False,

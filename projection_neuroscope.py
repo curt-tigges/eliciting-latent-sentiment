@@ -23,7 +23,7 @@ from plotly.subplots import make_subplots
 import os
 import pandas as pd
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text
-from utils.neuroscope import plot_neuroscope
+from utils.neuroscope import plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
@@ -102,9 +102,9 @@ pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potin
 s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses
 poumons.
 """
-# harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, centred=True, verbose=False)
-# save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-# harry_potter_fr_neuroscope
+harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+harry_potter_fr_neuroscope
 #%%
 # ============================================================================ #
 # Steering and generating
@@ -282,21 +282,12 @@ Moreover, the fervent desire to imbue the proceedings with a veneer of intellect
 
 In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
 """
-# plot_neuroscope(multi_token_negative_text, centred=True, verbose=False)
+# plot_neuroscope(multi_token_negative_text, centred=True, verbose=False, model=model, special_dir=sentiment_dir)
 #%%
 # ============================================================================ #
 # Openwebtext-10k
 #%%
-def get_dataloader():
-    owt_data = load_dataset("stas/openwebtext-10k", split="train")
-    dataset = tokenize_and_concatenate(owt_data, model.tokenizer)
-    data_loader = DataLoader(
-        dataset, batch_size=64, shuffle=False, drop_last=True
-    )
-    return data_loader
-
-#%%
-dataloader = get_dataloader()
+dataloader = get_dataloader(model, "stas/openwebtext-10k", batch_size=8)
 #%%
 def get_activations_from_dataloader(
     data: torch.utils.data.dataloader.DataLoader,
@@ -305,7 +296,7 @@ def get_activations_from_dataloader(
     all_acts = []
     for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
         batch_tokens = batch_value['tokens'].to(device)
-        batch_acts: Float[Tensor, "batch pos layer"] = get_activations_for_input(batch_tokens)
+        batch_acts: Float[Tensor, "batch pos layer"] = get_projections_for_text(batch_tokens, sentiment_dir, model)
         all_acts.append(batch_acts)
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -337,219 +328,14 @@ sentiment_activations.shape, sentiment_activations.device
 #%%
 # ============================================================================ #
 # Top k max activating examples
-
-#%%
-def get_window(batch: int, pos: int, window_size: int = 10) -> Tuple[int, int]:
-    lb = max(0, pos - window_size)
-    ub = min(len(dataloader.dataset[batch]['tokens']), pos + window_size)
-    return lb, ub
-#%%
-def extract_text_window(batch: int, pos: int, window_size: int = 10) -> List[str]:
-    lb, ub = get_window(batch, pos, window_size)
-    tokens = dataloader.dataset[batch]['tokens'][lb:ub]
-    str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
-    # print(tokens, str_tokens)
-    return str_tokens
-#%%
-def extract_activations_window(
-    activations: Float[Tensor, "row pos layer"], 
-    batch: int, pos: int, window_size: int = 10,
-) -> Float[Tensor, "pos layer"]:
-    lb, ub = get_window(batch, pos, window_size)
-    return activations[batch, lb:ub, :]
-#%%
-def get_batch_pos_mask(tokens: Union[str, List[str], Tensor], activations: Float[Tensor, "row pos"] = None):
-    mask_values: Int[Tensor, "words"] = torch.unique(model.to_tokens(tokens, prepend_bos=False).flatten())
-    masks = []
-    for batch_idx, batch_value in enumerate(dataloader):
-        batch_tokens: Int[Tensor, "batch_size pos 1"] = batch_value['tokens'].to(device).unsqueeze(-1)
-        batch_mask: Bool[Tensor, "batch_size pos"] = torch.any(batch_tokens == mask_values, dim=-1)
-        masks.append(batch_mask)
-    mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
-    if activations is not None:
-        assert mask.shape == activations.shape[:2]
-    return mask
-#%%
-def _plot_topk(
-    all_activations: Float[Tensor, "row pos layer"], layer: int = 0, k: int = 10, largest: bool = True,
-    window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-    verbose: bool = False, base_layer: int = None,
-):
-    assert not (inclusions is not None and exclusions is not None)
-    label = "positive" if largest else "negative"
-    layers = all_activations.shape[-1]
-    if verbose:
-        print(f"Plotting top {k} {label} examples for layer {layer}")
-    activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
-    if base_layer is not None:
-        base_activations: Float[Tensor, "row pos"] = all_activations[:, :, base_layer]
-        activations = activations - base_activations
-    if largest:
-        ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
-    else:
-        ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
-    # create a mask for the inclusions/exclusions
-    if exclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
-        masked_activations = activations.where(~mask, other=ignore_value)
-    elif inclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
-        assert mask.sum() >= k, (
-            f"Only {mask.sum()} positions match the inclusions, but {k} are required"
-        )
-        if verbose:
-            print(f"Including {mask.sum()} positions")
-        masked_activations = activations.where(mask, other=ignore_value)
-    else:
-        masked_activations = activations
-    top_k_return = torch.topk(masked_activations.flatten(), k=k, largest=largest)
-    assert torch.isfinite(top_k_return.values).all()
-    topk_pos_indices = top_k_return.indices
-    topk_pos_indices = np.array(np.unravel_index(topk_pos_indices.cpu().numpy(), masked_activations.shape)).T.tolist()
-    # Get the examples and their activations corresponding to the most positive and negative activations
-    topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
-    topk_pos_activations = [masked_activations[b, s].item() for b, s in topk_pos_indices]
-    # Print the  most positive and negative examples and their activations
-    print(f"Top {k} most {label} examples:")
-    zeros = torch.zeros((1, layers), device=device, dtype=torch.float32)
-    texts = [model.tokenizer.bos_token]
-    text_to_not_repeat = set()
-    acts = [zeros]
-    text_sep = "\n"
-    topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_activations)
-    for index, example, activation in topk_zip:
-        example_str = model.to_string(example)
-        if inclusions is not None:
-            assert example_str in inclusions, f"Example '{example_str}' not in inclusions {inclusions}"
-        if exclusions is not None:
-            assert example_str not in exclusions, f"Example '{example_str}' in exclusions {exclusions}"
-        batch, pos = index
-        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
-        activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
-            all_activations, batch, pos, window_size=window_size
-        )
-        assert len(text_window) == activation_window.shape[0], (
-            f"Initially text window length {len(text_window)} does not match activation window length {activation_window.shape[0]}"
-        )
-        text_flat = "".join(text_window)
-        if text_flat in text_to_not_repeat:
-            continue
-        text_to_not_repeat.add(text_flat)
-        print(f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}")
-        text_window.append(text_sep)
-        activation_window = torch.cat([activation_window, zeros], dim=0)
-        assert len(text_window) == activation_window.shape[0]
-        texts += text_window
-        acts.append(activation_window)
-    acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
-    assert acts_cat.shape[0] == len(texts)
-    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
-    layer_suffix = f"_layer_{layer}" if layer is not None else ""
-    exclusion_suffix = "_w_exclusions" if exclusions is not None else ""
-    inclusion_suffix = "_w_inclusions" if inclusions is not None else ""
-    base_layer_suffix = f"_base_layer_{base_layer}" if base_layer is not None else ""
-    suffices = layer_suffix + exclusion_suffix + inclusion_suffix + base_layer_suffix
-    file_name = f"top_{k}_most_{label}_sentiment{suffices}.html"
-    save_html(html, file_name, model)
-    display(html)
-#%%
-def plot_topk(
-    activations: Float[Tensor, "row pos layer"], k: int = 10, layer: int = 0,
-    window_size: int = 10, centred: bool = True, 
-    inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-    verbose: bool = False, base_layer: int = None,
-):
-   _plot_topk(
-       activations, layer=layer, k=k, largest=True, 
-       window_size=window_size, centred=centred, 
-       inclusions=inclusions, exclusions=exclusions, 
-       verbose=verbose, base_layer=base_layer
-    )
-   _plot_topk(
-       activations, layer=layer, k=k, largest=False, 
-       window_size=window_size, centred=centred, 
-       inclusions=inclusions, exclusions=exclusions, 
-       verbose=verbose, base_layer=base_layer
-    )
 # %%
-# plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
+plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
 # # %%
 # plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
 # %%
 # ============================================================================ #
 # Top p sampling
 #%%
-#%%
-def _plot_top_p(
-    all_activations: Float[Tensor, "row pos layer"], layer: int = 0, p: float = 0.1, k: int = 10, largest: bool = True,
-    window_size: int = 10, centred: bool = True, inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-):
-    assert not (inclusions is not None and exclusions is not None)
-    label = "positive" if largest else "negative"
-    activations: Float[Tensor, "batch pos"] = all_activations[:, :, layer]
-    if largest:
-        ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
-    else:
-        ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
-    # create a mask for the inclusions/exclusions
-    if exclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
-        masked_activations = activations.where(~mask, other=ignore_value)
-    elif inclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
-        masked_activations = activations.where(mask, other=ignore_value)
-    else:
-        masked_activations = activations
-
-    activations_flat: Float[Tensor, "(batch pos)"] = masked_activations.flatten()
-    sample_size = int(p * len(activations_flat))
-    top_p_indices = torch.topk(activations_flat, k=sample_size, largest=largest).indices
-    sampled_indices = top_p_indices[torch.randperm(sample_size)[:k]]
-    top_p_indices = np.array(np.unravel_index(sampled_indices.cpu().numpy(), masked_activations.shape)).T.tolist()
-    top_p_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in top_p_indices]
-    top_p_activations = [masked_activations[b, s].item() for b, s in top_p_indices]
-    # Print the  most positive and negative examples and their activations
-    print(f"Top {k} most {label} examples:")
-    zeros = torch.zeros((1, all_activations.shape[-1]), device=device, dtype=torch.float32)
-    texts = [model.tokenizer.bos_token]
-    text_to_not_repeat = set()
-    acts = [zeros]
-    text_sep = "\n"
-    topk_zip = zip(top_p_indices, top_p_examples, top_p_activations)
-    for index, example, activation in topk_zip:
-        batch, pos = index
-        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
-        activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
-            all_activations, batch, pos, window_size=window_size
-        )
-        assert len(text_window) == activation_window.shape[0], (
-            f"Initially text window length {len(text_window)} "
-            f"does not match activation window length {activation_window.shape[0]}"
-        )
-        text_flat = "".join(text_window)
-        if text_flat in text_to_not_repeat:
-            continue
-        text_to_not_repeat.add(text_flat)
-        print(
-            f"Example: {model.to_string(example)}, Activation: {activation:.4f}, Batch: {batch}, Pos: {pos}"
-        )
-        text_window.append(text_sep)
-        activation_window = torch.cat([activation_window, zeros], dim=0)
-        assert len(text_window) == activation_window.shape[0]
-        texts += text_window
-        acts.append(activation_window)
-    acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
-    assert acts_cat.shape[0] == len(texts)
-    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
-    save_html(html, f"top_{p * 100:.0f}pc_most_{label}_layer_{layer}_sentiment.html", model)
-    display(html)
-#%%
-def plot_top_p(
-    activations: Float[Tensor, "row pos layer"], k: int = 10, p: float = 0.1, layer: int = 0,
-    window_size: int = 10, centred: bool = True,  inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-):
-   _plot_top_p(activations, layer=layer, p=p, k=k, largest=True, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
-   _plot_top_p(activations, layer=layer, p=p, k=k, largest=False, window_size=window_size, centred=centred, inclusions=inclusions, exclusions=exclusions)
 #%%
 # plot_top_p(sentiment_activations, k=50, layer=1, p=0.01)
 #%%
