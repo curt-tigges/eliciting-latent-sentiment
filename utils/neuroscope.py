@@ -30,7 +30,7 @@ harry_potter_start = """
 
     But on the edge of town, drills were driven out of his mind by something else. As he sat in the usual morning traffic jam, he couldn’t help noticing that there seemed to be a lot of strangely dressed people about. People in cloaks. Mr. Dursley couldn’t bear people who dressed in funny clothes — the getups you saw on young people! He supposed this was some stupid new fashion. He drummed his fingers on the steering wheel and his eyes fell on a huddle of these weirdos standing quite close by. They were whispering excitedly together. Mr. Dursley was enraged to see that a couple of them weren’t young at all; why, that man had to be older than he was, and wearing an emerald-green cloak! The nerve of him! But then it struck Mr. Dursley that this was probably some silly stunt — these people were obviously collecting for something . . . yes, that would be it. The traffic moved on and a few minutes later, Mr. Dursley arrived in the Grunnings parking lot, his mind back on drills.
 
-    Mr. Dursley always sat with his back to the window in his office on the ninth ﬂoor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at ﬁve diﬀerent people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
+    Mr. Dursley always sat with his back to the window in his office on the ninth floor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at ﬁve diﬀerent people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
 
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
 """
@@ -294,7 +294,7 @@ def _plot_topk(
         acts.append(activation_window)
     acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
     assert acts_cat.shape[0] == len(texts)
-    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
+    html = plot_neuroscope(texts, model=model, centred=centred, activations=acts_cat, verbose=False)
     layer_suffix = f"_layer_{layer}" if layer is not None else ""
     exclusion_suffix = "_w_exclusions" if exclusions is not None else ""
     inclusion_suffix = "_w_inclusions" if inclusions is not None else ""
@@ -409,7 +409,7 @@ def _plot_top_p(
         acts.append(activation_window)
     acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
     assert acts_cat.shape[0] == len(texts)
-    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
+    html = plot_neuroscope(texts, model=model, centred=centred, activations=acts_cat, verbose=False)
     save_html(html, f"top_{p * 100:.0f}pc_most_{label}_layer_{layer}_sentiment.html", model)
     display(html)
 
