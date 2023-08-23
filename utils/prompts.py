@@ -88,6 +88,9 @@ class PromptsConfig:
         prepend_space: bool = True, 
         verbose: bool = False,
     ) -> CircularList:
+        assert filter_length is not None or truncate_length is not None, (
+            "Must specify at least one of filter_length or truncate_length"
+        )
         words: list = self._prompts_dict[key]
         if prepend_space:
             words = [" " + word.strip() for word in words]
@@ -232,8 +235,8 @@ def get_prompts(
         pos_prompts = [formatter.format(ADV=positive_adverbs[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADV=negative_adverbs[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
         neutral_prompts = None
-        pos_answers = prompt_config.get("positive_moods", model)
-        neg_answers = prompt_config.get("negative_moods", model)
+        pos_answers = prompt_config.get("positive_moods", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_moods", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_ADVERB:
         positive_adverbs = prompt_config.get("positive_adverbs", model, filter_length=2)
         negative_adverbs = prompt_config.get("negative_adverbs", model, filter_length=2)
@@ -241,8 +244,8 @@ def get_prompts(
         pos_prompts = [formatter.format(ADV=positive_adverbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADV=negative_adverbs[i]) for i in range(n_prompts)]
         neutral_prompts = None
-        pos_answers = prompt_config.get("positive_moods", model)
-        neg_answers = prompt_config.get("negative_moods", model)
+        pos_answers = prompt_config.get("positive_moods", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_moods", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_FRENCH:
         positive_french_adj = prompt_config.get("positive_french_adjectives", model, filter_length=3)
         negative_french_adj = prompt_config.get("negative_french_adjectives", model, filter_length=3)
@@ -255,15 +258,15 @@ def get_prompts(
         pos_answers = prompt_config.get("positive_french_answers", model, truncate_length=1)
         neg_answers = prompt_config.get("negative_french_answers", model, truncate_length=1)
     elif prompt_type == PromptType.PROPER_NOUNS:
-        positive_proper = prompt_config.get("positive_proper_nouns", model)
-        negative_proper = prompt_config.get("negative_proper_nouns", model)
+        positive_proper = prompt_config.get("positive_proper_nouns", model, filter_length=1)
+        negative_proper = prompt_config.get("negative_proper_nouns", model, filter_length=1)
         n_prompts = min(len(positive_proper), len(negative_proper))
         pos_prompts = [formatter.format(NOUN=positive_proper[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(NOUN=negative_proper[i]) for i in range(n_prompts)]
         neutral_prompts = None
     elif prompt_type == PromptType.MEDICAL:
-        positive_medical = prompt_config.get("positive_medical", model)
-        negative_medical = prompt_config.get("negative_medical", model)
+        positive_medical = prompt_config.get("positive_medical", model, filter_length=1)
+        negative_medical = prompt_config.get("negative_medical", model, filter_length=1)
         n_prompts = min(len(positive_medical), len(negative_medical))
         pos_prompts = [formatter.format(MED=positive_medical[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(MED=negative_medical[i]) for i in range(n_prompts)]

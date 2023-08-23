@@ -119,6 +119,45 @@ def get_logit_diff(
 
     return (left_logits_batch - right_logits_batch).mean()
 
+
+def get_prob_diff(
+    logits: Float[Tensor, "batch pos vocab"],
+    answer_tokens: Float[Tensor, "batch n_pairs 2"], 
+    per_prompt: bool = False,
+):
+    """
+    Gets the difference between the softmax probabilities of the provided tokens 
+    e.g., the correct and incorrect tokens in IOI
+
+    Args:
+        logits (torch.Tensor): Logits to use.
+        answer_tokens (torch.Tensor): Indices of the tokens to compare.
+
+    Returns:
+        torch.Tensor: Difference between the logits of the provided tokens.
+    """
+    n_pairs = answer_tokens.shape[1]
+    if len(logits.shape) == 3:
+        # Get final logits only
+        logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
+    logits = einops.repeat(
+        logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
+    )
+    probs: Float[Tensor, "batch n_pairs vocab"] = logits.softmax(dim=-1)
+    left_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
+        -1, answer_tokens[:, :, 0].unsqueeze(-1)
+    )
+    right_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
+        -1, answer_tokens[:, :, 1].unsqueeze(-1)
+    )
+    left_probs: Float[Tensor, "batch"] = left_probs.mean(dim=1)
+    right_probs: Float[Tensor, "batch"] = right_probs.mean(dim=1)
+    if per_prompt:
+        return left_probs - right_probs
+
+    return (left_probs - right_probs).mean()
+
+
 def get_log_probs(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Float[Tensor, "batch n_pairs"],
