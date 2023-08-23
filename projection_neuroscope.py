@@ -26,7 +26,7 @@ from utils.store import load_array, save_html, save_array, is_file, get_model_na
 from utils.neuroscope import plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, harry_potter_start, harry_potter_fr_start, get_batch_pos_mask
 #%%
 torch.set_grad_enabled(False)
-device = "cuda"
+device = "cpu"
 MODEL_NAME = "EleutherAI/pythia-2.8b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -495,9 +495,13 @@ neg_list = [
     " terrible", " bad", " awful", " horrible", " disgusting", " awful", 
     " evil", " scary",
 ]
+neutral_list = [
+    " okay", " alright", " decent", " acceptable", " satisfactory",
+]
 pos_neg_dict = {
     "positive": pos_list,
     "negative": neg_list,
+    "neutral": neutral_list,
     # "surprising_proper_nouns": [" Trek", " Yorkshire", " Linux", " Reuters"],
     # "trek": [" Trek"],
     # "yorkshire": [" Yorkshire"],
@@ -606,7 +610,10 @@ def get_resample_ablated_loss_diffs(
     model.reset_hooks()
     hook = partial(resample_hook, direction=direction)
     loss_diffs = []
-    for batch_idx, batch_value in tqdm(enumerate(dataloader), total=len(dataloader)):
+
+    bar = tqdm(dataloader, total=len(dataloader))
+    for batch_idx, batch_value in bar:
+        bar.set_description(f"Batch {batch_idx}")
         batch_tokens = batch_value['tokens'].to(device)
         model.reset_hooks()
         orig_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
@@ -626,22 +633,6 @@ def get_resample_ablated_loss_diffs(
     return plot_topk(
         loss_diffs, dataloader, model, k=k, layer=layer, window_size=window_size, centred=True,
     )
-
-    # topk_return = torch.topk(loss_diffs.flatten(), k=k, largest=True)
-    # topk_pos_indices = np.array(np.unravel_index(topk_return.indices.cpu().numpy(), loss_diffs.shape)).T.tolist()
-    # topk_pos_values = topk_return.values
-    # # Get the examples and their activations corresponding to the most positive and negative activations
-    # topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
-    # text_sep = "\n"
-    # topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_values)
-    # texts = []
-    # for index, example, loss_diff in topk_zip:
-    #     batch, pos = index
-    #     text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
-    #     print(f"Example: {model.to_string(example)}, Loss diff: {loss_diff:.4f}, Batch: {batch}, Pos: {pos}")
-    #     text_window.append(text_sep)
-    #     texts += text_window
-    # return texts
 # %%
 loss_diff_text = get_resample_ablated_loss_diffs(sentiment_dir, model, dataloader, k=50, window_size=10)
 plot_neuroscope(''.join(loss_diff_text), centred=True)
