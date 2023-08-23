@@ -165,7 +165,7 @@ def extract_text_window(
     window_size: int = 10
 ) -> List[str]:
     """Helper function to get the text window around a position in a batch (used in topk plotting)"""
-    lb, ub = get_window(batch, pos, window_size)
+    lb, ub = get_window(batch, pos, dataloader=dataloader, window_size=window_size)
     tokens = dataloader.dataset[batch]['tokens'][lb:ub]
     str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
     return str_tokens
@@ -173,10 +173,12 @@ def extract_text_window(
 
 def extract_activations_window(
     activations: Float[Tensor, "row pos layer"], 
-    batch: int, pos: int, window_size: int = 10,
+    batch: int, pos: int, 
+    dataloader: torch.utils.data.DataLoader,
+    window_size: int = 10,
 ) -> Float[Tensor, "pos layer"]:
     """Helper function to get the activations window around a position in a batch (used in topk plotting)"""
-    lb, ub = get_window(batch, pos, window_size)
+    lb, ub = get_window(batch, pos, dataloader=dataloader, window_size=window_size)
     return activations[batch, lb:ub, :]
 
 
@@ -233,10 +235,10 @@ def _plot_topk(
         ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
     # create a mask for the inclusions/exclusions
     if exclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, dataloader, model, all_activations)
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, dataloader, model, all_activations)
         assert mask.sum() >= k, (
             f"Only {mask.sum()} positions match the inclusions, but {k} are required"
         )
@@ -274,7 +276,7 @@ def _plot_topk(
             batch, pos, dataloader=dataloader, model=model, window_size=window_size
         )
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
-            all_activations, batch, pos, window_size=window_size
+            all_activations, batch, pos, window_size=window_size, dataloader=dataloader
         )
         assert len(text_window) == activation_window.shape[0], (
             f"Initially text window length {len(text_window)} does not match "
@@ -352,10 +354,10 @@ def _plot_top_p(
         ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
     # create a mask for the inclusions/exclusions
     if exclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, dataloader, model, all_activations)
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, dataloader, model, all_activations)
         masked_activations = activations.where(mask, other=ignore_value)
     else:
         masked_activations = activations
@@ -379,9 +381,15 @@ def _plot_top_p(
     topk_zip = zip(top_p_indices, top_p_examples, top_p_activations)
     for index, example, activation in topk_zip:
         batch, pos = index
-        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+        text_window: List[str] = extract_text_window(
+            batch, 
+            pos, 
+            dataloader=dataloader, 
+            model=model,
+            window_size=window_size
+        )
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
-            all_activations, batch, pos, window_size=window_size
+            all_activations, batch, pos, window_size=window_size, dataloader=dataloader
         )
         assert len(text_window) == activation_window.shape[0], (
             f"Initially text window length {len(text_window)} "
