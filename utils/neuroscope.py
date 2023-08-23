@@ -13,6 +13,7 @@ from IPython.display import display
 from utils.store import save_html
 
 
+# Harry Potter in English
 harry_potter_start = """
     Mr. and Mrs. Dursley, of number four, Privet Drive, were proud to say that they were perfectly normal, thank you very much. They were the last people you’d expect to be involved in anything strange or mysterious, because they just didn’t hold with such nonsense.
 
@@ -30,15 +31,45 @@ harry_potter_start = """
 
     But on the edge of town, drills were driven out of his mind by something else. As he sat in the usual morning traffic jam, he couldn’t help noticing that there seemed to be a lot of strangely dressed people about. People in cloaks. Mr. Dursley couldn’t bear people who dressed in funny clothes — the getups you saw on young people! He supposed this was some stupid new fashion. He drummed his fingers on the steering wheel and his eyes fell on a huddle of these weirdos standing quite close by. They were whispering excitedly together. Mr. Dursley was enraged to see that a couple of them weren’t young at all; why, that man had to be older than he was, and wearing an emerald-green cloak! The nerve of him! But then it struck Mr. Dursley that this was probably some silly stunt — these people were obviously collecting for something . . . yes, that would be it. The traffic moved on and a few minutes later, Mr. Dursley arrived in the Grunnings parking lot, his mind back on drills.
 
-    Mr. Dursley always sat with his back to the window in his office on the ninth ﬂoor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at ﬁve diﬀerent people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
+    Mr. Dursley always sat with his back to the window in his office on the ninth floor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at ﬁve diﬀerent people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
 
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
+"""
+
+# Harry Potter in French
+harry_potter_fr_start = """
+Mr et Mrs Dursley, qui habitaient au 4, Privet Drive, avaient toujours affirmé avec la plus grande
+fierté qu'ils étaient parfaitement normaux, merci pour eux. Jamais quiconque n'aurait imaginé qu'ils
+puissent se trouver impliqués dans quoi que ce soit d'étrange ou de mystérieux. Ils n'avaient pas de
+temps à perdre avec des sornettes.
+Mr Dursley dirigeait la Grunnings, une entreprise qui fabriquait des perceuses. C'était un homme
+grand et massif, qui n'avait pratiquement pas de cou, mais possédait en revanche une moustache de
+belle taille. Mrs Dursley, quant à elle, était mince et blonde et disposait d'un cou deux fois plus long
+que la moyenne, ce qui lui était fort utile pour espionner ses voisins en regardant par-dessus les
+clôtures des jardins. Les Dursley avaient un petit garçon prénommé Dudley et c'était à leurs yeux le
+plus bel enfant du monde.
+Les Dursley avaient tout ce qu'ils voulaient. La seule chose indésirable qu'ils possédaient, c'était un
+secret dont ils craignaient plus que tout qu'on le découvre un jour. Si jamais quiconque venait à
+entendre parler des Potter, ils étaient convaincus qu'ils ne s'en remettraient pas. Mrs Potter était la
+soeur de Mrs Dursley, mais toutes deux ne s'étaient plus revues depuis des années. En fait, Mrs
+Dursley faisait comme si elle était fille unique, car sa soeur et son bon à rien de mari étaient aussi
+éloignés que possible de tout ce qui faisait un Dursley. Les Dursley tremblaient d'épouvante à la
+pensée de ce que diraient les voisins si par malheur les Potter se montraient dans leur rue. Ils savaient
+que les Potter, eux aussi, avaient un petit garçon, mais ils ne l'avaient jamais vu. Son existence
+constituait une raison supplémentaire de tenir les Potter à distance: il n'était pas question que le petit
+Dudley se mette à fréquenter un enfant comme celui-là.
+Lorsque Mr et Mrs Dursley s'éveillèrent, au matin du mardi où commence cette histoire, il faisait gris
+et triste et rien dans le ciel nuageux ne laissait prévoir que des choses étranges et mystérieuses allaient
+bientôt se produire dans tout le pays. Mr Dursley fredonnait un air en nouant sa cravate la plus sinistre
+pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potins du quartier en
+s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses
+poumons.
 """
 
 
 def get_dataloader(
     model: HookedTransformer,
-    name: str = "openwebtext-10k",
+    name: str = "stas/openwebtext-10k",
     split: str = "train",
     batch_size: int = 64,
     shuffle: bool = False,
@@ -111,7 +142,7 @@ def plot_neuroscope(
         if verbose:
             print("Computing activations")
         activations: Float[Tensor, "batch pos layer"] = get_projections_for_text(
-            tokens
+            tokens, special_dir=special_dir, model=model
         )
         activations: Float[Tensor, "pos layer 1"] = einops.rearrange(
             activations, "batch pos layer -> pos layer batch"
@@ -141,7 +172,7 @@ def plot_neuroscope(
         activations=activations,
         first_dimension_name="Layer (resid_pre)",
         second_dimension_name="Model",
-        second_dimension_labels=[model.cfg.name],
+        second_dimension_labels=[model.cfg.model_name],
     )
 
 
@@ -165,7 +196,7 @@ def extract_text_window(
     window_size: int = 10
 ) -> List[str]:
     """Helper function to get the text window around a position in a batch (used in topk plotting)"""
-    lb, ub = get_window(batch, pos, window_size)
+    lb, ub = get_window(batch, pos, dataloader=dataloader, window_size=window_size)
     tokens = dataloader.dataset[batch]['tokens'][lb:ub]
     str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
     return str_tokens
@@ -173,10 +204,12 @@ def extract_text_window(
 
 def extract_activations_window(
     activations: Float[Tensor, "row pos layer"], 
-    batch: int, pos: int, window_size: int = 10,
+    batch: int, pos: int, 
+    dataloader: torch.utils.data.DataLoader,
+    window_size: int = 10,
 ) -> Float[Tensor, "pos layer"]:
     """Helper function to get the activations window around a position in a batch (used in topk plotting)"""
-    lb, ub = get_window(batch, pos, window_size)
+    lb, ub = get_window(batch, pos, dataloader=dataloader, window_size=window_size)
     return activations[batch, lb:ub, :]
 
 
@@ -233,10 +266,10 @@ def _plot_topk(
         ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
     # create a mask for the inclusions/exclusions
     if exclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, dataloader, model, all_activations)
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, dataloader, model, all_activations)
         assert mask.sum() >= k, (
             f"Only {mask.sum()} positions match the inclusions, but {k} are required"
         )
@@ -270,9 +303,11 @@ def _plot_topk(
         if exclusions is not None:
             assert example_str not in exclusions, f"Example '{example_str}' in exclusions {exclusions}"
         batch, pos = index
-        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+        text_window: List[str] = extract_text_window(
+            batch, pos, dataloader=dataloader, model=model, window_size=window_size
+        )
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
-            all_activations, batch, pos, window_size=window_size
+            all_activations, batch, pos, window_size=window_size, dataloader=dataloader
         )
         assert len(text_window) == activation_window.shape[0], (
             f"Initially text window length {len(text_window)} does not match "
@@ -290,7 +325,7 @@ def _plot_topk(
         acts.append(activation_window)
     acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
     assert acts_cat.shape[0] == len(texts)
-    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
+    html = plot_neuroscope(texts, model=model, centred=centred, activations=acts_cat, verbose=False)
     layer_suffix = f"_layer_{layer}" if layer is not None else ""
     exclusion_suffix = "_w_exclusions" if exclusions is not None else ""
     inclusion_suffix = "_w_inclusions" if inclusions is not None else ""
@@ -350,10 +385,10 @@ def _plot_top_p(
         ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
     # create a mask for the inclusions/exclusions
     if exclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, dataloader, model, all_activations)
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
-        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, all_activations)
+        mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, dataloader, model, all_activations)
         masked_activations = activations.where(mask, other=ignore_value)
     else:
         masked_activations = activations
@@ -377,9 +412,15 @@ def _plot_top_p(
     topk_zip = zip(top_p_indices, top_p_examples, top_p_activations)
     for index, example, activation in topk_zip:
         batch, pos = index
-        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+        text_window: List[str] = extract_text_window(
+            batch, 
+            pos, 
+            dataloader=dataloader, 
+            model=model,
+            window_size=window_size
+        )
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
-            all_activations, batch, pos, window_size=window_size
+            all_activations, batch, pos, window_size=window_size, dataloader=dataloader
         )
         assert len(text_window) == activation_window.shape[0], (
             f"Initially text window length {len(text_window)} "
@@ -399,7 +440,7 @@ def _plot_top_p(
         acts.append(activation_window)
     acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
     assert acts_cat.shape[0] == len(texts)
-    html = plot_neuroscope(texts, centred=centred, activations=acts_cat, verbose=False)
+    html = plot_neuroscope(texts, model=model, centred=centred, activations=acts_cat, verbose=False)
     save_html(html, f"top_{p * 100:.0f}pc_most_{label}_layer_{layer}_sentiment.html", model)
     display(html)
 
