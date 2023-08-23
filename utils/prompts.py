@@ -244,10 +244,10 @@ def get_prompts(
         pos_answers = prompt_config.get("positive_moods", model)
         neg_answers = prompt_config.get("negative_moods", model)
     elif prompt_type == PromptType.SIMPLE_FRENCH:
-        positive_french_adj = prompt_config.get("positive_french_adjectives", model)
-        negative_french_adj = prompt_config.get("negative_french_adjectives", model)
-        positive_french_verbs = prompt_config.get("positive_french_verbs", model)
-        negative_french_verbs = prompt_config.get("negative_french_verbs", model)
+        positive_french_adj = prompt_config.get("positive_french_adjectives", model, filter_length=3)
+        negative_french_adj = prompt_config.get("negative_french_adjectives", model, filter_length=3)
+        positive_french_verbs = prompt_config.get("positive_french_verbs", model, filter_length=3)
+        negative_french_verbs = prompt_config.get("negative_french_verbs", model, filter_length=3)
         n_prompts = min(len(positive_french_adj), len(negative_french_adj))
         pos_prompts = [formatter.format(ADJ=positive_french_adj[i], VRB=positive_french_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_french_adj[i], VRB=negative_french_verbs[i]) for i in range(n_prompts)]
