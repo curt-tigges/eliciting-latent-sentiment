@@ -271,7 +271,7 @@ def _plot_topk(
             assert example_str not in exclusions, f"Example '{example_str}' in exclusions {exclusions}"
         batch, pos = index
         text_window: List[str] = extract_text_window(
-            batch, pos, dataloader, model, window_size=window_size
+            batch, pos, dataloader=dataloader, model=model, window_size=window_size
         )
         activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
             all_activations, batch, pos, window_size=window_size
