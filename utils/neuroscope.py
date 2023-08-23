@@ -13,6 +13,7 @@ from IPython.display import display
 from utils.store import save_html
 
 
+# Harry Potter in English
 harry_potter_start = """
     Mr. and Mrs. Dursley, of number four, Privet Drive, were proud to say that they were perfectly normal, thank you very much. They were the last people you’d expect to be involved in anything strange or mysterious, because they just didn’t hold with such nonsense.
 
@@ -33,6 +34,36 @@ harry_potter_start = """
     Mr. Dursley always sat with his back to the window in his office on the ninth floor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at ﬁve diﬀerent people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
 
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
+"""
+
+# Harry Potter in French
+harry_potter_fr_start = """
+Mr et Mrs Dursley, qui habitaient au 4, Privet Drive, avaient toujours affirmé avec la plus grande
+fierté qu'ils étaient parfaitement normaux, merci pour eux. Jamais quiconque n'aurait imaginé qu'ils
+puissent se trouver impliqués dans quoi que ce soit d'étrange ou de mystérieux. Ils n'avaient pas de
+temps à perdre avec des sornettes.
+Mr Dursley dirigeait la Grunnings, une entreprise qui fabriquait des perceuses. C'était un homme
+grand et massif, qui n'avait pratiquement pas de cou, mais possédait en revanche une moustache de
+belle taille. Mrs Dursley, quant à elle, était mince et blonde et disposait d'un cou deux fois plus long
+que la moyenne, ce qui lui était fort utile pour espionner ses voisins en regardant par-dessus les
+clôtures des jardins. Les Dursley avaient un petit garçon prénommé Dudley et c'était à leurs yeux le
+plus bel enfant du monde.
+Les Dursley avaient tout ce qu'ils voulaient. La seule chose indésirable qu'ils possédaient, c'était un
+secret dont ils craignaient plus que tout qu'on le découvre un jour. Si jamais quiconque venait à
+entendre parler des Potter, ils étaient convaincus qu'ils ne s'en remettraient pas. Mrs Potter était la
+soeur de Mrs Dursley, mais toutes deux ne s'étaient plus revues depuis des années. En fait, Mrs
+Dursley faisait comme si elle était fille unique, car sa soeur et son bon à rien de mari étaient aussi
+éloignés que possible de tout ce qui faisait un Dursley. Les Dursley tremblaient d'épouvante à la
+pensée de ce que diraient les voisins si par malheur les Potter se montraient dans leur rue. Ils savaient
+que les Potter, eux aussi, avaient un petit garçon, mais ils ne l'avaient jamais vu. Son existence
+constituait une raison supplémentaire de tenir les Potter à distance: il n'était pas question que le petit
+Dudley se mette à fréquenter un enfant comme celui-là.
+Lorsque Mr et Mrs Dursley s'éveillèrent, au matin du mardi où commence cette histoire, il faisait gris
+et triste et rien dans le ciel nuageux ne laissait prévoir que des choses étranges et mystérieuses allaient
+bientôt se produire dans tout le pays. Mr Dursley fredonnait un air en nouant sa cravate la plus sinistre
+pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potins du quartier en
+s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses
+poumons.
 """
 
 
