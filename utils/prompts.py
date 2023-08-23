@@ -360,7 +360,7 @@ def get_prompts(
 def get_dataset(
     model: HookedTransformer, 
     device: torch.device,
-    n_pairs: int = 1,
+    n_pairs: int = None,
     prompt_type: str = "simple",
     comparison: Tuple[str, str] = ("positive", "negative"),
 ) -> Tuple[
@@ -374,6 +374,11 @@ def get_dataset(
     prompts_dict, answers_dict = get_prompts(
         model, prompt_type
     )
+    if n_pairs is None:
+        n_pairs = min(
+            len(answers_dict[comparison[0]]), 
+            len(answers_dict[comparison[1]]), 
+        )
     assert n_pairs <= len(answers_dict[comparison[0]])
     n_prompts = min(
         len(prompts_dict[comparison[0]]), 
