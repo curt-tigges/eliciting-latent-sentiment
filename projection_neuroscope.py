@@ -23,7 +23,7 @@ from plotly.subplots import make_subplots
 import os
 import pandas as pd
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text
-from utils.neuroscope import plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk
+from utils.neuroscope import plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, harry_potter_start, harry_potter_fr_start, get_batch_pos_mask
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
@@ -46,65 +46,23 @@ sentiment_dir /= sentiment_dir.norm()
 # Harry Potter example
 
 #%%
-harry_potter_start = """
-    Mr. and Mrs. Dursley, of number four, Privet Drive, were proud to say that they were perfectly normal, thank you very much. They were the last people you’d expect to be involved in anything strange or mysterious, because they just didn’t hold with such nonsense.
-
-    Mr. Dursley was the director of a firm called Grunnings, which made drills. He was a big, beefy man with hardly any neck, although he did have a very large mustache. Mrs. Dursley was thin and blonde and had nearly twice the usual amount of neck, which came in very useful as she spent so much of her time craning over garden fences, spying on the neighbors. The Dursleys had a small son called Dudley and in their opinion there was no finer boy anywhere.
-
-    The Dursleys had everything they wanted, but they also had a secret, and their greatest fear was that somebody would discover it. They didn’t think they could bear it if anyone found out about the Potters. Mrs. Potter was Mrs. Dursley’s sister, but they hadn’t met for several years; in fact, Mrs. Dursley pretended she didn’t have a sister, because her sister and her good-for-nothing husband were as unDursleyish as it was possible to be. The Dursleys shuddered to think what the neighbors would say if the Potters arrived in the street. The Dursleys knew that the Potters had a small son, too, but they had never even seen him. This boy was another good reason for keeping the Potters away; they didn’t want Dudley mixing with a child like that.
-
-    When Mr. and Mrs. Dursley woke up on the dull, gray Tuesday our story starts, there was nothing about the cloudy sky outside to suggest that strange and mysterious things would soon be happening all over the country. Mr. Dursley hummed as he picked out his most boring tie for work, and Mrs. Dursley gossiped away happily as she wrestled a screaming Dudley into his high chair.
-
-    None of them noticed a large, tawny owl flutter past the window.
-
-    At half past eight, Mr. Dursley picked up his briefcase, pecked Mrs. Dursley on the cheek, and tried to kiss Dudley good-bye but missed, because Dudley was now having a tantrum and throwing his cereal at the walls. “Little tyke,” chortled Mr. Dursley as he left the house. He got into his car and backed out of number four’s drive.
-
-    It was on the corner of the street that he noticed the first sign of something peculiar — a cat reading a map. For a second, Mr. Dursley didn’t realize what he had seen — then he jerked his head around to look again. There was a tabby cat standing on the corner of Privet Drive, but there wasn’t a map in sight. What could he have been thinking of? It must have been a trick of the light. Mr. Dursley blinked and stared at the cat. It stared back. As Mr. Dursley drove around the corner and up the road, he watched the cat in his mirror. It was now reading the sign that said Privet Drive — no, looking at the sign; cats couldn’t read maps or signs. Mr. Dursley gave himself a little shake and put the cat out of his mind. As he drove toward town he thought of nothing except a large order of drills he was hoping to get that day.
-
-    But on the edge of town, drills were driven out of his mind by something else. As he sat in the usual morning traffic jam, he couldn’t help noticing that there seemed to be a lot of strangely dressed people about. People in cloaks. Mr. Dursley couldn’t bear people who dressed in funny clothes — the getups you saw on young people! He supposed this was some stupid new fashion. He drummed his fingers on the steering wheel and his eyes fell on a huddle of these weirdos standing quite close by. They were whispering excitedly together. Mr. Dursley was enraged to see that a couple of them weren’t young at all; why, that man had to be older than he was, and wearing an emerald-green cloak! The nerve of him! But then it struck Mr. Dursley that this was probably some silly stunt — these people were obviously collecting for something . . . yes, that would be it. The traffic moved on and a few minutes later, Mr. Dursley arrived in the Grunnings parking lot, his mind back on drills.
-
-    Mr. Dursley always sat with his back to the window in his office on the ninth ﬂoor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at ﬁve diﬀerent people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
-
-    He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
-"""
-#%%
-harry_potter_neuroscope = plot_neuroscope(harry_potter_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
-save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-harry_potter_neuroscope
+# harry_potter_neuroscope = plot_neuroscope(harry_potter_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+# save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
+# harry_potter_neuroscope
 #%%
 # ============================================================================ #
-# Harry Potter in French
-harry_potter_fr_start = """
-Mr et Mrs Dursley, qui habitaient au 4, Privet Drive, avaient toujours affirmé avec la plus grande
-fierté qu'ils étaient parfaitement normaux, merci pour eux. Jamais quiconque n'aurait imaginé qu'ils
-puissent se trouver impliqués dans quoi que ce soit d'étrange ou de mystérieux. Ils n'avaient pas de
-temps à perdre avec des sornettes.
-Mr Dursley dirigeait la Grunnings, une entreprise qui fabriquait des perceuses. C'était un homme
-grand et massif, qui n'avait pratiquement pas de cou, mais possédait en revanche une moustache de
-belle taille. Mrs Dursley, quant à elle, était mince et blonde et disposait d'un cou deux fois plus long
-que la moyenne, ce qui lui était fort utile pour espionner ses voisins en regardant par-dessus les
-clôtures des jardins. Les Dursley avaient un petit garçon prénommé Dudley et c'était à leurs yeux le
-plus bel enfant du monde.
-Les Dursley avaient tout ce qu'ils voulaient. La seule chose indésirable qu'ils possédaient, c'était un
-secret dont ils craignaient plus que tout qu'on le découvre un jour. Si jamais quiconque venait à
-entendre parler des Potter, ils étaient convaincus qu'ils ne s'en remettraient pas. Mrs Potter était la
-soeur de Mrs Dursley, mais toutes deux ne s'étaient plus revues depuis des années. En fait, Mrs
-Dursley faisait comme si elle était fille unique, car sa soeur et son bon à rien de mari étaient aussi
-éloignés que possible de tout ce qui faisait un Dursley. Les Dursley tremblaient d'épouvante à la
-pensée de ce que diraient les voisins si par malheur les Potter se montraient dans leur rue. Ils savaient
-que les Potter, eux aussi, avaient un petit garçon, mais ils ne l'avaient jamais vu. Son existence
-constituait une raison supplémentaire de tenir les Potter à distance: il n'était pas question que le petit
-Dudley se mette à fréquenter un enfant comme celui-là.
-Lorsque Mr et Mrs Dursley s'éveillèrent, au matin du mardi où commence cette histoire, il faisait gris
-et triste et rien dans le ciel nuageux ne laissait prévoir que des choses étranges et mystérieuses allaient
-bientôt se produire dans tout le pays. Mr Dursley fredonnait un air en nouant sa cravate la plus sinistre
-pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potins du quartier en
-s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses
-poumons.
+
+# harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+# save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+# harry_potter_fr_neuroscope
+#%%
+# Mandarin example
+mandarin_text = """
+這是可能發生的最糟糕的事情。 我討厭你這麼說。 你所做的事情太可怕了。
+
+然而，你的兄弟卻做了一些了不起的事情。 他非常好，非常令人欽佩，非常善良。 我很愛他。
 """
-harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
-save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-harry_potter_fr_neuroscope
+# plot_neuroscope(mandarin_text, model, centred=True, verbose=False, special_dir=sentiment_dir)
 #%%
 # ============================================================================ #
 # Steering and generating
@@ -329,13 +287,12 @@ sentiment_activations.shape, sentiment_activations.device
 # ============================================================================ #
 # Top k max activating examples
 # %%
-plot_topk(sentiment_activations, k=50, layer=6, window_size=20, centred=True)
+# plot_topk(sentiment_activations, dataloader, model, k=50, layer=6, window_size=20, centred=True)
 # # %%
 # plot_topk(sentiment_activations, k=50, layer=12, window_size=20, centred=True)
 # %%
 # ============================================================================ #
 # Top p sampling
-#%%
 #%%
 # plot_top_p(sentiment_activations, k=50, layer=1, p=0.01)
 #%%
@@ -359,15 +316,16 @@ def expand_exclusions(exclusions: Iterable[str]):
     return list(set(expanded_exclusions))
 #%%
 exclusions = [
-    # worth investigating?
-    # ' Trek', ' Yorkshire', 'Puerto', 'Celsius', 'Linux', 'Reuters', 'Romania', 'Gary',
-    # more interesting ones
-    'adequate', 'truly', 'mis', 'dys', 'provides', 'offers', 'fully', 'Flint', 'migraine',  
-    'really', 'considerable', 'reasonably', 'substantial', 'additional', 'STD', 'Fukushima',
-    'Narcolepsy', 'Tooth', 'RUDE', 'Diagnostic', 'Kissinger', '!', 'Obama', 'Assad', 'Gaza',
-    'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
-    'agoraphobia', 'greenhouse', 'DoS', 'Medicaid', 
+    # proper nouns
+    # 'Flint', 'Fukushima', 'Obama', 'Assad', 'Gaza',
+    # 'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
+    # 'DoS', 'Medicaid', 'Kissinger',
+    'ISIS', 'GOP',
     # the rest
+    'adequate', 'truly', 'mis', 'dys', 'provides', 'offers', 'fully',  'migraine',  
+    'really', 'considerable', 'reasonably', 'substantial', 'additional', 'STD', 
+    'Narcolepsy', 'Tooth', 'RUDE', 'Diagnostic',  '!', 
+    'agoraphobia', 'greenhouse', 
     'stars', 'star',
     ' perfect', ' fantastic',' marvelous',' good',' remarkable',' wonderful',
     ' fabulous',' outstanding',' awesome',' exceptional',' incredible',' extraordinary',
@@ -464,20 +422,32 @@ exclusions = [
     'blood', 'slut', 'skewer', 'vaguely', 'riots', 'unclear', 'charm', 'disease', 'creepy',
     'burning', 'lack', 'guilty', 'glaring', 'failed', 'indoctrination', 'incoherent',
     'hospital', 'syphilis', 'guilty', 'infection', 'faux', 'burning', 'creepy',
-    'disease', 'welts', 'trojans', 'trojan', 'makeshift', 'cant', 
-
+    'disease', 'welts', 'trojans', 'trojan', 'makeshift', 'cant', 'tragic', 'stupid',
+    'vulgar', 'horrors', 'ugliness', 'miseries', 'loathing', 'hatred', 'dread', 'brutal',
+    'satisfactory', 'okay', 'ok', 'satisfying', 'filthy', 'crash', 'cynical', 'mourning',
+    'messy', 'tragedies', 'satisfied', 'cruelty', 'sadness', 'brutality', 'worsening',
+    'suicidal', 'despair', 'neatly', 'appropriately', 'handy', 'significant',
+    "'kay", 'aogny', 'sadly', 'hates', 'disaster', 'atrocities', 'effectively',
+    'worth', 'capability', 'ability', 'optimum', 'agony', 'tragedy', 'desperate',
+    'satisfy', 'optimal', 'helpful', 'definitely', 'cruel', 'crashed', 'ignorant',
+    'wrongful', 'imprisonment', 'cheap', 'severe', 'contamination', 'worried',
+    'anxiety', 'complaining', 'Hurricane', 'threat',
 
 ]
 exclusions = expand_exclusions(exclusions)
 #%%
 # plot_topk(
-#     sentiment_activations, k=50, layer=4, base_layer=0, window_size=20, centred=True,
+#     sentiment_activations, dataloader, model,
+#     k=20, layer=1, window_size=20, centred=True,
 #     exclusions=exclusions,
 # )
-# %%
-# plot_top_p(sentiment_activations, p=.02, k=50, layer=1, exclusions=exclusions)
-# %%
-# plot_topk(sentiment_activations, k=50, layer=1, exclusions=exclusions)
+# #%%
+# plot_top_p(
+#     sentiment_activations, dataloader, model,
+#     p=.02,
+#     k=20, layer=1, window_size=20, centred=True,
+#     exclusions=exclusions,
+# )
 # %%
 save_text('\n'.join(exclusions), 'sentiment_exclusions', model)
 #%%
@@ -497,7 +467,7 @@ def plot_histogram(
         name = tokens
     assert isinstance(name, str)
     activations: Float[Tensor, "row pos"] = all_activations[:, :, layer]
-    mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(tokens, all_activations)
+    mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(tokens, dataloader, model, all_activations)
     assert mask.shape == activations.shape
     activations_to_plot = activations[mask].flatten()
     fig = go.Histogram(x=activations_to_plot.cpu().numpy(), nbinsx=nbins, name=name)
@@ -513,7 +483,7 @@ def plot_histograms(
         fig.add_trace(hist, row=idx+1, col=1)
     fig.update_layout(
         title_text=f"Layer {layer} resid_pre sentiment cosine sims",
-        height=100 * (idx + 1)
+        height=200 * (idx + 1)
     )
     return fig
 # %%
@@ -528,13 +498,13 @@ neg_list = [
 pos_neg_dict = {
     "positive": pos_list,
     "negative": neg_list,
-    "surprising_proper_nouns": [" Trek", " Yorkshire", " Linux", " Reuters"],
-    "trek": [" Trek"],
-    "yorkshire": [" Yorkshire"],
-    "linux": [" Linux"],
-    "reuters": [" Reuters"],
-    "first_names": [" John", " Mary", " Bob", " Alice"],
-    "places": [" London", " Paris", " Tokyo"],
+    # "surprising_proper_nouns": [" Trek", " Yorkshire", " Linux", " Reuters"],
+    # "trek": [" Trek"],
+    # "yorkshire": [" Yorkshire"],
+    # "linux": [" Linux"],
+    # "reuters": [" Reuters"],
+    # "first_names": [" John", " Mary", " Bob", " Alice"],
+    # "places": [" London", " Paris", " Tokyo"],
     # "exclamation_mark": ["!"],
     # "other_punctuation": [".", ",", "?", ":", ";"],
 }
@@ -545,7 +515,7 @@ pos_neg_dict = {
 #     nbins=100,
 # )
 # %%
-# plot_topk(sentiment_activations, k=50, layer=1, inclusions=neg_list)
+# plot_topk(sentiment_activations, dataloader, model, k=20, layer=1, inclusions=pos_list)
 # %%
 # plot_topk(sentiment_activations, k=50, layer=1, inclusions=[".", ",", "?", ":", ";"])
 #%%
@@ -652,22 +622,26 @@ def get_resample_ablated_loss_diffs(
         if max_batch is not None and batch_idx + 1 >= max_batch:
             break
     loss_diffs = torch.cat(loss_diffs, dim=0)
-    topk_return = torch.topk(loss_diffs.flatten(), k=k, largest=True)
-    topk_pos_indices = np.array(np.unravel_index(topk_return.indices.cpu().numpy(), loss_diffs.shape)).T.tolist()
-    topk_pos_values = topk_return.values
 
-    # Get the examples and their activations corresponding to the most positive and negative activations
-    topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
-    text_sep = "\n"
-    topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_values)
-    texts = []
-    for index, example, loss_diff in topk_zip:
-        batch, pos = index
-        text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
-        print(f"Example: {model.to_string(example)}, Loss diff: {loss_diff:.4f}, Batch: {batch}, Pos: {pos}")
-        text_window.append(text_sep)
-        texts += text_window
-    return texts
+    return plot_topk(
+        loss_diffs, dataloader, model, k=k, layer=layer, window_size=window_size, centred=True,
+    )
+
+    # topk_return = torch.topk(loss_diffs.flatten(), k=k, largest=True)
+    # topk_pos_indices = np.array(np.unravel_index(topk_return.indices.cpu().numpy(), loss_diffs.shape)).T.tolist()
+    # topk_pos_values = topk_return.values
+    # # Get the examples and their activations corresponding to the most positive and negative activations
+    # topk_pos_examples = [dataloader.dataset[b]['tokens'][s].item() for b, s in topk_pos_indices]
+    # text_sep = "\n"
+    # topk_zip = zip(topk_pos_indices, topk_pos_examples, topk_pos_values)
+    # texts = []
+    # for index, example, loss_diff in topk_zip:
+    #     batch, pos = index
+    #     text_window: List[str] = extract_text_window(batch, pos, window_size=window_size)
+    #     print(f"Example: {model.to_string(example)}, Loss diff: {loss_diff:.4f}, Batch: {batch}, Pos: {pos}")
+    #     text_window.append(text_sep)
+    #     texts += text_window
+    # return texts
 # %%
 loss_diff_text = get_resample_ablated_loss_diffs(sentiment_dir, model, dataloader, k=50, window_size=10)
 plot_neuroscope(''.join(loss_diff_text), centred=True)
