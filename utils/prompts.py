@@ -224,10 +224,10 @@ def get_prompts(
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
     elif prompt_type == PromptType.SIMPLE_MOOD:
-        positive_feelings: CircularList[str] = prompt_config.get("positive_feelings", model)
-        negative_feelings: CircularList[str] = prompt_config.get("negative_feelings", model)
-        positive_adverbs: CircularList[str] = prompt_config.get("positive_adverbs", model)
-        negative_adverbs: CircularList[str] = prompt_config.get("negative_adverbs", model)
+        positive_feelings: CircularList[str] = prompt_config.get("positive_feelings", model, filter_length=1)
+        negative_feelings: CircularList[str] = prompt_config.get("negative_feelings", model, filter_length=1)
+        positive_adverbs: CircularList[str] = prompt_config.get("positive_adverbs", model, filter_length=2)
+        negative_adverbs: CircularList[str] = prompt_config.get("negative_adverbs", model, filter_length=2)
         n_prompts = min(len(positive_adverbs), len(positive_feelings), len(negative_adverbs), len(negative_feelings))
         pos_prompts = [formatter.format(ADV=positive_adverbs[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADV=negative_adverbs[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
@@ -235,8 +235,8 @@ def get_prompts(
         pos_answers = prompt_config.get("positive_moods", model)
         neg_answers = prompt_config.get("negative_moods", model)
     elif prompt_type == PromptType.SIMPLE_ADVERB:
-        positive_adverbs = prompt_config.get("positive_adverbs", model)
-        negative_adverbs = prompt_config.get("negative_adverbs", model)
+        positive_adverbs = prompt_config.get("positive_adverbs", model, filter_length=2)
+        negative_adverbs = prompt_config.get("negative_adverbs", model, filter_length=2)
         n_prompts = min(len(positive_adverbs), len(negative_adverbs))
         pos_prompts = [formatter.format(ADV=positive_adverbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADV=negative_adverbs[i]) for i in range(n_prompts)]
@@ -406,6 +406,10 @@ def get_dataset(
     corrupted_tokens = model.to_tokens(
         all_prompts[1:] + [all_prompts[0]], prepend_bos=True
     ).to(device)
+    assert (clean_tokens[:, -1] != model.tokenizer.bos_token_id).all(), (
+        "Last token in prompt should not be BOS token, "
+        "this suggests inconsistent prompt lengths."
+    )
     
     return (
         all_prompts, answer_tokens, clean_tokens, corrupted_tokens
