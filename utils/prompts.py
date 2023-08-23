@@ -126,7 +126,7 @@ class PromptType(Enum):
             PromptType.SIMPLE_TEST: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_MOOD: "The traveller was{ADV} walking to their destination. Upon arrival, they felt{FEEL}. \nConclusion: The traveller is",
             PromptType.SIMPLE_ADVERB: "The traveller{ADV} walked to their destination. The traveller felt very",
-            PromptType.SIMPLE_FRENCH: "Je pensais que ce film était{ADJ}, je l'ai{VRB}. \nConclusion: Ce film est",
+            PromptType.SIMPLE_FRENCH: "Je pensais que ce film était{ADJ}, je l'ai{VRB}. \nConclusion: Ce film est très",
             PromptType.PROPER_NOUNS: "When I hear the name{NOUN}, I feel very",
             PromptType.MEDICAL: "I heard the doctor use the word{MED} and I felt very",
             PromptType.COMPLETION: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very",
