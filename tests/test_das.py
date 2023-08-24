@@ -2,7 +2,7 @@ import unittest
 import torch
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
-from utils.das import RotateLayer, InverseRotateLayer, hook_fn_base, act_patch_simple, TrainingConfig, train_das_direction
+from utils.das import RotateLayer, InverseRotateLayer, hook_fn_base, act_patch_simple, TrainingConfig, train_das_subspace
 from utils.prompts import PromptType
 
 class TestFunctions(unittest.TestCase):
@@ -51,7 +51,7 @@ class TestFunctions(unittest.TestCase):
             "weight_decay": 0.0,
             "betas": (0.9, 0.999),
             "epochs": 10,
-            "n_directions": 2,
+            "d_das": 2,
             "wandb_enabled": False,
 
         }
@@ -69,7 +69,7 @@ class TestFunctions(unittest.TestCase):
             device=device,
         ).train()
         model.name = 'test'
-        direction = train_das_direction(
+        direction = train_das_subspace(
             model, device,
             PromptType.SIMPLE, 'ADJ', 0,
             PromptType.SIMPLE, 'ADJ', 0,

@@ -100,16 +100,14 @@ class RotationModule(torch.nn.Module):
     def __init__(
         self, 
         model: HookedTransformer,
-        orig_tokens: Int[Tensor, "batch pos"],
         patching_metric: Callable,
-        n_directions: int = 1,
+        d_das: int = 1,
     ):
         super().__init__()
         self.model = model
         self.device = self.model.cfg.device
-        self.register_buffer('orig_tokens', orig_tokens)
         self.d_model = model.cfg.d_model
-        self.n_directions = n_directions
+        self.d_das = d_das
         rotate_layer = RotateLayer(model.cfg.d_model, self.device)
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(
             rotate_layer, use_trivialization=False
@@ -134,7 +132,7 @@ class RotationModule(torch.nn.Module):
             batch=orig_resid.shape[0],
         )
         rotated_patch_act = torch.where(
-            d_model_index < self.n_directions,
+            d_model_index < self.d_das,
             rotated_new_act,
             rotated_orig_act,
         )
@@ -147,6 +145,7 @@ class RotationModule(torch.nn.Module):
         new_resid: Float[Tensor, "batch pos d_model"],
         layer: int,
         position: int,
+        orig_tokens: Int[Tensor, "batch pos"],
     ) -> Float[Tensor, ""]:
         patched_resid: Float[Tensor, "batch d_model"] = self.apply_rotation(
             orig_resid=orig_resid,
@@ -154,7 +153,7 @@ class RotationModule(torch.nn.Module):
         )
         metric: Float[Tensor, ""] = act_patch_simple(
             model=self.model,
-            orig_input=self.orig_tokens,
+            orig_input=orig_tokens,
             new_value=patched_resid,
             patching_metric=self.patching_metric,
             layer=layer,
@@ -171,7 +170,7 @@ class TrainingConfig:
         self.weight_decay = config_dict.get("weight_decay", 0)
         self.betas = config_dict.get("betas", (0.9, 0.999))
         self.epochs = config_dict.get("epochs", 64)
-        self.n_directions = config_dict.get("n_directions", 1)
+        self.d_das = config_dict.get("d_das", 1)
         self.wandb_enabled = config_dict.get("wandb_enabled", True)
         for k, v in config_dict.items():
             setattr(self, k, v)
@@ -185,15 +184,18 @@ class TrainingConfig:
 
 
 def fit_rotation(
-    orig_tokens: Int[Tensor, "batch pos"],
-    orig_cache: ActivationCache,
-    new_cache: ActivationCache,
+    orig_tokens_train: Int[Tensor, "batch pos"],
+    orig_cache_train: ActivationCache,
+    new_cache_train: ActivationCache,
+    orig_tokens_test: Int[Tensor, "batch pos"],
+    orig_cache_test: ActivationCache,
+    new_cache_test: ActivationCache,
     patching_metric: Callable,
     model: HookedTransformer, 
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
-    Entrypoint for training a DAS direction given
+    Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
     config = TrainingConfig(config_dict)
@@ -214,9 +216,8 @@ def fit_rotation(
     # Create the rotation module
     rotation_module = RotationModule(
         model=model,
-        orig_tokens=orig_tokens,
         patching_metric=patching_metric,
-        n_directions=config.n_directions,
+        d_das=config.d_das,
     )
 
     # Define the optimizer
@@ -230,13 +231,14 @@ def fit_rotation(
     for epoch in range(config.epochs):
         rotation_module.train()
         optimizer.zero_grad()
-        orig_resid_train = orig_cache[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
-        new_resid_train = new_cache[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
+        orig_resid_train = orig_cache_train[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
+        new_resid_train = new_cache_train[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
         loss = rotation_module(
             orig_resid_train,
             new_resid_train,
             layer=config.train_layer,
             position=config.train_position,
+            orig_tokens=orig_tokens_train,
         )
         assert loss.requires_grad, (
             "The loss must be a scalar that requires grad. \n"
@@ -251,10 +253,11 @@ def fit_rotation(
         rotation_module.eval()
         with torch.inference_mode():
             eval_loss = rotation_module(
-                orig_cache[eval_act_name][:, config.eval_position, :].clone(),
-                new_cache[eval_act_name][:, config.eval_position, :].clone(),
+                orig_cache_test[eval_act_name][:, config.eval_position, :].clone(),
+                new_cache_test[eval_act_name][:, config.eval_position, :].clone(),
                 layer=config.eval_layer,
                 position=config.eval_position,
+                orig_tokens=orig_tokens_test,
             )
         if config.wandb_enabled:
             wandb.log({"training_loss": loss.item(), "validation_loss": eval_loss.item()}, step=step)
@@ -263,7 +266,6 @@ def fit_rotation(
         losses.append(loss.item())
         models.append(rotation_module.state_dict())
         step += 1
-    direction = rotation_module.rotate_layer.weight[:, 0]
 
     best_model_idx = min(range(len(losses)), key=losses.__getitem__)
 
@@ -276,7 +278,7 @@ def fit_rotation(
     # Load the best model
     best_model_state_dict = models[best_model_idx]
     rotation_module.load_state_dict(best_model_state_dict)
-    return direction
+    return rotation_module.rotate_layer.weight[:, :config.d_das]
 
 
 def get_das_dataset(
@@ -308,7 +310,7 @@ def get_das_dataset(
     return all_prompts, orig_tokens, orig_cache, new_cache, loss_fn
 
 
-def train_das_direction(
+def train_das_subspace(
     model: HookedTransformer, device: torch.device, 
     train_type: PromptType, train_pos: str, train_layer: int,
     test_type: PromptType, test_pos: str, test_layer: int,
@@ -316,12 +318,15 @@ def train_das_direction(
 ):
     """
     Entrypoint to be used in directional patching experiments
-    Given training/validation datasets, train a DAS direction
+    Given training/validation datasets, train a DAS subspace
     """
     assert train_type == test_type, "train and test prompts must be the same"
     assert train_layer == test_layer, "train and test layers must be the same"
     all_prompts, orig_tokens, orig_cache, new_cache, loss_fn = get_das_dataset(
         train_type, layer=train_layer, model=model, device=device,
+    )
+    all_prompts_val, orig_tokens_val, orig_cache_val, new_cache_val, loss_fn_val = get_das_dataset(
+        test_type, layer=test_layer, model=model, device=device,
     )
     example = model.to_str_tokens(all_prompts[0])
     placeholders = train_type.get_placeholder_positions(example)
@@ -332,15 +337,20 @@ def train_das_direction(
         eval_position=placeholders[test_pos][-1],
     )
     config.update(config_arg)
-    direction = fit_rotation(
-        orig_tokens=orig_tokens,
-        orig_cache=orig_cache,
-        new_cache=new_cache,
+    directions = fit_rotation(
+        orig_tokens_train=orig_tokens,
+        orig_cache_train=orig_cache,
+        new_cache_train=new_cache,
+        orig_tokens_test=orig_tokens_val,
+        orig_cache_test=orig_cache_val,
+        new_cache_test=new_cache_val,
         patching_metric=loss_fn,
         model=model,
         **config,
     )
     save_array(
-        direction.detach().cpu().numpy(), f'das_{train_type.value}_{train_pos}_layer{train_layer}', model
+        directions.detach().cpu().numpy(), 
+        f'das_{train_type.value}_{train_pos}_layer{train_layer}', 
+        model,
     )
-    return direction
+    return directions

@@ -38,7 +38,7 @@ from utils.store import save_array, save_html, update_csv, get_csv, eval_csv, is
 from utils.prompts import PromptType
 from utils.residual_stream import ResidualStreamDataset
 from utils.classification import train_classifying_direction, ClassificationMethod
-from utils.das import FittingMethod, train_das_direction
+from utils.das import FittingMethod, train_das_subspace
 #%%
 # ============================================================================ #
 # model loading
@@ -64,7 +64,9 @@ METHODS = [
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
+    PromptType.CLASSIFICATION_4,
     PromptType.SIMPLE_ADVERB,
+    PromptType.SIMPLE_MOOD,
     # PromptType.SIMPLE_FRENCH,
     # PromptType.PROPER_NOUNS,
     # PromptType.MEDICAL,
@@ -86,24 +88,25 @@ def get_model(name: str):
 
 #%%
 sweep_func = partial(
-    train_das_direction,
+    train_das_subspace,
     model=get_model(MODELS[0]), device=device,
     train_type=PromptType.SIMPLE_TRAIN, train_pos='ADJ', train_layer=1,
-    test_type=PromptType.SIMPLE_TRAIN, test_pos='ADJ', test_layer=1,
+    test_type=PromptType.SIMPLE_MOOD, test_pos='ADV', test_layer=1,
     wandb_enabled=True,
 )
 sweep_config = {
     "method": "grid",
     "metric": {"name": "loss", "goal": "minimize"},
     "parameters": {
-        "lr": {"values": [1e-4, 1e-3, 1e-2]},
+        "lr": {"values": [1e-3]},
         "epochs": {"values": [512]},
         "weight_decay": {"values": [0.0]},
         "betas": {"values": [[0.9, 0.999]]},
+        "d_das": {"values": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]},
     },
 }
-# sweep_id = wandb.sweep(sweep_config, project="train_das_direction")
-# wandb.agent(sweep_id, function=sweep_func)
+sweep_id = wandb.sweep(sweep_config, project="train_das_direction")
+wandb.agent(sweep_id, function=sweep_func)
 #%%
 # ============================================================================ #
 # Training loop
@@ -156,7 +159,7 @@ for model_name, train_type, test_type, method in BAR:
             das_path = f"das_{train_type.value}_{train_pos}_layer{train_layer}.npy"
             if is_file(das_path, model):
                 continue
-            train_das_direction(
+            train_das_subspace(
                 model, device,
                 train_type, train_pos, train_layer,
                 test_type, test_pos, test_layer,
