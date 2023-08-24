@@ -788,7 +788,10 @@ def _act_patch_single(
     # Call this at the start, just in case! This also clears context by default
     model.reset_hooks()
 
-    batch_size, seq_len = new_cache["z", 0].shape[:2]
+    if isinstance(orig_input, Tensor):
+        batch_size, seq_len = orig_input.shape
+    else:
+        batch_size, seq_len = model.to_tokens(orig_input).shape
 
     if isinstance(patching_nodes, Node): patching_nodes = [patching_nodes]
     for node in patching_nodes:

@@ -47,9 +47,13 @@ def get_model(name: str) -> HookedTransformer:
         device=device,
     )
     model.name = name
+    model.set_use_attn_result(True)
     return model
 #%% # Data loading
-def load_data(prompt_type: str, model: HookedTransformer, verbose: bool = False) -> dict:
+def load_data(
+    prompt_type: str, model: HookedTransformer, verbose: bool = False,
+    names_filter = None,
+) -> dict:
     model.reset_hooks()
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
     if verbose:
@@ -59,7 +63,8 @@ def load_data(prompt_type: str, model: HookedTransformer, verbose: bool = False)
     # Run model with cache
     # N.B. corrupt -> clean
     clean_logits, clean_cache = model.run_with_cache(
-        clean_tokens,
+        clean_tokens, 
+        names_filter=names_filter,
     )
     clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
     if verbose:
@@ -168,9 +173,13 @@ def run_position_patching(
     orig_input: Float[Tensor, "batch seq"],
     new_cache: ActivationCache,
     patching_metric: Callable,
-    seq_pos: int,
+    seq_pos: Union[None, int],
     direction_label: str
 ) -> Tuple[Float[Tensor, ""], go.Figure]:
+    """
+    Runs patching experiment for a given position and layer.
+    seq_pos=None means all positions.
+    """
     model.reset_hooks()
     layer = extract_layer_from_string(direction_label)
     act_name, hook_layer = get_resid_name(layer, model)
@@ -185,6 +194,32 @@ def run_position_patching(
         disable=True,
     ) * 100
 #%%
+def run_head_patching(
+    model: HookedTransformer,
+    orig_input: Float[Tensor, "batch seq"],
+    new_cache: ActivationCache,
+    patching_metric: Callable,
+    seq_pos: Union[None, int],
+    heads: List[Tuple[int]],
+) -> Tuple[Float[Tensor, ""], go.Figure]:
+    """
+    Runs patching experiment for given heads and position.
+    seq_pos=None means all positions.
+    """
+    model.reset_hooks()
+    nodes = [
+        Node('result', layer, head, seq_pos=seq_pos) for layer, head in heads
+    ]
+    return act_patch(
+        model=model,
+        orig_input=orig_input,
+        new_cache=new_cache,
+        patching_nodes=nodes,
+        patching_metric=patching_metric,
+        verbose=False,
+        disable=True,
+    ) * 100
+#%%
 def get_results_for_direction_and_position(
     patching_metric_base: Callable, 
     prompt_type: PromptType,
@@ -192,8 +227,13 @@ def get_results_for_direction_and_position(
     direction_label: str, 
     direction: Float[Tensor, "d_model"],
     model: HookedTransformer,
-) -> List[float]:
-    data_dict = load_data(prompt_type, model)
+    heads: List[Tuple[int]] = None,
+) -> float:
+    if heads is None:
+        names_filter = lambda name: 'resid' in name
+    else:
+        names_filter = lambda name: 'result' in name
+    data_dict = load_data(prompt_type, model, names_filter=names_filter)
     example_prompt = model.to_str_tokens(data_dict["all_prompts"][0])
     if position == 'ALL':
         seq_pos = None
@@ -217,16 +257,23 @@ def get_results_for_direction_and_position(
     new_cache = create_cache_for_dir_patching(
         data_dict["clean_cache"], data_dict["corrupted_cache"], direction, model
     )
-    return run_position_patching(
-        model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, direction_label
+    if heads is None:
+        return run_position_patching(
+            model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, direction_label
+        )
+    return run_head_patching(
+        model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, heads
     )
+
 #%%
 def get_results_for_metric(
     patching_metric_base: Callable, prompt_types: Iterable[PromptType], 
     direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
     model: HookedTransformer,
+    heads: List[Tuple[int]] = None,
     disable_tqdm: bool = False,
 ) -> Float[pd.DataFrame, "direction prompt"]:
+    use_heads_label = "resid" if heads is None else "attn_result"
     metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
     bar = tqdm(
         itertools.product(prompt_types, zip(direction_labels, directions)), 
@@ -240,7 +287,7 @@ def get_results_for_metric(
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
             result = get_results_for_direction_and_position(
-                patching_metric_base, prompt_type, position, direction_label, direction, model
+                patching_metric_base, prompt_type, position, direction_label, direction, model, heads
             )
             # Ensure the column exists
             if (prompt_type.value, position) not in results.columns:
@@ -253,35 +300,49 @@ def get_results_for_metric(
         .style
         .background_gradient(cmap="Reds", axis=None, low=0, high=1)
         .format("{:.1f}%")
-        .set_caption(f"Direction patching ({metric_label}) in {model.name}")
+        .set_caption(f"Direction patching ({metric_label}, {use_heads_label}) in {model.name}")
     )
-    save_html(layers_style, f"direction_patching_{metric_label}", model)
+    save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
     return results
 # %%
+HEADS = {
+    "EleutherAI/pythia-2.8b": [
+        (17, 19), (22, 5), (14,4), (20, 10), (12, 2), (10, 26), 
+        (12, 4), (12, 17), (14, 2), (13, 20), (9, 29), (11, 16) 
+    ]
+}
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
     # PromptType.COMPLETION,
     # PromptType.SIMPLE_ADVERB,
     PromptType.SIMPLE_MOOD,
-    PromptType.SIMPLE_FRENCH,
+    # PromptType.SIMPLE_FRENCH,
 ]
 METRICS = [
     logit_diff_denoising,
     # logit_flip_metric,
     # prob_diff_denoising,
 ]
+USE_HEADS = [True, ]
 model_metric_bar = tqdm(
-    itertools.product(MODELS, METRICS), total=len(MODELS) * len(METRICS)
+    itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
 )
 model = None
-for model_name, metric in model_metric_bar:
-    model_metric_bar.set_description(f"{model_name} {metric.__name__}")
+for model_name, metric, use_heads in model_metric_bar:
+    if use_heads and model_name not in HEADS:
+        continue
+    elif use_heads:
+        heads = HEADS[model_name]
+    else:
+        heads = None
+    patch_label = "attn_result" if use_heads else "resid" 
+    model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label}")
     if model is None or model.name != model_name:
         model = get_model(model_name)
     DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
     results = get_results_for_metric(
-        metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model
+        metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, heads
     )
 # %%

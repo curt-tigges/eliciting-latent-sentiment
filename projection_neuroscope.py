@@ -26,8 +26,8 @@ from utils.store import load_array, save_html, save_array, is_file, get_model_na
 from utils.neuroscope import plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, harry_potter_start, harry_potter_fr_start, get_batch_pos_mask
 #%%
 torch.set_grad_enabled(False)
-device = "cpu"
-MODEL_NAME = "EleutherAI/pythia-2.8b"
+device = "cuda"
+MODEL_NAME = "gpt2-xl"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -38,7 +38,7 @@ model = HookedTransformer.from_pretrained(
 )
 model.name = MODEL_NAME
 #%%
-sentiment_dir = load_array("kmeans_simple_train_ADJ_layer9", model)
+sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
@@ -52,16 +52,16 @@ sentiment_dir /= sentiment_dir.norm()
 #%%
 # ============================================================================ #
 
-# harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
-# save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-# harry_potter_fr_neuroscope
+harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+harry_potter_fr_neuroscope
 #%%
 # Mandarin example
-mandarin_text = """
-這是可能發生的最糟糕的事情。 我討厭你這麼說。 你所做的事情太可怕了。
+# mandarin_text = """
+# 這是可能發生的最糟糕的事情。 我討厭你這麼說。 你所做的事情太可怕了。
 
-然而，你的兄弟卻做了一些了不起的事情。 他非常好，非常令人欽佩，非常善良。 我很愛他。
-"""
+# 然而，你的兄弟卻做了一些了不起的事情。 他非常好，非常令人欽佩，非常善良。 我很愛他。
+# """
 # plot_neuroscope(mandarin_text, model, centred=True, verbose=False, special_dir=sentiment_dir)
 #%%
 # ============================================================================ #
