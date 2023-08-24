@@ -50,7 +50,10 @@ def get_model(name: str) -> HookedTransformer:
     model.set_use_attn_result(True)
     return model
 #%% # Data loading
-def load_data(prompt_type: str, model: HookedTransformer, verbose: bool = False) -> dict:
+def load_data(
+    prompt_type: str, model: HookedTransformer, verbose: bool = False,
+    names_filter = None,
+) -> dict:
     model.reset_hooks()
     all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
     if verbose:
@@ -60,7 +63,8 @@ def load_data(prompt_type: str, model: HookedTransformer, verbose: bool = False)
     # Run model with cache
     # N.B. corrupt -> clean
     clean_logits, clean_cache = model.run_with_cache(
-        clean_tokens,
+        clean_tokens, 
+        names_filter=names_filter,
     )
     clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
     if verbose:
@@ -225,7 +229,11 @@ def get_results_for_direction_and_position(
     model: HookedTransformer,
     heads: List[Tuple[int]] = None,
 ) -> float:
-    data_dict = load_data(prompt_type, model)
+    if heads is None:
+        names_filter = lambda name: 'resid' in name
+    else:
+        names_filter = lambda name: 'result' in name
+    data_dict = load_data(prompt_type, model, names_filter=names_filter)
     example_prompt = model.to_str_tokens(data_dict["all_prompts"][0])
     if position == 'ALL':
         seq_pos = None
@@ -317,7 +325,7 @@ METRICS = [
     # logit_flip_metric,
     # prob_diff_denoising,
 ]
-USE_HEADS = [True, False]
+USE_HEADS = [True, ]
 model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
 )
