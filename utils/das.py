@@ -346,6 +346,7 @@ def train_das_subspace(
         orig_cache_test=orig_cache_val,
         new_cache_test=new_cache_val,
         metric_train=loss_fn,
+        metric_test=loss_fn_val,
         model=model,
         **config,
     )
