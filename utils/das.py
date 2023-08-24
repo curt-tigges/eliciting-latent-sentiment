@@ -100,7 +100,6 @@ class RotationModule(torch.nn.Module):
     def __init__(
         self, 
         model: HookedTransformer,
-        patching_metric: Callable,
         d_das: int = 1,
     ):
         super().__init__()
@@ -113,7 +112,6 @@ class RotationModule(torch.nn.Module):
             rotate_layer, use_trivialization=False
         )
         self.inverse_rotate_layer = InverseRotateLayer(self.rotate_layer)
-        self.patching_metric = patching_metric
 
     def apply_rotation(
         self,
@@ -146,6 +144,7 @@ class RotationModule(torch.nn.Module):
         layer: int,
         position: int,
         orig_tokens: Int[Tensor, "batch pos"],
+        patching_metric: Callable,
     ) -> Float[Tensor, ""]:
         patched_resid: Float[Tensor, "batch d_model"] = self.apply_rotation(
             orig_resid=orig_resid,
@@ -155,7 +154,7 @@ class RotationModule(torch.nn.Module):
             model=self.model,
             orig_input=orig_tokens,
             new_value=patched_resid,
-            patching_metric=self.patching_metric,
+            patching_metric=patching_metric,
             layer=layer,
             position=position,
         )
@@ -190,7 +189,8 @@ def fit_rotation(
     orig_tokens_test: Int[Tensor, "batch pos"],
     orig_cache_test: ActivationCache,
     new_cache_test: ActivationCache,
-    patching_metric: Callable,
+    metric_train: Callable,
+    metric_test: Callable,
     model: HookedTransformer, 
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
@@ -216,7 +216,6 @@ def fit_rotation(
     # Create the rotation module
     rotation_module = RotationModule(
         model=model,
-        patching_metric=patching_metric,
         d_das=config.d_das,
     )
 
@@ -239,6 +238,7 @@ def fit_rotation(
             layer=config.train_layer,
             position=config.train_position,
             orig_tokens=orig_tokens_train,
+            patching_metric=metric_train,
         )
         assert loss.requires_grad, (
             "The loss must be a scalar that requires grad. \n"
@@ -258,6 +258,7 @@ def fit_rotation(
                 layer=config.eval_layer,
                 position=config.eval_position,
                 orig_tokens=orig_tokens_test,
+                patching_metric=metric_test,
             )
         if config.wandb_enabled:
             wandb.log({"training_loss": loss.item(), "validation_loss": eval_loss.item()}, step=step)
@@ -320,21 +321,21 @@ def train_das_subspace(
     Entrypoint to be used in directional patching experiments
     Given training/validation datasets, train a DAS subspace
     """
-    assert train_type == test_type, "train and test prompts must be the same"
-    assert train_layer == test_layer, "train and test layers must be the same"
     all_prompts, orig_tokens, orig_cache, new_cache, loss_fn = get_das_dataset(
         train_type, layer=train_layer, model=model, device=device,
     )
     all_prompts_val, orig_tokens_val, orig_cache_val, new_cache_val, loss_fn_val = get_das_dataset(
         test_type, layer=test_layer, model=model, device=device,
     )
-    example = model.to_str_tokens(all_prompts[0])
-    placeholders = train_type.get_placeholder_positions(example)
+    example_train = model.to_str_tokens(all_prompts[0])
+    placeholders_train = train_type.get_placeholder_positions(example_train)
+    example_val = model.to_str_tokens(all_prompts_val[0])
+    placeholders_val = test_type.get_placeholder_positions(example_val)
     config = dict(
         train_layer=train_layer,
-        train_position=placeholders[train_pos][-1],
+        train_position=placeholders_train[train_pos][-1],
         eval_layer=test_layer,
-        eval_position=placeholders[test_pos][-1],
+        eval_position=placeholders_val[test_pos][-1],
     )
     config.update(config_arg)
     directions = fit_rotation(
@@ -344,7 +345,7 @@ def train_das_subspace(
         orig_tokens_test=orig_tokens_val,
         orig_cache_test=orig_cache_val,
         new_cache_test=new_cache_val,
-        patching_metric=loss_fn,
+        metric_train=loss_fn,
         model=model,
         **config,
     )
