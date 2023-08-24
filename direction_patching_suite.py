@@ -10,8 +10,6 @@ import plotly.express as px
 import plotly.io as pio
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils.prompts import get_dataset
-from utils.circuit_analysis import get_logit_diff
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, utils
@@ -20,43 +18,13 @@ from functools import partial
 from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
+from utils.prompts import get_dataset, PromptType
+from utils.circuit_analysis import get_logit_diff, get_prob_diff, create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
 from utils.store import save_array, load_array, save_html, to_csv
-from utils.prompts import PromptType
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
 pio.renderers.default = "notebook"
-update_layout_set = {
-    "xaxis_range", "yaxis_range", "hovermode", "xaxis_title", "yaxis_title", "colorbar", "colorscale", "coloraxis", "title_x", "bargap", "bargroupgap", "xaxis_tickformat",
-    "yaxis_tickformat", "title_y", "legend_title_text", "xaxis_showgrid", "xaxis_gridwidth", "xaxis_gridcolor", "yaxis_showgrid", "yaxis_gridwidth", "yaxis_gridcolor",
-    "showlegend", "xaxis_tickmode", "yaxis_tickmode", "xaxis_tickangle", "yaxis_tickangle", "margin", "xaxis_visible", "yaxis_visible", "bargap", "bargroupgap"
-}
-
-def imshow_p(tensor, **kwargs):
-    kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
-    kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
-    facet_labels = kwargs_pre.pop("facet_labels", None)
-    border = kwargs_pre.pop("border", False)
-    if "color_continuous_scale" not in kwargs_pre:
-        kwargs_pre["color_continuous_scale"] = "RdBu"
-    if "margin" in kwargs_post and isinstance(kwargs_post["margin"], int):
-        kwargs_post["margin"] = dict.fromkeys(list("tblr"), kwargs_post["margin"])
-    fig = px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, **kwargs_pre)
-    if facet_labels:
-        for i, label in enumerate(facet_labels):
-            fig.layout.annotations[i]['text'] = label
-    if border:
-        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
-        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
-    # things like `xaxis_tickmode` should be applied to all subplots. This is super janky lol but I'm under time pressure
-    for setting in ["tickangle"]:
-      if f"xaxis_{setting}" in kwargs_post:
-          i = 2
-          while f"xaxis{i}" in fig["layout"]:
-            kwargs_post[f"xaxis{i}_{setting}"] = kwargs_post[f"xaxis_{setting}"]
-            i += 1
-    fig.update_layout(**kwargs_post)
-    return fig
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
@@ -64,10 +32,10 @@ MODELS = [
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
-    # 'EleutherAI/pythia-160m',
-    # 'EleutherAI/pythia-410m',
-    # 'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b'
+    'EleutherAI/pythia-160m',
+    'EleutherAI/pythia-410m',
+    'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b',
 ]
 #%%
 def get_model(name: str) -> HookedTransformer:
@@ -80,43 +48,6 @@ def get_model(name: str) -> HookedTransformer:
     )
     model.name = name
     return model
-#%%
-def get_prob_diff(
-    logits: Float[Tensor, "batch pos vocab"],
-    answer_tokens: Float[Tensor, "batch n_pairs 2"], 
-    per_prompt: bool = False,
-):
-    """
-    Gets the difference between the softmax probabilities of the provided tokens 
-    e.g., the correct and incorrect tokens in IOI
-
-    Args:
-        logits (torch.Tensor): Logits to use.
-        answer_tokens (torch.Tensor): Indices of the tokens to compare.
-
-    Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
-    """
-    n_pairs = answer_tokens.shape[1]
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
-    logits = einops.repeat(
-        logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
-    )
-    probs: Float[Tensor, "batch n_pairs vocab"] = logits.softmax(dim=-1)
-    left_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
-        -1, answer_tokens[:, :, 0].unsqueeze(-1)
-    )
-    right_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
-        -1, answer_tokens[:, :, 1].unsqueeze(-1)
-    )
-    left_probs: Float[Tensor, "batch"] = left_probs.mean(dim=1)
-    right_probs: Float[Tensor, "batch"] = right_probs.mean(dim=1)
-    if per_prompt:
-        return left_probs - right_probs
-
-    return (left_probs - right_probs).mean()
 #%% # Data loading
 def load_data(prompt_type: str, model: HookedTransformer, verbose: bool = False) -> dict:
     model.reset_hooks()
@@ -159,48 +90,6 @@ def load_data(prompt_type: str, model: HookedTransformer, verbose: bool = False)
         "corrupted_logit_diff": corrupted_logit_diff,
         "corrupted_prob_diff": corrupted_prob_diff,
     }
-#%% # Metrics
-def logit_diff_denoising_base(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"],
-    corrupted_diff: float,
-    clean_diff: float,
-) -> Float[Tensor, ""]:
-    '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
-    same as on flipped input, and 1 when performance is same as on clean input.
-    '''
-    patched_logit_diff = get_logit_diff(logits, answer_tokens)
-    return ((patched_logit_diff - corrupted_diff) / (clean_diff  - corrupted_diff)).item()
-#%%
-def prob_diff_denoising_base(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch 2"],
-    corrupted_diff: float,
-    clean_diff: float,
-) -> Float[Tensor, ""]:
-    '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
-    same as on flipped input, and 1 when performance is same as on clean input.
-    '''
-    
-    patched_logit_diff = get_prob_diff(logits, answer_tokens)
-    return ((patched_logit_diff - corrupted_diff) / (clean_diff  - corrupted_diff)).item()
-#%%
-def logit_flip_metric_base(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch pair 2"] ,
-    corrupted_diff: float,
-    clean_diff: float,
-) -> Float[Tensor, ""]:
-    '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
-    same as on flipped input, and 1 when performance is same as on clean input.
-    '''
-    patched_logit_diff = get_logit_diff(logits, answer_tokens, per_prompt=True)
-    clean_distances = (clean_diff - patched_logit_diff).abs()
-    corrupt_distances = (corrupted_diff - patched_logit_diff).abs()
-    return (clean_distances < corrupt_distances).float().mean().item()
 #%%
 def display_cosine_sims(
     direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
@@ -252,7 +141,7 @@ def zero_pad_layer_string(s: str) -> str:
 def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List[np.ndarray], List[str]]:
     n_layers = model.cfg.n_layers + 1
     direction_labels = (
-        [f'kmeans_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
+        # [f'kmeans_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         # [f'pca2_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         # [f'svd_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         [f'mean_diff_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
@@ -273,76 +162,6 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
 #%%
 # ============================================================================ #
 # Directional activation patching
-#%% # Create new cache
-def create_cache_for_dir_patching(
-    clean_cache: ActivationCache, 
-    corrupted_cache: ActivationCache, 
-    sentiment_dir: Float[Tensor, "d_model"],
-    model: HookedTransformer,
-) -> ActivationCache:
-    '''
-    We patch the sentiment direction from corrupt to clean
-    '''
-    cache_dict = dict()
-    for act_name, clean_value in clean_cache.items():
-        is_result = act_name.endswith('result')
-        is_resid = (
-            act_name.endswith('resid_pre') or
-            act_name.endswith('resid_post') or
-            act_name.endswith('attn_out') or
-            act_name.endswith('mlp_out')
-        )
-        if is_resid:
-            clean_value = clean_value.to(device)
-            corrupt_value = corrupted_cache[act_name].to(device)
-            corrupt_proj = einops.einsum(
-                corrupt_value, sentiment_dir, 'b s d, d -> b s'
-            )
-            clean_proj = einops.einsum(
-                clean_value, sentiment_dir, 'b s d, d -> b s'
-            )
-            sentiment_dir_broadcast = einops.repeat(
-                sentiment_dir, 'd -> b s d', 
-                b=corrupt_value.shape[0], 
-                s=corrupt_value.shape[1], 
-            )
-            proj_diff = einops.repeat(
-                clean_proj - corrupt_proj, 
-                'b s -> b s d', 
-                d=corrupt_value.shape[-1]
-            )
-            sentiment_adjustment = proj_diff * sentiment_dir_broadcast
-            cache_dict[act_name] = (
-                corrupt_value + sentiment_adjustment
-            )
-        elif is_result:
-            clean_value = clean_value.to(device)
-            corrupt_value = corrupted_cache[act_name].to(device)
-            corrupt_proj = einops.einsum(
-                corrupt_value, sentiment_dir, 'b s h d, d -> b s h'
-            )
-            clean_proj = einops.einsum(
-                clean_value, sentiment_dir, 'b s h d, d -> b s h'
-            )
-            sentiment_dir_broadcast = einops.repeat(
-                sentiment_dir, 'd -> b s h d', 
-                b=corrupt_value.shape[0], 
-                s=corrupt_value.shape[1], 
-                h=corrupt_value.shape[2]
-            )
-            proj_diff = einops.repeat(
-                clean_proj - corrupt_proj, 
-                'b s h -> b s h d', 
-                d=corrupt_value.shape[3]
-            )
-            sentiment_adjustment = proj_diff * sentiment_dir_broadcast
-            cache_dict[act_name] = (
-                corrupt_value + sentiment_adjustment
-            )
-        else:
-            cache_dict[act_name] = clean_value
-
-    return ActivationCache(cache_dict, model)
 #%%
 def run_position_patching(
     model: HookedTransformer,
@@ -389,8 +208,9 @@ def get_results_for_direction_and_position(
     patching_metric = partial(
         patching_metric_base, 
         answer_tokens=data_dict["answer_tokens"],
-        corrupted_diff=corrupt_diff,
-        clean_diff=clean_diff,
+        corrupted_value=corrupt_diff,
+        clean_value=clean_diff,
+        return_tensor=True,
     )
 
     direction = direction / direction.norm()
@@ -442,14 +262,15 @@ def get_results_for_metric(
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
-    PromptType.COMPLETION,
-    PromptType.SIMPLE_ADVERB,
+    # PromptType.COMPLETION,
+    # PromptType.SIMPLE_ADVERB,
     PromptType.SIMPLE_MOOD,
+    PromptType.SIMPLE_FRENCH,
 ]
 METRICS = [
-    logit_diff_denoising_base,
-    # logit_flip_metric_base,
-    # prob_diff_denoising_base,
+    logit_diff_denoising,
+    # logit_flip_metric,
+    # prob_diff_denoising,
 ]
 model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS), total=len(MODELS) * len(METRICS)

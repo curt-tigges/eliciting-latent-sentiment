@@ -419,16 +419,21 @@ negative_french_adjectives:
 
 positive_french_answers:
   - bien
-  - recommandé
-  - impressionnant
-  - ccaptivant
-  - réussi
+  - bon
+  - beau
+  - agréable
+  - amusant
+  - drôle
+  - émotif
+  - sympa
 
 negative_french_answers:
   - mauvais
+  - étranger
+  - difficile à regarder
+  - simple
   - décevant
   - ennuyeux
-  - difficile à regarder
   - inintéressant
 
 positive_french_verbs:
