@@ -85,28 +85,31 @@ def get_model(name: str):
 #%%
 # ============================================================================ #
 # DAS sweep with wandb
-
 #%%
-sweep_func = partial(
-    train_das_subspace,
-    model=get_model(MODELS[0]), device=device,
-    train_type=PromptType.SIMPLE_TRAIN, train_pos='ADJ', train_layer=1,
-    test_type=PromptType.SIMPLE_MOOD, test_pos=None, test_layer=1,
-    wandb_enabled=True,
-)
-sweep_config = {
-    "method": "grid",
-    "metric": {"name": "loss", "goal": "minimize"},
-    "parameters": {
-        "lr": {"values": [1e-3]},
-        "epochs": {"values": [512]},
-        "weight_decay": {"values": [0.0]},
-        "betas": {"values": [[0.9, 0.999]]},
-        "d_das": {"values": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]},
-    },
-}
-sweep_id = wandb.sweep(sweep_config, project=train_das_subspace.__name__)
-wandb.agent(sweep_id, function=sweep_func)
+for sweep_model in MODELS:
+    sweep_model = get_model(sweep_model)
+    sweep_layer = sweep_model.cfg.n_layers // 2
+    sweep_func = partial(
+        train_das_subspace,
+        model=sweep_model, device=device,
+        train_type=PromptType.SIMPLE_TRAIN, train_pos='ADJ', train_layer=sweep_layer,
+        test_type=PromptType.SIMPLE_MOOD, test_pos=None, test_layer=sweep_layer,
+        wandb_enabled=True,
+    )
+    sweep_config = {
+        "name": f"DAS subspace dimension ({sweep_model.cfg.model_name})",
+        "method": "grid",
+        "metric": {"name": "loss", "goal": "minimize"},
+        "parameters": {
+            "lr": {"values": [1e-3]},
+            "epochs": {"values": [512]},
+            "weight_decay": {"values": [0.0]},
+            "betas": {"values": [[0.9, 0.999]]},
+            "d_das": {"values": [1, 2, 4, 8, 16]},
+        },
+    }
+    sweep_id = wandb.sweep(sweep_config, project=train_das_subspace.__name__)
+    wandb.agent(sweep_id, function=sweep_func)
 #%%
 # ============================================================================ #
 # Training loop
