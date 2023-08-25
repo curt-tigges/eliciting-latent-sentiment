@@ -122,17 +122,19 @@ class RotationModule(torch.nn.Module):
         new_resid: Float[Tensor, "batch *pos d_model"],
     ) -> Float[Tensor, "batch d_model"]:
         rotated_orig_act: Float[
-            Tensor, "batch d_model"
+            Tensor, "batch *pos d_model"
         ] = self.rotate_layer(orig_resid)
         rotated_new_act: Float[
-            Tensor, "batch d_model"
+            Tensor, "batch *pos d_model"
         ] = self.rotate_layer(new_resid)
-        d_model_index = einops.repeat(
-            torch.arange(self.model.cfg.d_model, device=self.device),
-            "d -> batch d",
-            batch=orig_resid.shape[0],
-        )
-        rotated_patch_act = torch.where(
+        d_model_index: Float[
+            Tensor, "batch *pos d_model"
+        ] = torch.arange(
+            self.model.cfg.d_model, device=self.device
+        ).expand(orig_resid.shape)
+        rotated_patch_act: Float[
+            Tensor, "batch *pos d_model"
+        ] = torch.where(
             d_model_index < self.d_das,
             rotated_new_act,
             rotated_orig_act,
@@ -195,6 +197,7 @@ def fit_rotation(
     metric_train: Callable,
     metric_test: Callable,
     model: HookedTransformer, 
+    project: str = None,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
@@ -204,7 +207,7 @@ def fit_rotation(
     config = TrainingConfig(config_dict)
     # Initialize wandb
     if config.wandb_enabled:
-        wandb.init(project='train_rotation', config=config.to_dict())
+        wandb.init(config=config.to_dict(), project=project)
         config = wandb.config
 
     train_act_name, _ = get_resid_name(config.train_layer, model)
