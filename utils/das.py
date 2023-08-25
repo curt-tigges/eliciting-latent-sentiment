@@ -176,6 +176,7 @@ class TrainingConfig:
         self.epochs = config_dict.get("epochs", 64)
         self.d_das = config_dict.get("d_das", 1)
         self.wandb_enabled = config_dict.get("wandb_enabled", True)
+        self.model_name = config_dict.get("model_name", "unnamed-model")
         for k, v in config_dict.items():
             setattr(self, k, v)
 
@@ -204,6 +205,8 @@ def fit_rotation(
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
+    if 'model_name' not in config_dict:
+        config_dict['model_name'] = model.cfg.model_name
     config = TrainingConfig(config_dict)
     # Initialize wandb
     if config.wandb_enabled:
@@ -225,7 +228,8 @@ def fit_rotation(
         new_resid_test_base = new_resid_test_base[:, config.eval_position, :]
 
     # Create a list to store the losses and models
-    losses = []
+    losses_train = []
+    losses_test = []
     models = [] 
     step = 0
     torch.manual_seed(config.seed)
@@ -277,15 +281,17 @@ def fit_rotation(
             wandb.log({"training_loss": loss.item(), "validation_loss": eval_loss.item()}, step=step)
 
         # Store the loss and model for this seed
-        losses.append(loss.item())
+        losses_train.append(loss.item())
+        losses_test.append(eval_loss.item())
         models.append(rotation_module.state_dict())
         step += 1
 
-    best_model_idx = min(range(len(losses)), key=losses.__getitem__)
+    best_model_idx = min(range(len(losses_train)), key=losses_train.__getitem__)
 
     # Log the best model's loss and save the model
     if config.wandb_enabled:
-        wandb.log({"Best Loss": losses[best_model_idx]})
+        wandb.log({"best_training_loss": losses_train[best_model_idx]})
+        wandb.log({"best_validation_loss": losses_test[best_model_idx]})
         wandb.save("best_rotation.pt")
         wandb.finish()
 
