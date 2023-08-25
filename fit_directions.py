@@ -91,7 +91,7 @@ sweep_func = partial(
     train_das_subspace,
     model=get_model(MODELS[0]), device=device,
     train_type=PromptType.SIMPLE_TRAIN, train_pos='ADJ', train_layer=1,
-    test_type=PromptType.SIMPLE_MOOD, test_pos='ADV', test_layer=1,
+    test_type=PromptType.SIMPLE_MOOD, test_pos=None, test_layer=1,
     wandb_enabled=True,
 )
 sweep_config = {
@@ -105,7 +105,7 @@ sweep_config = {
         "d_das": {"values": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]},
     },
 }
-sweep_id = wandb.sweep(sweep_config, project="train_das_direction")
+sweep_id = wandb.sweep(sweep_config, project=train_das_subspace.__name__)
 wandb.agent(sweep_id, function=sweep_func)
 #%%
 # ============================================================================ #

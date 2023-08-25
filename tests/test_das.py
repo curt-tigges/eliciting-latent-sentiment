@@ -53,7 +53,6 @@ class TestFunctions(unittest.TestCase):
             "epochs": 10,
             "d_das": 2,
             "wandb_enabled": False,
-
         }
         config = TrainingConfig(config_dict)
         self.assertEqual(config.seed, 42)

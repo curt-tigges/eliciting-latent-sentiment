@@ -49,26 +49,29 @@ class RotateLayer(torch.nn.Module):
 
 
 def hook_fn_base(
-    resid: Float[Tensor, "batch seq d_model"],
+    resid: Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
     layer: int,
-    position: int,
-    new_value: Float[Tensor, "batch d_model"],
+    position: Union[None, int],
+    new_value: Float[Tensor, "batch *pos d_model"]
 ):
     batch_size, seq_len, d_model = resid.shape
     assert 'resid' in hook.name
     if hook.layer() != layer:
         return resid
-    position_index = einops.repeat(
-        torch.arange(seq_len, device=resid.device),
-        "seq -> batch seq d_model",
-        batch=batch_size,
-        d_model=d_model,
-    )
+    if position is None:
+        assert new_value.shape == resid.shape
+        return new_value
     new_value_repeat = einops.repeat(
         new_value,
-        "batch d_model -> batch seq d_model",
-        seq=seq_len,
+        "batch d_model -> batch pos d_model",
+        pos=seq_len,
+    )
+    position_index = einops.repeat(
+        torch.arange(seq_len, device=resid.device),
+        "pos -> batch pos d_model",
+        batch=batch_size,
+        d_model=d_model,
     )
     return torch.where(
         position_index == position,
@@ -82,7 +85,7 @@ def act_patch_simple(
     orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
     new_value: Float[Tensor, "d_model"],
     layer: int,
-    position: int,
+    position: Union[None, int],
     patching_metric: Callable,
 ) -> Float[Tensor, ""]:
     assert layer <= model.cfg.n_layers
@@ -115,8 +118,8 @@ class RotationModule(torch.nn.Module):
 
     def apply_rotation(
         self,
-        orig_resid: Float[Tensor, "batch d_model"],
-        new_resid: Float[Tensor, "batch d_model"],
+        orig_resid: Float[Tensor, "batch *pos d_model"],
+        new_resid: Float[Tensor, "batch *pos d_model"],
     ) -> Float[Tensor, "batch d_model"]:
         rotated_orig_act: Float[
             Tensor, "batch d_model"
@@ -139,10 +142,10 @@ class RotationModule(torch.nn.Module):
 
     def forward(
         self, 
-        orig_resid: Float[Tensor, "batch pos d_model"],
-        new_resid: Float[Tensor, "batch pos d_model"],
+        orig_resid: Float[Tensor, "batch *pos d_model"],
+        new_resid: Float[Tensor, "batch *pos d_model"],
         layer: int,
-        position: int,
+        position: Union[None, int],
         orig_tokens: Int[Tensor, "batch pos"],
         patching_metric: Callable,
     ) -> Float[Tensor, ""]:
@@ -207,6 +210,17 @@ def fit_rotation(
     train_act_name, _ = get_resid_name(config.train_layer, model)
     eval_act_name, _ = get_resid_name(config.eval_layer, model)
 
+    orig_resid_train_base = orig_cache_train[train_act_name]
+    new_resid_train_base = new_cache_train[train_act_name]
+    if config.train_position is not None:
+        orig_resid_train_base = orig_resid_train_base[:, config.train_position, :]
+        new_resid_train_base = new_resid_train_base[:, config.train_position, :]
+    orig_resid_test_base = orig_cache_test[eval_act_name]
+    new_resid_test_base = new_cache_test[eval_act_name]
+    if config.eval_position is not None:
+        orig_resid_test_base = orig_resid_test_base[:, config.eval_position, :]
+        new_resid_test_base = new_resid_test_base[:, config.eval_position, :]
+
     # Create a list to store the losses and models
     losses = []
     models = [] 
@@ -230,11 +244,9 @@ def fit_rotation(
     for epoch in range(config.epochs):
         rotation_module.train()
         optimizer.zero_grad()
-        orig_resid_train = orig_cache_train[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
-        new_resid_train = new_cache_train[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
         loss = rotation_module(
-            orig_resid_train,
-            new_resid_train,
+            orig_resid_train_base.clone().requires_grad_(True),
+            new_resid_train_base.clone().requires_grad_(True),
             layer=config.train_layer,
             position=config.train_position,
             orig_tokens=orig_tokens_train,
@@ -245,16 +257,14 @@ def fit_rotation(
             f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
             f"train layer: {config.train_layer}, train position: {config.train_position}, "
             f"train act name: {train_act_name}, "
-            f"orig_resid_train.requires_grad: {orig_resid_train.requires_grad}, "
-            f"new_resid_train.requires_grad: {new_resid_train.requires_grad}"
         )
         loss.backward()
         optimizer.step()
         rotation_module.eval()
         with torch.inference_mode():
             eval_loss = rotation_module(
-                orig_cache_test[eval_act_name][:, config.eval_position, :].clone(),
-                new_cache_test[eval_act_name][:, config.eval_position, :].clone(),
+                orig_resid_test_base,
+                new_resid_test_base,
                 layer=config.eval_layer,
                 position=config.eval_position,
                 orig_tokens=orig_tokens_test,
@@ -313,8 +323,8 @@ def get_das_dataset(
 
 def train_das_subspace(
     model: HookedTransformer, device: torch.device, 
-    train_type: PromptType, train_pos: str, train_layer: int,
-    test_type: PromptType, test_pos: str, test_layer: int,
+    train_type: PromptType, train_pos: Union[None, str], train_layer: int,
+    test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     **config_arg,
 ):
     """
@@ -333,9 +343,9 @@ def train_das_subspace(
     placeholders_val = test_type.get_placeholder_positions(example_val)
     config = dict(
         train_layer=train_layer,
-        train_position=placeholders_train[train_pos][-1],
+        train_position=placeholders_train[train_pos][-1] if train_pos is not None else None,
         eval_layer=test_layer,
-        eval_position=placeholders_val[test_pos][-1],
+        eval_position=placeholders_val[test_pos][-1] if test_pos is not None else None,
     )
     config.update(config_arg)
     directions = fit_rotation(
