@@ -167,6 +167,10 @@ class RotationModule(torch.nn.Module):
 
 
 class TrainingConfig:
+    train_layer: int
+    train_position: Union[None, int]
+    eval_layer: int
+    eval_position: Union[None, int]
 
     def __init__(self, config_dict: dict):
         self.seed = config_dict.get("seed", 0)
@@ -177,6 +181,7 @@ class TrainingConfig:
         self.d_das = config_dict.get("d_das", 1)
         self.wandb_enabled = config_dict.get("wandb_enabled", True)
         self.model_name = config_dict.get("model_name", "unnamed-model")
+        self.clip_grad_norm = config_dict.get("clip_grad_norm", 1.0)
         for k, v in config_dict.items():
             setattr(self, k, v)
 
@@ -266,6 +271,7 @@ def fit_rotation(
             f"train act name: {train_act_name}, "
         )
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
         optimizer.step()
         rotation_module.eval()
         with torch.inference_mode():

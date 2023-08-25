@@ -54,6 +54,7 @@ class TestFunctions(unittest.TestCase):
             "d_das": 2,
             "wandb_enabled": False,
             "model_name": "test_model",
+            "clip_grad_norm": .999,
         }
         config = TrainingConfig(config_dict)
         self.assertEqual(config.seed, 42)
