@@ -232,6 +232,7 @@ def get_batch_pos_mask(
     mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
     if activations is not None:
         assert mask.shape == activations.shape[:2]
+    mask.to(device)
     return mask
 
 
