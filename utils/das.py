@@ -49,26 +49,29 @@ class RotateLayer(torch.nn.Module):
 
 
 def hook_fn_base(
-    resid: Float[Tensor, "batch seq d_model"],
+    resid: Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
     layer: int,
-    position: int,
-    new_value: Float[Tensor, "batch d_model"],
+    position: Union[None, int],
+    new_value: Float[Tensor, "batch *pos d_model"]
 ):
     batch_size, seq_len, d_model = resid.shape
     assert 'resid' in hook.name
     if hook.layer() != layer:
         return resid
-    position_index = einops.repeat(
-        torch.arange(seq_len, device=resid.device),
-        "seq -> batch seq d_model",
-        batch=batch_size,
-        d_model=d_model,
-    )
+    if position is None:
+        assert new_value.shape == resid.shape
+        return new_value
     new_value_repeat = einops.repeat(
         new_value,
-        "batch d_model -> batch seq d_model",
-        seq=seq_len,
+        "batch d_model -> batch pos d_model",
+        pos=seq_len,
+    )
+    position_index = einops.repeat(
+        torch.arange(seq_len, device=resid.device),
+        "pos -> batch pos d_model",
+        batch=batch_size,
+        d_model=d_model,
     )
     return torch.where(
         position_index == position,
@@ -82,7 +85,7 @@ def act_patch_simple(
     orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
     new_value: Float[Tensor, "d_model"],
     layer: int,
-    position: int,
+    position: Union[None, int],
     patching_metric: Callable,
 ) -> Float[Tensor, ""]:
     assert layer <= model.cfg.n_layers
@@ -100,41 +103,39 @@ class RotationModule(torch.nn.Module):
     def __init__(
         self, 
         model: HookedTransformer,
-        orig_tokens: Int[Tensor, "batch pos"],
-        patching_metric: Callable,
-        n_directions: int = 1,
+        d_das: int = 1,
     ):
         super().__init__()
         self.model = model
         self.device = self.model.cfg.device
-        self.register_buffer('orig_tokens', orig_tokens)
         self.d_model = model.cfg.d_model
-        self.n_directions = n_directions
+        self.d_das = d_das
         rotate_layer = RotateLayer(model.cfg.d_model, self.device)
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(
             rotate_layer, use_trivialization=False
         )
         self.inverse_rotate_layer = InverseRotateLayer(self.rotate_layer)
-        self.patching_metric = patching_metric
 
     def apply_rotation(
         self,
-        orig_resid: Float[Tensor, "batch d_model"],
-        new_resid: Float[Tensor, "batch d_model"],
+        orig_resid: Float[Tensor, "batch *pos d_model"],
+        new_resid: Float[Tensor, "batch *pos d_model"],
     ) -> Float[Tensor, "batch d_model"]:
         rotated_orig_act: Float[
-            Tensor, "batch d_model"
+            Tensor, "batch *pos d_model"
         ] = self.rotate_layer(orig_resid)
         rotated_new_act: Float[
-            Tensor, "batch d_model"
+            Tensor, "batch *pos d_model"
         ] = self.rotate_layer(new_resid)
-        d_model_index = einops.repeat(
-            torch.arange(self.model.cfg.d_model, device=self.device),
-            "d -> batch d",
-            batch=orig_resid.shape[0],
-        )
-        rotated_patch_act = torch.where(
-            d_model_index < self.n_directions,
+        d_model_index: Float[
+            Tensor, "batch *pos d_model"
+        ] = torch.arange(
+            self.model.cfg.d_model, device=self.device
+        ).expand(orig_resid.shape)
+        rotated_patch_act: Float[
+            Tensor, "batch *pos d_model"
+        ] = torch.where(
+            d_model_index < self.d_das,
             rotated_new_act,
             rotated_orig_act,
         )
@@ -143,10 +144,12 @@ class RotationModule(torch.nn.Module):
 
     def forward(
         self, 
-        orig_resid: Float[Tensor, "batch pos d_model"],
-        new_resid: Float[Tensor, "batch pos d_model"],
+        orig_resid: Float[Tensor, "batch *pos d_model"],
+        new_resid: Float[Tensor, "batch *pos d_model"],
         layer: int,
-        position: int,
+        position: Union[None, int],
+        orig_tokens: Int[Tensor, "batch pos"],
+        patching_metric: Callable,
     ) -> Float[Tensor, ""]:
         patched_resid: Float[Tensor, "batch d_model"] = self.apply_rotation(
             orig_resid=orig_resid,
@@ -154,9 +157,9 @@ class RotationModule(torch.nn.Module):
         )
         metric: Float[Tensor, ""] = act_patch_simple(
             model=self.model,
-            orig_input=self.orig_tokens,
+            orig_input=orig_tokens,
             new_value=patched_resid,
-            patching_metric=self.patching_metric,
+            patching_metric=patching_metric,
             layer=layer,
             position=position,
         )
@@ -164,6 +167,10 @@ class RotationModule(torch.nn.Module):
 
 
 class TrainingConfig:
+    train_layer: int
+    train_position: Union[None, int]
+    eval_layer: int
+    eval_position: Union[None, int]
 
     def __init__(self, config_dict: dict):
         self.seed = config_dict.get("seed", 0)
@@ -171,8 +178,10 @@ class TrainingConfig:
         self.weight_decay = config_dict.get("weight_decay", 0)
         self.betas = config_dict.get("betas", (0.9, 0.999))
         self.epochs = config_dict.get("epochs", 64)
-        self.n_directions = config_dict.get("n_directions", 1)
+        self.d_das = config_dict.get("d_das", 1)
         self.wandb_enabled = config_dict.get("wandb_enabled", True)
+        self.model_name = config_dict.get("model_name", "unnamed-model")
+        self.clip_grad_norm = config_dict.get("clip_grad_norm", 1.0)
         for k, v in config_dict.items():
             setattr(self, k, v)
 
@@ -185,28 +194,47 @@ class TrainingConfig:
 
 
 def fit_rotation(
-    orig_tokens: Int[Tensor, "batch pos"],
-    orig_cache: ActivationCache,
-    new_cache: ActivationCache,
-    patching_metric: Callable,
+    orig_tokens_train: Int[Tensor, "batch pos"],
+    orig_cache_train: ActivationCache,
+    new_cache_train: ActivationCache,
+    orig_tokens_test: Int[Tensor, "batch pos"],
+    orig_cache_test: ActivationCache,
+    new_cache_test: ActivationCache,
+    metric_train: Callable,
+    metric_test: Callable,
     model: HookedTransformer, 
+    project: str = None,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
-    Entrypoint for training a DAS direction given
+    Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
+    if 'model_name' not in config_dict:
+        config_dict['model_name'] = model.cfg.model_name
     config = TrainingConfig(config_dict)
     # Initialize wandb
     if config.wandb_enabled:
-        wandb.init(project='train_rotation', config=config.to_dict())
+        wandb.init(config=config.to_dict(), project=project)
         config = wandb.config
 
     train_act_name, _ = get_resid_name(config.train_layer, model)
     eval_act_name, _ = get_resid_name(config.eval_layer, model)
 
+    orig_resid_train_base = orig_cache_train[train_act_name]
+    new_resid_train_base = new_cache_train[train_act_name]
+    if config.train_position is not None:
+        orig_resid_train_base = orig_resid_train_base[:, config.train_position, :]
+        new_resid_train_base = new_resid_train_base[:, config.train_position, :]
+    orig_resid_test_base = orig_cache_test[eval_act_name]
+    new_resid_test_base = new_cache_test[eval_act_name]
+    if config.eval_position is not None:
+        orig_resid_test_base = orig_resid_test_base[:, config.eval_position, :]
+        new_resid_test_base = new_resid_test_base[:, config.eval_position, :]
+
     # Create a list to store the losses and models
-    losses = []
+    losses_train = []
+    losses_test = []
     models = [] 
     step = 0
     torch.manual_seed(config.seed)
@@ -214,9 +242,7 @@ def fit_rotation(
     # Create the rotation module
     rotation_module = RotationModule(
         model=model,
-        orig_tokens=orig_tokens,
-        patching_metric=patching_metric,
-        n_directions=config.n_directions,
+        d_das=config.d_das,
     )
 
     # Define the optimizer
@@ -230,53 +256,55 @@ def fit_rotation(
     for epoch in range(config.epochs):
         rotation_module.train()
         optimizer.zero_grad()
-        orig_resid_train = orig_cache[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
-        new_resid_train = new_cache[train_act_name][:, config.train_position, :].clone().requires_grad_(True)
         loss = rotation_module(
-            orig_resid_train,
-            new_resid_train,
+            orig_resid_train_base.clone().requires_grad_(True),
+            new_resid_train_base.clone().requires_grad_(True),
             layer=config.train_layer,
             position=config.train_position,
+            orig_tokens=orig_tokens_train,
+            patching_metric=metric_train,
         )
         assert loss.requires_grad, (
             "The loss must be a scalar that requires grad. \n"
             f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
             f"train layer: {config.train_layer}, train position: {config.train_position}, "
             f"train act name: {train_act_name}, "
-            f"orig_resid_train.requires_grad: {orig_resid_train.requires_grad}, "
-            f"new_resid_train.requires_grad: {new_resid_train.requires_grad}"
         )
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
         optimizer.step()
         rotation_module.eval()
         with torch.inference_mode():
             eval_loss = rotation_module(
-                orig_cache[eval_act_name][:, config.eval_position, :].clone(),
-                new_cache[eval_act_name][:, config.eval_position, :].clone(),
+                orig_resid_test_base,
+                new_resid_test_base,
                 layer=config.eval_layer,
                 position=config.eval_position,
+                orig_tokens=orig_tokens_test,
+                patching_metric=metric_test,
             )
         if config.wandb_enabled:
             wandb.log({"training_loss": loss.item(), "validation_loss": eval_loss.item()}, step=step)
 
         # Store the loss and model for this seed
-        losses.append(loss.item())
+        losses_train.append(loss.item())
+        losses_test.append(eval_loss.item())
         models.append(rotation_module.state_dict())
         step += 1
-    direction = rotation_module.rotate_layer.weight[:, 0]
 
-    best_model_idx = min(range(len(losses)), key=losses.__getitem__)
+    best_model_idx = min(range(len(losses_train)), key=losses_train.__getitem__)
 
     # Log the best model's loss and save the model
     if config.wandb_enabled:
-        wandb.log({"Best Loss": losses[best_model_idx]})
+        wandb.log({"best_training_loss": losses_train[best_model_idx]})
+        wandb.log({"best_validation_loss": losses_test[best_model_idx]})
         wandb.save("best_rotation.pt")
         wandb.finish()
 
     # Load the best model
     best_model_state_dict = models[best_model_idx]
     rotation_module.load_state_dict(best_model_state_dict)
-    return direction
+    return rotation_module.rotate_layer.weight[:, :config.d_das]
 
 
 def get_das_dataset(
@@ -308,39 +336,48 @@ def get_das_dataset(
     return all_prompts, orig_tokens, orig_cache, new_cache, loss_fn
 
 
-def train_das_direction(
+def train_das_subspace(
     model: HookedTransformer, device: torch.device, 
-    train_type: PromptType, train_pos: str, train_layer: int,
-    test_type: PromptType, test_pos: str, test_layer: int,
+    train_type: PromptType, train_pos: Union[None, str], train_layer: int,
+    test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     **config_arg,
 ):
     """
     Entrypoint to be used in directional patching experiments
-    Given training/validation datasets, train a DAS direction
+    Given training/validation datasets, train a DAS subspace
     """
-    assert train_type == test_type, "train and test prompts must be the same"
-    assert train_layer == test_layer, "train and test layers must be the same"
     all_prompts, orig_tokens, orig_cache, new_cache, loss_fn = get_das_dataset(
         train_type, layer=train_layer, model=model, device=device,
     )
-    example = model.to_str_tokens(all_prompts[0])
-    placeholders = train_type.get_placeholder_positions(example)
+    all_prompts_val, orig_tokens_val, orig_cache_val, new_cache_val, loss_fn_val = get_das_dataset(
+        test_type, layer=test_layer, model=model, device=device,
+    )
+    example_train = model.to_str_tokens(all_prompts[0])
+    placeholders_train = train_type.get_placeholder_positions(example_train)
+    example_val = model.to_str_tokens(all_prompts_val[0])
+    placeholders_val = test_type.get_placeholder_positions(example_val)
     config = dict(
         train_layer=train_layer,
-        train_position=placeholders[train_pos][-1],
+        train_position=placeholders_train[train_pos][-1] if train_pos is not None else None,
         eval_layer=test_layer,
-        eval_position=placeholders[test_pos][-1],
+        eval_position=placeholders_val[test_pos][-1] if test_pos is not None else None,
     )
     config.update(config_arg)
-    direction = fit_rotation(
-        orig_tokens=orig_tokens,
-        orig_cache=orig_cache,
-        new_cache=new_cache,
-        patching_metric=loss_fn,
+    directions = fit_rotation(
+        orig_tokens_train=orig_tokens,
+        orig_cache_train=orig_cache,
+        new_cache_train=new_cache,
+        orig_tokens_test=orig_tokens_val,
+        orig_cache_test=orig_cache_val,
+        new_cache_test=new_cache_val,
+        metric_train=loss_fn,
+        metric_test=loss_fn_val,
         model=model,
         **config,
     )
     save_array(
-        direction.detach().cpu().numpy(), f'das_{train_type.value}_{train_pos}_layer{train_layer}', model
+        directions.detach().cpu().numpy(), 
+        f'das_{train_type.value}_{train_pos}_layer{train_layer}', 
+        model,
     )
-    return direction
+    return directions
