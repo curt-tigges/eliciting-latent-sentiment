@@ -187,10 +187,13 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 # %%
 pos_answers = [" Positive", " amazing", " good"]
 neg_answers = [" Negative", " terrible", " bad"]
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+clean_corrupt_data = get_dataset(
     model, device, 3, "classification", pos_answers, neg_answers
 )
-
+all_prompts = clean_corrupt_data.all_prompts
+clean_tokens = clean_corrupt_data.clean_tokens
+corrupted_tokens = clean_corrupt_data.corrupted_tokens
+answer_tokens = clean_corrupt_data.answer_tokens
 # %%
 all_prompts = all_prompts
 answer_tokens = answer_tokens

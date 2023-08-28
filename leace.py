@@ -58,9 +58,13 @@ rotation_direction = load_array('rotation_direction')
 rotation_direction = torch.from_numpy(rotation_direction).to(device, torch.float32)
 torch.testing.assert_close(rotation_direction.norm(), torch.tensor(1.0))
 #%%
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+clean_corrupt_data = get_dataset(
     model, device
 )
+all_prompts = clean_corrupt_data.all_prompts
+clean_tokens = clean_corrupt_data.clean_tokens
+corrupted_tokens = clean_corrupt_data.corrupted_tokens
+answer_tokens = clean_corrupt_data.answer_tokens
 #%%
 batch_size = clean_tokens.shape[0]
 sentiment_repeated = einops.repeat(

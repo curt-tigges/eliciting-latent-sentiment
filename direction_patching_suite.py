@@ -55,7 +55,11 @@ def load_data(
     names_filter = None,
 ) -> dict:
     model.reset_hooks()
-    all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(model, device, prompt_type=prompt_type)
+    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
+    all_prompts = clean_corrupt_data.all_prompts
+    clean_tokens = clean_corrupt_data.clean_tokens
+    corrupted_tokens = clean_corrupt_data.corrupted_tokens
+    answer_tokens = clean_corrupt_data.answer_tokens
     if verbose:
         print(all_prompts[:5])
         print(clean_tokens.shape)

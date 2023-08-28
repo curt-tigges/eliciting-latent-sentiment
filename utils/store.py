@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from circuitsvis.utils.render import RenderedHTML
 from pandas.io.formats.style import Styler
 import re
+import pickle
 
 
 def add_styling(html):
@@ -82,9 +83,11 @@ def clean_label(label: str) -> str:
 
 def get_model_name(model: Union[HookedTransformer, str]) -> str:
     if isinstance(model, HookedTransformer):
-        assert len(model.name) > 0, "Model must have a name"
-        model = model.name
+        assert len(model.cfg.model_name) > 0, "Model must have a name"
+        model = model.cfg.model_name
     model = model.replace('EleutherAI/', '')
+    if model == 'gpt2':
+        model = 'gpt2-small'
     return model
 
 
@@ -237,3 +240,32 @@ def save_text(
     with open(path, 'w') as f:
         f.write(text)
     return path
+
+
+def save_pickle(
+    obj: object,
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.pkl')
+    with open(path, 'wb') as f:
+        pickle.dump(obj, f)
+    return path
+
+
+def load_pickle(
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    path = os.path.join(model_path, label + '.pkl')
+    with open(path, 'rb') as f:
+        obj = pickle.load(f)
+    return obj

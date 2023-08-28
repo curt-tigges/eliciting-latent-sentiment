@@ -27,7 +27,7 @@ from utils.neuroscope import plot_neuroscope, get_dataloader, get_projections_fo
 #%%
 torch.set_grad_enabled(False)
 device = "cuda"
-MODEL_NAME = "gpt2-xl"
+MODEL_NAME = "EleutherAI/pythia-2.8b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -38,9 +38,21 @@ model = HookedTransformer.from_pretrained(
 )
 model.name = MODEL_NAME
 #%%
+array = np.load("loss_change_by_token.npy")
+dataloader = get_dataloader(model, "stas/openwebtext-10k", batch_size=8)
+#%%
+array = torch.tensor(array).to(device=device, dtype=torch.float32)
+#%%
+plot_topk(array, dataloader, model, k=10, layer=1, window_size=20, centred=True)
+#%%
 sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
+#%%
+text = """
+Amidst a serene landscape, a group of volunteers worked together to rescue injured animals. Their dedication showcased the true value of compassion and empathy. However, as they tirelessly carried out their mission, they faced an pressing issue: the rapid decline of the local wildlife's natural habitat. Determined to subdue this crisis, they organized campaigns to raise awareness and funds. Their efforts reminded us that even in the face of adversity, unity and determination can make a significant impact.
+"""
+plot_neuroscope(text, model, centred=True, verbose=False, special_dir=sentiment_dir)
 #%%
 # ============================================================================ #
 # Harry Potter example

@@ -4,7 +4,7 @@ import einops
 import numpy as np
 from jaxtyping import Float, Int, Bool
 import plotly.express as px
-from utils.prompts import get_dataset, get_onesided_datasets
+from utils.prompts import get_onesided_datasets
 from utils.circuit_analysis import get_log_probs
 import torch
 from torch import Tensor

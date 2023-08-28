@@ -313,7 +313,9 @@ def get_das_dataset(
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
-    all_prompts, answer_tokens, new_tokens, orig_tokens = get_dataset(model, device, prompt_type=prompt_type)
+    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
+    new_tokens = clean_corrupt_data.clean_tokens
+    orig_tokens = clean_corrupt_data.corrupted_tokens
     name_filter = lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0])
     with torch.inference_mode():
         orig_logits, orig_cache = model.run_with_cache(
@@ -324,16 +326,16 @@ def get_das_dataset(
         )
     orig_cache.to(device)
     new_cache.to(device)
-    orig_logit_diff = get_logit_diff(orig_logits, answer_tokens)
-    new_logit_diff = get_logit_diff(new_logits, answer_tokens)
+    orig_logit_diff = get_logit_diff(orig_logits, clean_corrupt_data.answer_tokens)
+    new_logit_diff = get_logit_diff(new_logits, clean_corrupt_data.answer_tokens)
     loss_fn = partial(
         logit_diff_denoising, 
-        answer_tokens=answer_tokens, 
+        answer_tokens=clean_corrupt_data.answer_tokens, 
         flipped_value=new_logit_diff, 
         clean_value=orig_logit_diff,
         return_tensor=True,
     )
-    return all_prompts, orig_tokens, orig_cache, new_cache, loss_fn
+    return clean_corrupt_data.all_prompts, orig_tokens, orig_cache, new_cache, loss_fn
 
 
 def train_das_subspace(

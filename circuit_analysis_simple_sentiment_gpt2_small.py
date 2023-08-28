@@ -201,10 +201,13 @@ answer_tokens
 # %%
 #pos_answers = [" Positive", " amazing", " good"]
 #neg_answers = [" Negative", " terrible", " bad"]
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+clean_corrupt_data = get_dataset(
     model, device, 1, comparison=("positive", "negative")
 )
-
+all_prompts = clean_corrupt_data.all_prompts
+clean_tokens = clean_corrupt_data.clean_tokens
+corrupted_tokens = clean_corrupt_data.corrupted_tokens
+answer_tokens = clean_corrupt_data.answer_tokens
 # %%
 len(all_prompts), answer_tokens.shape, clean_tokens.shape, corrupted_tokens.shape
 

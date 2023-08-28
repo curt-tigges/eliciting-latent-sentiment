@@ -161,10 +161,12 @@ else:
 ablate_dir /= np.linalg.norm(ablate_dir)
 ablate_dir = torch.from_numpy(ablate_dir).to(dtype=torch.float32, device=device)
 # %%
-_, pos_neg_answers, pos_neg_tokens, _ = get_dataset(
+clean_corrupt_data = get_dataset(
     model, device, n_pairs=1, 
     comparison=("positive", "negative",)
 )
+pos_neg_answers = clean_corrupt_data.answer_tokens
+pos_neg_tokens = clean_corrupt_data.clean_tokens
 #%%
 example_prompt = model.to_str_tokens(pos_neg_tokens[0])
 adjective_token = 6

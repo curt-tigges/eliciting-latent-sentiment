@@ -35,10 +35,14 @@ print(model.cfg.d_model)
 #%%
 pos_answers = [" Positive"] #, " amazing", " good"]
 neg_answers = [" Negative"] #, " terrible", " bad"]
-all_prompts, answer_tokens, clean_tokens, _ = get_dataset(
+clean_corrupt_data = get_dataset(
     model, device, n_pairs=1, prompt_type="classification_4", 
     pos_answers=pos_answers, neg_answers=neg_answers,
 )
+all_prompts = clean_corrupt_data.all_prompts
+clean_tokens = clean_corrupt_data.clean_tokens
+corrupted_tokens = clean_corrupt_data.corrupted_tokens
+answer_tokens = clean_corrupt_data.answer_tokens
 answer_tokens: Int[Tensor, "batch 2"] = answer_tokens.squeeze(1)
 clean_tokens.shape
 #%%
