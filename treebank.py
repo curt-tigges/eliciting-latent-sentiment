@@ -44,65 +44,84 @@ sentence_phrase_df.head()
 len(sentence_ids), len(sentences_df), len(sentence_phrase_df)
 # %%
 sentence_phrase_df.split.value_counts()
-# %%
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = HookedTransformer.from_pretrained('gpt2-small', device=device)
-# %%
-for idx, row in sentence_phrase_df.iterrows():
-    str_tokens = model.to_str_tokens(row['sentence'])
-    sentence_phrase_df.loc[idx, 'str_tokens'] = '|'.join(str_tokens)
-    sentence_phrase_df.loc[idx, 'num_tokens'] = len(str_tokens)
-# %%
-sentence_phrase_df.num_tokens = sentence_phrase_df.num_tokens.astype(int)
-sentence_phrase_df.num_tokens.value_counts()
-# %%
-sentence_phrase_df.head()
-# %%
-def pair_by_num_tokens(df: pd.DataFrame):
-    # Sort and group by num_tokens
-    grouped = df.groupby('num_tokens')
+#%%
+def pair_by_num_tokens_and_split(df: pd.DataFrame):
+    # Sort and group by num_tokens and split
+    grouped = df.groupby(['num_tokens', 'split'])
 
     # Create new dataframe to store paired rows
-    column_names = ['num_tokens'] + [
+    column_names = ['num_tokens', 'split'] + [
         f'{col}_{pos_neg}' for pos_neg in ('pos', 'neg') 
-        for col in df.columns if col not in ('num_tokens', 'sentiment_value')
+        for col in df.columns if col not in ('num_tokens', 'split', 'sentiment_value')
     ]
+    
     paired_data = []
+    
     # For each group, pair the rows
-    for _, group in grouped:
+    for (_, split_value), group in grouped:
         pos_rows = group[group['sentiment_value'] == 1].to_dict(orient='records')
         neg_rows = group[group['sentiment_value'] == 0].to_dict(orient='records')
 
         # Pair up rows
         for pos, neg in zip(pos_rows, neg_rows):
-            new_data = {'num_tokens': pos['num_tokens']}
+            new_data = {'num_tokens': pos['num_tokens'], 'split': split_value}
             for col in df.columns:
-                if col not in ['num_tokens', 'sentiment_value']:
+                if col not in ['num_tokens', 'split', 'sentiment_value']:
                     new_data[f'{col}_pos'] = pos[col]
                     new_data[f'{col}_neg'] = neg[col]
             paired_data.append(new_data)
 
     paired_df = pd.DataFrame(paired_data, columns=column_names)
     return paired_df
+
 # %%
-paired_df = pair_by_num_tokens(sentence_phrase_df)
-paired_df
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#%%
+def create_dataset_for_split(
+    full_df: pd.DataFrame,
+    split: str,
+    model: HookedTransformer,
+):
+    df = full_df.loc[full_df.split == split]
+    clean_prompts = df.phrase_pos.tolist() + df.phrase_neg.tolist()
+    corrupt_prompts = df.phrase_neg.tolist() + df.phrase_pos.tolist()
+    clean_tokens = model.to_tokens(clean_prompts)
+    corrupted_tokens = model.to_tokens(corrupt_prompts)
+    answer_tokens = torch.tensor([(1, 0)] * len(df) + [(0, 1)] * len(df)).unsqueeze(1)
+    dataset = CleanCorruptedDataset(
+        clean_tokens=clean_tokens,
+        corrupted_tokens=corrupted_tokens,
+        answer_tokens=answer_tokens,
+        all_prompts=clean_prompts
+    )
+    save_pickle(dataset, f'treebank-{split}', model)
+    print(split, clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts))
+#%%
+def create_dataset_for_model(
+    model: HookedTransformer,
+    sentence_phrase_df: pd.DataFrame = sentence_phrase_df,
+):
+    for idx, row in sentence_phrase_df.iterrows():
+        str_tokens = model.to_str_tokens(row['sentence'])
+        sentence_phrase_df.loc[idx, 'str_tokens'] = '|'.join(str_tokens)
+        sentence_phrase_df.loc[idx, 'num_tokens'] = len(str_tokens)
+    sentence_phrase_df.num_tokens = sentence_phrase_df.num_tokens.astype(int)
+    paired_df = pair_by_num_tokens_and_split(sentence_phrase_df)
+    create_dataset_for_split(paired_df, 'train', model)
+    create_dataset_for_split(paired_df, 'dev', model)
+    create_dataset_for_split(paired_df, 'test', model)
 # %%
-# first half positive to negative, second half negative to positive
-clean_prompts = paired_df.phrase_pos.tolist() + paired_df.phrase_neg.tolist()
-corrupt_prompts = paired_df.phrase_neg.tolist() + paired_df.phrase_pos.tolist()
-clean_tokens = model.to_tokens(clean_prompts)
-corrupted_tokens = model.to_tokens(corrupt_prompts)
-answer_tokens = torch.tensor([(1, 0)] * len(paired_df) + [(0, 1)] * len(paired_df)).unsqueeze(1)
-dataset = CleanCorruptedDataset(
-    clean_tokens=clean_tokens,
-    corrupted_tokens=corrupted_tokens,
-    answer_tokens=answer_tokens,
-    all_prompts=clean_prompts
-)
-clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts)
-# %%
-save_pickle(dataset, 'treebank', model)
-# %%
-load_pickle('treebank', model).all_prompts == dataset.all_prompts
+MODELS = [
+    'gpt2-small',
+    'gpt2-medium',
+    'gpt2-large',
+    'gpt2-xl',
+    'EleutherAI/pythia-160m',
+    'EleutherAI/pythia-410m',
+    'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b',
+]
+for model in MODELS:
+    model = HookedTransformer.from_pretrained(model, device=device)
+    create_dataset_for_model(model)
 # %%
