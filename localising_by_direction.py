@@ -38,9 +38,13 @@ sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
 sentiment_dir = sentiment_dir / sentiment_dir.norm()
 sentiment_dir.shape
 # %%
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+clean_corrupt_data = get_dataset(
     model, device
 )
+all_prompts = clean_corrupt_data.all_prompts
+clean_tokens = clean_corrupt_data.clean_tokens
+corrupted_tokens = clean_corrupt_data.corrupted_tokens
+answer_tokens = clean_corrupt_data.answer_tokens
 #%%
 def name_filter(name: str) -> bool:
     return name.endswith('result') or name.endswith('z') or name.endswith('_scale')

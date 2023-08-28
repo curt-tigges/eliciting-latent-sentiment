@@ -88,7 +88,6 @@ from utils.visualization import get_attn_head_patterns, plot_attention_heads, sc
 
 
 import circuitsvis as cv
-from utils.prompts import get_dataset
 from utils.circuit_analysis import get_logit_diff, logit_diff_denoising, logit_diff_noising, get_log_probs
 
 # %%

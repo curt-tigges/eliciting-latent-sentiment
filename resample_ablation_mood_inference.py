@@ -47,9 +47,13 @@ model.cfg.use_attn_result = True
 model.name = MODEL_NAME
 # %%
 # corrupted to clean patching style
-all_prompts, answer_tokens, clean_tokens, corrupted_tokens = get_dataset(
+clean_corrupt_data = get_dataset(
     model, device, prompt_type='classification_4'
 )
+all_prompts = clean_corrupt_data.all_prompts
+clean_tokens = clean_corrupt_data.clean_tokens
+corrupted_tokens = clean_corrupt_data.corrupted_tokens
+answer_tokens = clean_corrupt_data.answer_tokens
 # %%
 example_prompt = model.to_str_tokens(clean_tokens[0])
 adj_token = example_prompt.index(' perfect')

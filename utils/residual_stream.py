@@ -79,14 +79,14 @@ class ResidualStreamDataset:
         device: torch.device,
         prompt_type: str = "simple_train"
     ) -> 'ResidualStreamDataset':
-        all_prompts, answer_tokens, clean_tokens, _ = get_dataset(model, device, prompt_type=prompt_type)
-        clean_labels = answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0]
+        clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
+        clean_labels = clean_corrupt_data.answer_tokens[:, 0, 0] == clean_corrupt_data.answer_tokens[0, 0, 0]
         
-        assert len(all_prompts) == len(answer_tokens)
-        assert len(all_prompts) == len(clean_tokens)
+        assert len(clean_corrupt_data.all_prompts) == len(clean_corrupt_data.answer_tokens)
+        assert len(clean_corrupt_data.all_prompts) == len(clean_corrupt_data.clean_tokens)
         return cls(
-            all_prompts,
-            clean_tokens,
+            clean_corrupt_data.all_prompts,
+            clean_corrupt_data.clean_tokens,
             clean_labels,
             model,
             prompt_type,

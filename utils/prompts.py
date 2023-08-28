@@ -360,19 +360,43 @@ def get_prompts(
     return prompt_dict, answer_dict
 
 
+class CleanCorruptedDataset(torch.utils.data.Dataset):
+
+    def __init__(
+            self, 
+            clean_tokens: Float[Tensor, "batch pos"], 
+            corrupted_tokens: Float[Tensor, "batch pos"],
+            answer_tokens: Float[Tensor, "batch pair correct"],
+            all_prompts: List[str], 
+        ):
+        super().__init__()
+        self.clean_tokens = clean_tokens
+        self.corrupted_tokens = corrupted_tokens
+        self.answer_tokens = answer_tokens
+        self.all_prompts = all_prompts
+        assert self.clean_tokens.shape == self.corrupted_tokens.shape, (
+            f"Clean tokens shape {self.clean_tokens.shape} "
+            f"does not match corrupted tokens shape {self.corrupted_tokens.shape}"
+        )
+
+    def __len__(self):
+        return self.clean_tokens.shape[0]
+    
+    def __getitem__(self, idx):
+        return (
+            self.clean_tokens[idx], 
+            self.corrupted_tokens[idx], 
+            self.answer_tokens[idx],
+        )
+
+
 def get_dataset(
     model: HookedTransformer, 
     device: torch.device,
     n_pairs: int = None,
     prompt_type: str = "simple",
     comparison: Tuple[str, str] = ("positive", "negative"),
-) -> Tuple[
-    List[str], # all_prompts
-    Float[Tensor, "batch pair correct"], # answer tokens
-    Float[Tensor, "batch pos"], # clean tokens
-    Float[Tensor, "batch pos"], # corrupted tokens
-]:
-    # FIXME: this should really return a dataset object
+) -> CleanCorruptedDataset:
     prompt_type = PromptType(prompt_type)
     prompts_dict, answers_dict = get_prompts(
         model, prompt_type
@@ -419,8 +443,11 @@ def get_dataset(
         "this suggests inconsistent prompt lengths."
     )
     
-    return (
-        all_prompts, answer_tokens, clean_tokens, corrupted_tokens
+    return CleanCorruptedDataset(
+        all_prompts=all_prompts, 
+        answer_tokens=answer_tokens, 
+        clean_tokens=clean_tokens, 
+        corrupted_tokens=corrupted_tokens,
     )
 
 def get_onesided_datasets(
@@ -481,22 +508,22 @@ def get_ccs_dataset(
     Int[Tensor, "batch"],
     Bool[Tensor, "batch"],
 ]:
-    all_prompts, answer_tokens, clean_tokens, _ = get_dataset(
+    clean_corrupt_data: CleanCorruptedDataset = get_dataset(
         model, device, n_pairs=1, prompt_type=prompt_type, 
         pos_answers=pos_answers, neg_answers=neg_answers,
     )
-    answer_tokens: Int[Tensor, "batch 2"] = answer_tokens.squeeze(1)
-    clean_tokens.shape
+    answer_tokens: Int[Tensor, "batch 2"] = clean_corrupt_data.answer_tokens.squeeze(1)
     possible_answers = answer_tokens[0]
     possible_answers_repeated: Int[Tensor, "batch 2"] = einops.repeat(
-        possible_answers, "answers -> batch answers", batch=clean_tokens.shape[0]
+        possible_answers, "answers -> batch answers", 
+        batch=clean_corrupt_data.clean_tokens.shape[0]
     )
     # concatenate clean_tokens and answer_tokens along new dimension
     pos_tokens: Float[Tensor, "batch q_and_a"] = torch.cat(
-        (clean_tokens, possible_answers_repeated[:, :1]), dim=1
+        (clean_corrupt_data.clean_tokens, possible_answers_repeated[:, :1]), dim=1
     )
     neg_tokens: Float[Tensor, "batch q_and_a"] = torch.cat(
-        (clean_tokens, possible_answers_repeated[:, -1:]), dim=1
+        (clean_corrupt_data.clean_tokens, possible_answers_repeated[:, -1:]), dim=1
     )
     gt_labels: Int[Tensor, "batch"] = (
         pos_tokens[:, -1] == answer_tokens[:, 0]
@@ -506,12 +533,12 @@ def get_ccs_dataset(
     )
     pos_prompts = [
         [prompt, answer] 
-        for prompt in all_prompts 
+        for prompt in clean_corrupt_data.all_prompts 
         for answer in pos_answers
     ]
     neg_prompts = [
         [prompt, answer]
-        for prompt in all_prompts
+        for prompt in clean_corrupt_data.all_prompts
         for answer in neg_answers
     ]
     assert len(pos_prompts) == len(pos_tokens)
