@@ -3,6 +3,8 @@ import pandas as pd
 import os
 from transformer_lens import HookedTransformer
 import torch
+from utils.prompts import CleanCorruptedDataset
+from utils.store import save_pickle, load_pickle
 #%%
 ROOT = "stanfordSentimentTreebank"
 phrase_ids = pd.read_csv(os.path.join(ROOT, "dictionary.txt"), sep="|", header=None, names=["phrase", "phrase_id"])
@@ -86,4 +88,21 @@ def pair_by_num_tokens(df: pd.DataFrame):
 paired_df = pair_by_num_tokens(sentence_phrase_df)
 paired_df
 # %%
+# first half positive to negative, second half negative to positive
+clean_prompts = paired_df.phrase_pos.tolist() + paired_df.phrase_neg.tolist()
+corrupt_prompts = paired_df.phrase_neg.tolist() + paired_df.phrase_pos.tolist()
+clean_tokens = model.to_tokens(clean_prompts)
+corrupted_tokens = model.to_tokens(corrupt_prompts)
+answer_tokens = torch.tensor([(1, 0)] * len(paired_df) + [(0, 1)] * len(paired_df)).unsqueeze(1)
+dataset = CleanCorruptedDataset(
+    clean_tokens=clean_tokens,
+    corrupted_tokens=corrupted_tokens,
+    answer_tokens=answer_tokens,
+    all_prompts=clean_prompts
+)
+clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts)
+# %%
+save_pickle(dataset, 'treebank', model)
+# %%
+load_pickle('treebank', model).all_prompts == dataset.all_prompts
 # %%
