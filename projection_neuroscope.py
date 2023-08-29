@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import pandas as pd
-from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv
+from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv
 from utils.neuroscope import (
     plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
     harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window
@@ -353,6 +353,68 @@ bin_samples = sample_by_bin(
 )
 to_csv(bin_samples, "bin_samples", model)
 bin_samples
+#%%
+labelled_bin_samples = get_csv(
+    "labelled_bin_samples", model
+)
+labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
+assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
+labelled_bin_samples
+#%%
+sampled_activations = []
+for idx, row in labelled_bin_samples.iterrows():
+    sampled_activations.append(sentiment_activations[row.batch, row.position, 1].detach().cpu().numpy())
+labelled_bin_samples['activation'] = sampled_activations
+labelled_bin_samples
+#%%
+fig = px.histogram(
+    labelled_bin_samples,
+    x="activation",
+    color="sentiment",
+    nbins=100,
+    title="Histogram of sentiment activations by label",
+    barmode="overlay",
+    marginal="box",
+    histnorm="probability density",
+    hover_data=["token", "text"]
+)
+fig.update_layout(
+    title_x=0.5,
+    showlegend=True,
+)
+fig.show()
+#%%
+def cumulative_proportion_plot(
+    df: pd.DataFrame,
+):
+    sentiments = df['sentiment'].unique()
+    df = df.sort_values(by='activation').reset_index(drop=True)
+
+    fig = go.Figure()
+    df['global_cum_count'] = df.index + 1
+    for sentiment in sentiments:
+        sentiment_clean = sentiment.lower().replace(' ', '_')
+        df[f'{sentiment_clean}_cum_count'] = (df.sentiment == sentiment).cumsum()
+        cum_prop = df[f'{sentiment_clean}_cum_count'] / df.global_cum_count
+        df[f'{sentiment_clean}_cum_prop'] = cum_prop
+        hovertext = [f"Sentiment: {sentiment}<br>Activation: {act:.3f}<br>Cumulative Proportion: {prop:.3f}" 
+                     for act, prop in zip(df['activation'], cum_prop)]
+        fig.add_trace(go.Scatter(
+            x=df['activation'], y=cum_prop, fill='tonexty', name=sentiment, 
+            hoverinfo="text", hovertext=hovertext,
+            stackgroup='one', hoveron = 'points',
+        ))
+
+    fig.update_layout(title="Cumulative Proportion of Sentiment by Activation",
+                    xaxis_title="Activation",
+                    yaxis_title="Cumulative Proportion",
+                    title_x=0.5,
+                    showlegend=True)
+
+    return fig
+#%%
+cumulative_proportion_plot(labelled_bin_samples)
+
 #%%
 # ============================================================================ #
 # Top k max activating examples

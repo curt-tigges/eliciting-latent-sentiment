@@ -13,3 +13,4 @@ neel-plotly
 .ipynb_checkpoints/
 data/
 circuits/
+api_key.txt
