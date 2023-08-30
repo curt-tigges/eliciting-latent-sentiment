@@ -1,11 +1,36 @@
-#%%
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: -all
+#     custom_cell_magics: kql
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.11.2
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
+
+# %%
+# !ls
+
+# %%
+# %cd eliciting-latent-sentiment
+
+# %%
+# !pip install circuitsvis
+
+# %%
 import pandas as pd
 import os
 from transformer_lens import HookedTransformer
 import torch
 from utils.prompts import CleanCorruptedDataset
 from utils.store import save_pickle, load_pickle
-#%%
+# %%
 ROOT = "stanfordSentimentTreebank"
 phrase_ids = pd.read_csv(os.path.join(ROOT, "dictionary.txt"), sep="|", header=None, names=["phrase", "phrase_id"])
 phrase_ids.head()
@@ -44,7 +69,7 @@ sentence_phrase_df.head()
 len(sentence_ids), len(sentences_df), len(sentence_phrase_df)
 # %%
 sentence_phrase_df.split.value_counts()
-#%%
+# %%
 def pair_by_num_tokens_and_split(df: pd.DataFrame):
     # Sort and group by num_tokens and split
     grouped = df.groupby(['num_tokens', 'split'])
@@ -76,7 +101,7 @@ def pair_by_num_tokens_and_split(df: pd.DataFrame):
 
 # %%
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#%%
+# %%
 def create_dataset_for_split(
     full_df: pd.DataFrame,
     split: str,
@@ -96,7 +121,7 @@ def create_dataset_for_split(
     )
     save_pickle(dataset, f'treebank-{split}', model)
     print(split, clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts))
-#%%
+# %%
 def create_dataset_for_model(
     model: HookedTransformer,
     sentence_phrase_df: pd.DataFrame = sentence_phrase_df,
@@ -124,4 +149,49 @@ MODELS = [
 for model in MODELS:
     model = HookedTransformer.from_pretrained(model, device=device)
     create_dataset_for_model(model)
+# %%
+dataset.clean_tokens.shape, dataset.corrupted_tokens.shape, dataset.answer_tokens.shape
+
+# %%
+import pandas as pd
+from datasets import Dataset, DatasetDict
+
+# Code snippet to turn the above into a DatasetDict
+data = {
+    'sentence': ['Hello, world!', 'I love AI.', 'How are you?', 'Goodbye!'],
+    'split': ['train', 'test', 'train', 'dev'],
+    'sentiment_value': [1, 0, 1, 0]
+}
+df = sentence_phrase_df
+# Filter DataFrame based on 'split' column
+train_df = df[df['split'] == 'train']
+test_df = df[df['split'] == 'test']
+dev_df = df[df['split'] == 'dev']
+
+# Convert filtered DataFrames to Hugging Face Datasets
+train_dataset = Dataset.from_pandas(train_df.drop(columns=['split']))
+test_dataset = Dataset.from_pandas(test_df.drop(columns=['split']))
+dev_dataset = Dataset.from_pandas(dev_df.drop(columns=['split']))
+
+# Combine into a DatasetDict
+dataset_dict = DatasetDict({
+    'train': train_dataset,
+    'test': test_dataset,
+    'dev': dev_dataset
+})
+
+# Display the DatasetDict
+print(dataset_dict)
+
+    
+
+# %%
+# remove dataset columns
+dataset_dict = dataset_dict.remove_columns(['sentence_index', 'splitset_label', 'phrase', 'phrase_id', '__index_level_0__'])
+dataset_dict = dataset_dict.rename_column('sentiment_value', 'label')
+dataset_dict = dataset_dict.rename_column('sentence', 'text')
+
+# %%
+dataset_dict.save_to_disk('sst2')
+
 # %%
