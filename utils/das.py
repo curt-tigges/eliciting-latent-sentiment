@@ -315,10 +315,12 @@ def get_das_dataset(
     example = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     placeholders = prompt_type.get_placeholder_positions(example)
     pos: int = placeholders[position][-1] if position is not None else None
-    new_tokens = clean_corrupt_data.clean_tokens
-    orig_tokens = clean_corrupt_data.corrupted_tokens
     name_filter = lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0])
-    token_answer_dataset = TensorDataset(orig_tokens, new_tokens, clean_corrupt_data.answer_tokens)
+    token_answer_dataset = TensorDataset(
+        clean_corrupt_data.corrupted_tokens, 
+        clean_corrupt_data.clean_tokens, 
+        clean_corrupt_data.answer_tokens
+    )
     token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
     act_name, _ = get_resid_name(layer, model)
     orig_resids = []
@@ -350,13 +352,18 @@ def get_das_dataset(
         clean_value=orig_logit_diff,
         return_tensor=True,
     )
-    orig_resid_base: Float[Tensor, "batch *pos d_model"] = torch.cat(orig_resids, dim=0)
-    new_resid_base: Float[Tensor, "batch *pos d_model"] = torch.cat(new_resids, dim=0)
+    orig_resid_cat: Float[Tensor, "batch *pos d_model"] = torch.cat(orig_resids, dim=0)
+    new_resid_cat: Float[Tensor, "batch *pos d_model"] = torch.cat(new_resids, dim=0)
     if pos is not None:
-        orig_resid_base = orig_resid_base[:, pos, :]
-        new_resid_base = new_resid_base[:, pos, :]
+        orig_resid_cat = orig_resid_cat[:, pos, :]
+        new_resid_cat = new_resid_cat[:, pos, :]
     # Create a TensorDataset from the tensors
-    das_dataset = TensorDataset(orig_tokens, orig_resid_base, new_resid_base, clean_corrupt_data.answer_tokens)
+    das_dataset = TensorDataset(
+        clean_corrupt_data.corrupted_tokens, 
+        orig_resid_cat, 
+        new_resid_cat, 
+        clean_corrupt_data.answer_tokens
+    )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(das_dataset, batch_size=batch_size)
     return das_dataloader, loss_fn, pos
