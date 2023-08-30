@@ -265,6 +265,9 @@ def fit_rotation(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
             optimizer.step()
+            step += 1
+            if config.wandb_enabled:
+                wandb.log({"training_loss": loss.item()}, step=step)
             epoch_train_loss += loss.item()
         rotation_module.eval()
         with torch.inference_mode():
@@ -284,12 +287,11 @@ def fit_rotation(
                 epoch_test_loss += eval_loss.item()
 
         if config.wandb_enabled:
-            wandb.log({"training_loss": loss.item(), "validation_loss": eval_loss.item()}, step=step)
+            wandb.log({"epoch_training_loss": epoch_train_loss, "epoch_validation_loss": epoch_test_loss}, step=step)
         # Store the loss and model for this seed
         losses_train.append(epoch_train_loss)
         losses_test.append(epoch_test_loss)
         models.append(rotation_module.state_dict())
-        step += 1
 
     best_model_idx = min(range(len(losses_train)), key=losses_train.__getitem__)
 
