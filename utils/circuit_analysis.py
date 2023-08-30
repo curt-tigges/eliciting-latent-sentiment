@@ -80,7 +80,7 @@ def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
 
 def get_logit_diff(
     logits: Float[Tensor, "batch pos vocab"],
-    answer_tokens: Float[Tensor, "batch n_pairs 2"], 
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
     per_completion: bool = False,
 ):
@@ -95,6 +95,8 @@ def get_logit_diff(
     Returns:
         torch.Tensor: Difference between the logits of the provided tokens.
     """
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     n_pairs = answer_tokens.shape[1]
     if len(logits.shape) == 3:
         # Get final logits only
@@ -122,7 +124,7 @@ def get_logit_diff(
 
 def get_prob_diff(
     logits: Float[Tensor, "batch pos vocab"],
-    answer_tokens: Float[Tensor, "batch n_pairs 2"], 
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
 ):
     """
@@ -136,6 +138,8 @@ def get_prob_diff(
     Returns:
         torch.Tensor: Difference between the logits of the provided tokens.
     """
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     n_pairs = answer_tokens.shape[1]
     if len(logits.shape) == 3:
         # Get final logits only
@@ -160,10 +164,11 @@ def get_prob_diff(
 
 def get_log_probs(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch n_pairs"],
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
     per_prompt: bool = False,
 ) -> Float[Tensor, "batch n_pairs"]:
-    
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     n_pairs = answer_tokens.shape[1]
     if len(logits.shape) == 3:
         # Get final logits only
@@ -190,7 +195,7 @@ def get_log_probs(
 
 def log_prob_diff_noising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch n_pairs"],
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -199,6 +204,8 @@ def log_prob_diff_noising(
     Linear function of log prob, calibrated so that it equals 0 when performance is
     same as on clean input, and 1 when performance is same as on flipped input.
     """
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     log_prob = get_log_probs(logits, answer_tokens)
     ld = ((log_prob - clean_value) / (flipped_value  - clean_value))
     if return_tensor:
@@ -209,7 +216,7 @@ def log_prob_diff_noising(
 
 def log_prob_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch n_pairs 2"],
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -218,6 +225,8 @@ def log_prob_diff_denoising(
     Linear function of log prob, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     """
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     log_prob = get_log_probs(logits, answer_tokens)
     ld = ((log_prob - flipped_value) / (clean_value  - flipped_value))
     if return_tensor:
@@ -228,7 +237,7 @@ def log_prob_diff_denoising(
 
 def logit_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch n_pairs 2"],
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -237,6 +246,8 @@ def logit_diff_denoising(
     Linear function of logit diff, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
     ld = ((patched_logit_diff - flipped_value) / (clean_value  - flipped_value))
     if return_tensor:
@@ -249,14 +260,15 @@ def prob_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
     clean_value: float,
     corrupted_value: float,
-    answer_tokens: Float[Tensor, "batch 2"],
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
     return_tensor: bool = False,
 ) -> float:
     '''
     Linear function of prob diff, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     '''
-    
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     patched_logit_diff = get_prob_diff(logits, answer_tokens)
     ld = ((patched_logit_diff - corrupted_value) / (clean_value  - corrupted_value)).item()
     if return_tensor:
@@ -267,7 +279,7 @@ def prob_diff_denoising(
 
 def logit_flip_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch pair 2"] ,
+    answer_tokens: Float[Tensor, "batch *pair 2"] ,
     corrupted_value: float,
     clean_value: float,
 ) -> Float[Tensor, ""]:
@@ -276,6 +288,8 @@ def logit_flip_denoising(
     same as on flipped input, and 1 when performance is same as on clean input.
     Moves in discrete jumps based on whether logit diffs are closer to clean or corrupted.
     '''
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     patched_logit_diff = get_logit_diff(logits, answer_tokens, per_prompt=True)
     clean_distances = (clean_value - patched_logit_diff).abs()
     corrupt_distances = (corrupted_value - patched_logit_diff).abs()
@@ -286,13 +300,15 @@ def logit_diff_noising(
     logits: Float[Tensor, "batch seq d_vocab"],
     clean_value: float,
     corrupted_value: float,
-    answer_tokens: Float[Tensor, "batch n_pairs 2"],
+    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
     return_tensor: bool = False,
 ) -> float:
     '''
     We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
     and -1 when performance has been destroyed (i.e. is same as ABC dataset).
     '''
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
     patched_logit_diff = get_logit_diff(logits, answer_tokens)
     ld = ((patched_logit_diff - clean_value) / (clean_value - corrupted_value))
 
