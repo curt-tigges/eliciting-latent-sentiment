@@ -4,6 +4,7 @@ import einops
 import numpy as np
 import torch
 from torch import Tensor
+from torch.utils.data import DataLoader, TensorDataset
 from jaxtyping import Float, Int
 from typing import Callable, Union, List, Tuple
 from transformer_lens.hook_points import HookPoint
@@ -173,6 +174,7 @@ class TrainingConfig:
     eval_position: Union[None, int]
 
     def __init__(self, config_dict: dict):
+        self.batch_size = config_dict.get("batch_size", 32)
         self.seed = config_dict.get("seed", 0)
         self.lr = config_dict.get("lr", 1e-3)
         self.weight_decay = config_dict.get("weight_decay", 0)
@@ -203,6 +205,7 @@ def fit_rotation(
     metric_train: Callable,
     metric_test: Callable,
     model: HookedTransformer, 
+    device: torch.device,
     project: str = None,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
@@ -210,6 +213,7 @@ def fit_rotation(
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
+    model = model.to(device)
     if 'model_name' not in config_dict:
         config_dict['model_name'] = model.cfg.model_name
     config = TrainingConfig(config_dict)
@@ -221,16 +225,22 @@ def fit_rotation(
     train_act_name, _ = get_resid_name(config.train_layer, model)
     eval_act_name, _ = get_resid_name(config.eval_layer, model)
 
-    orig_resid_train_base = orig_cache_train[train_act_name]
-    new_resid_train_base = new_cache_train[train_act_name]
+    orig_resid_train_base: Float[Tensor, "batch *pos d_model"] = orig_cache_train[train_act_name]
+    new_resid_train_base: Float[Tensor, "batch *pos d_model"] = new_cache_train[train_act_name]
     if config.train_position is not None:
         orig_resid_train_base = orig_resid_train_base[:, config.train_position, :]
         new_resid_train_base = new_resid_train_base[:, config.train_position, :]
-    orig_resid_test_base = orig_cache_test[eval_act_name]
-    new_resid_test_base = new_cache_test[eval_act_name]
+    orig_resid_test_base: Float[Tensor, "batch *pos d_model"] = orig_cache_test[eval_act_name]
+    new_resid_test_base: Float[Tensor, "batch *pos d_model"] = new_cache_test[eval_act_name]
     if config.eval_position is not None:
         orig_resid_test_base = orig_resid_test_base[:, config.eval_position, :]
         new_resid_test_base = new_resid_test_base[:, config.eval_position, :]
+    # Create a TensorDataset from the tensors
+    trainset = TensorDataset(orig_resid_train_base, new_resid_train_base)
+    testset = TensorDataset(orig_resid_test_base, new_resid_test_base)
+    # Create a DataLoader from the dataset
+    trainloader = DataLoader(trainset, batch_size=config.batch_size)
+    testloader = DataLoader(testset, batch_size=config.batch_size)
 
     # Create a list to store the losses and models
     losses_train = []
@@ -254,41 +264,51 @@ def fit_rotation(
     )
 
     for epoch in range(config.epochs):
+        epoch_train_loss = 0
+        epoch_test_loss = 0
         rotation_module.train()
-        optimizer.zero_grad()
-        loss = rotation_module(
-            orig_resid_train_base.clone().requires_grad_(True),
-            new_resid_train_base.clone().requires_grad_(True),
-            layer=config.train_layer,
-            position=config.train_position,
-            orig_tokens=orig_tokens_train,
-            patching_metric=metric_train,
-        )
-        assert loss.requires_grad, (
-            "The loss must be a scalar that requires grad. \n"
-            f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
-            f"train layer: {config.train_layer}, train position: {config.train_position}, "
-            f"train act name: {train_act_name}, "
-        )
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
-        optimizer.step()
+        for orig_resid, new_resid in trainloader:
+            orig_resid = orig_resid.to(device)
+            new_resid = new_resid.to(device)
+            optimizer.zero_grad()
+            loss = rotation_module(
+                orig_resid_train_base.clone().requires_grad_(True).to(device),
+                new_resid_train_base.clone().requires_grad_(True).to(device),
+                layer=config.train_layer,
+                position=config.train_position,
+                orig_tokens=orig_tokens_train,
+                patching_metric=metric_train,
+            )
+            assert loss.requires_grad, (
+                "The loss must be a scalar that requires grad. \n"
+                f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
+                f"train layer: {config.train_layer}, train position: {config.train_position}, "
+                f"train act name: {train_act_name}, "
+            )
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
+            optimizer.step()
+            epoch_train_loss += loss.item()
         rotation_module.eval()
         with torch.inference_mode():
-            eval_loss = rotation_module(
-                orig_resid_test_base,
-                new_resid_test_base,
-                layer=config.eval_layer,
-                position=config.eval_position,
-                orig_tokens=orig_tokens_test,
-                patching_metric=metric_test,
-            )
+            for orig_resid, new_resid in testloader:
+                orig_resid = orig_resid.to(device)
+                new_resid = new_resid.to(device)
+                eval_loss = rotation_module(
+                    orig_resid,
+                    new_resid,
+                    layer=config.eval_layer,
+                    position=config.eval_position,
+                    orig_tokens=orig_tokens_test,
+                    patching_metric=metric_test,
+                )
+                epoch_test_loss += eval_loss.item()
+
         if config.wandb_enabled:
             wandb.log({"training_loss": loss.item(), "validation_loss": eval_loss.item()}, step=step)
-
         # Store the loss and model for this seed
-        losses_train.append(loss.item())
-        losses_test.append(eval_loss.item())
+        losses_train.append(epoch_train_loss)
+        losses_test.append(epoch_test_loss)
         models.append(rotation_module.state_dict())
         step += 1
 
@@ -339,20 +359,21 @@ def get_das_dataset(
 
 
 def train_das_subspace(
-    model: HookedTransformer, device: torch.device, 
+    model: HookedTransformer, device_train: torch.device, device_cache: torch.device,
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     **config_arg,
 ):
     """
     Entrypoint to be used in directional patching experiments
-    Given training/validation datasets, train a DAS subspace
+    Given training/validation datasets, train a DAS subspace.
+    Initially the data is loaded onto device_cache but training happens on device_train.
     """
     all_prompts, orig_tokens, orig_cache, new_cache, loss_fn = get_das_dataset(
-        train_type, layer=train_layer, model=model, device=device,
+        train_type, layer=train_layer, model=model, device=device_cache,
     )
     all_prompts_val, orig_tokens_val, orig_cache_val, new_cache_val, loss_fn_val = get_das_dataset(
-        test_type, layer=test_layer, model=model, device=device,
+        test_type, layer=test_layer, model=model, device=device_cache,
     )
     example_train = model.to_str_tokens(all_prompts[0])
     placeholders_train = train_type.get_placeholder_positions(example_train)
@@ -375,6 +396,7 @@ def train_das_subspace(
         metric_train=loss_fn,
         metric_test=loss_fn_val,
         model=model,
+        device=device_train,
         **config,
     )
     save_array(

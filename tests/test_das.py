@@ -46,6 +46,7 @@ class TestFunctions(unittest.TestCase):
 
     def test_training_config(self):
         config_dict = {
+            "batch_size": 1,
             "seed": 42,
             "lr": 0.001,
             "weight_decay": 0.0,
@@ -71,7 +72,7 @@ class TestFunctions(unittest.TestCase):
         ).train()
         model.name = 'test'
         direction = train_das_subspace(
-            model, device,
+            model, device, device,
             PromptType.SIMPLE, 'ADJ', 0,
             PromptType.SIMPLE, 'ADJ', 0,
             wandb_enabled=False,
