@@ -209,7 +209,8 @@ def fit_rotation(
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
-    model = model.to(device)
+    if device != model.cfg.device:
+        model = model.to(device)
     if 'model_name' not in config_dict:
         config_dict['model_name'] = model.cfg.model_name
     config = TrainingConfig(config_dict)
@@ -319,54 +320,30 @@ def get_das_dataset(
     example = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     placeholders = prompt_type.get_placeholder_positions(example)
     pos: int = placeholders[position][-1] if position is not None else None
-    name_filter = lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0])
-    token_answer_dataset = TensorDataset(
-        clean_corrupt_data.corrupted_tokens, 
-        clean_corrupt_data.clean_tokens, 
-        clean_corrupt_data.answer_tokens
+    results = clean_corrupt_data.run_with_cache(
+        model,
+        names_filter=lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0]),
+        run_device=run_device,
+        out_device=out_device,
     )
-    token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
     act_name, _ = get_resid_name(layer, model)
-    orig_resids = []
-    new_resids = []
-    orig_logit_diff = 0
-    new_logit_diff = 0
-    for orig_tokens, new_tokens, answer_tokens in token_answer_dataloader:
-        orig_tokens = orig_tokens.to(run_device)
-        new_tokens = new_tokens.to(run_device)
-        answer_tokens = answer_tokens.to(run_device)
-        with torch.inference_mode():
-            orig_logits, orig_cache = model.run_with_cache(
-                orig_tokens, names_filter=name_filter
-            )
-            orig_cache.to(out_device)
-            orig_resids.append(orig_cache[act_name])
-            orig_logit_diff += get_logit_diff(orig_logits, answer_tokens).item()
-            new_logits, new_cache = model.run_with_cache(
-                new_tokens, names_filter=name_filter
-            )
-            new_cache.to(out_device)
-            new_resids.append(new_cache[act_name])
-            new_logit_diff += get_logit_diff(new_logits, answer_tokens).item()
-    orig_logit_diff /= len(token_answer_dataloader)
-    new_logit_diff /= len(token_answer_dataloader)
     loss_fn = partial(
         logit_diff_denoising, 
-        flipped_value=new_logit_diff, 
-        clean_value=orig_logit_diff,
+        flipped_value=results.clean_logit_diff, 
+        clean_value=results.corrupted_logit_diff,
         return_tensor=True,
     )
-    orig_resid_cat: Float[Tensor, "batch *pos d_model"] = torch.cat(orig_resids, dim=0)
-    new_resid_cat: Float[Tensor, "batch *pos d_model"] = torch.cat(new_resids, dim=0)
+    orig_resid: Float[Tensor, "batch *pos d_model"] = results.corrupted_cache[act_name]
+    new_resid: Float[Tensor, "batch *pos d_model"] = results.clean_cache[act_name]
     if pos is not None:
-        orig_resid_cat = orig_resid_cat[:, pos, :]
-        new_resid_cat = new_resid_cat[:, pos, :]
+        orig_resid = orig_resid[:, pos, :]
+        new_resid = new_resid[:, pos, :]
     # Create a TensorDataset from the tensors
     das_dataset = TensorDataset(
         clean_corrupt_data.corrupted_tokens, 
-        orig_resid_cat, 
-        new_resid_cat, 
-        clean_corrupt_data.answer_tokens
+        orig_resid, 
+        new_resid, 
+        clean_corrupt_data.answer_tokens,
     )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(das_dataset, batch_size=batch_size)
@@ -410,9 +387,10 @@ def train_das_subspace(
         device=device_train,
         **config,
     )
-    save_array(
-        directions.detach().cpu().numpy(), 
-        f'das_{train_type.value}_{train_pos}_layer{train_layer}', 
-        model,
-    )
+    if directions.shape[1] == 1:
+        save_array(
+            directions.detach().cpu().squeeze(1).numpy(), 
+            f'das_{train_type.value}_{train_pos}_layer{train_layer}', 
+            model,
+        )
     return directions

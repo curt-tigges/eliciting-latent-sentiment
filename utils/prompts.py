@@ -1,7 +1,8 @@
 import yaml
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, ActivationCache
 import torch
 from torch import Tensor
+from torch.utils.data import DataLoader, TensorDataset
 from jaxtyping import Float, Int, Bool
 from typing import Dict, List, Tuple, Union
 from typeguard import typechecked
@@ -9,6 +10,7 @@ import einops
 from enum import Enum
 import re
 from utils.store import load_pickle
+from utils.circuit_analysis import get_logit_diff, get_prob_diff
 
 
 def extract_placeholders(text: str) -> List[str]:
@@ -400,6 +402,98 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.corrupted_tokens[idx], 
             self.answer_tokens[idx],
         )
+    
+    def get_dataloader(self, batch_size: int) -> torch.utils.data.DataLoader:
+        token_answer_dataset = TensorDataset(
+            self.corrupted_tokens, 
+            self.clean_tokens, 
+            self.answer_tokens
+        )
+        token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
+        return token_answer_dataloader
+    
+    def run_with_cache(
+        self, 
+        model: HookedTransformer, 
+        names_filter: str = None, 
+        batch_size: int = 16,
+        run_device: torch.device = None, 
+        out_device: torch.device = None
+    ):
+        """
+        Note that variable names here assume denoising, i.e. corrupted -> clean
+        """
+        corrupted_dict = dict()
+        clean_dict = dict()
+        dataloader = self.get_dataloader(batch_size=batch_size)
+        corrupted_logit_diffs = []
+        clean_logit_diffs = []
+        corrupted_prob_diffs = []
+        clean_prob_diffs = []
+        for corrupted_tokens, clean_tokens, answer_tokens in dataloader:
+            corrupted_tokens = corrupted_tokens.to(run_device)
+            clean_tokens = clean_tokens.to(run_device)
+            answer_tokens = answer_tokens.to(run_device)
+            with torch.inference_mode():
+                corrupted_logits, corrupted_cache = model.run_with_cache(
+                    corrupted_tokens, names_filter=names_filter
+                )
+                corrupted_cache.to(out_device)
+                corrupted_dict = {
+                    k: corrupted_dict.get(k, []) + [v] for k, v in corrupted_cache.items()
+                }
+                corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
+                corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
+                clean_logits, clean_cache = model.run_with_cache(
+                    clean_tokens, names_filter=names_filter
+                )
+                clean_cache.to(out_device)
+                clean_dict = {
+                    k: clean_dict.get(k, []) + [v] for k, v in clean_cache.items()
+                }   
+                clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
+                clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
+        corrupted_logit_diff = sum(corrupted_logit_diffs) / len(corrupted_logit_diffs)
+        clean_logit_diff = sum(clean_logit_diffs) / len(clean_logit_diffs)
+        corrupted_prob_diff = sum(corrupted_prob_diffs) / len(corrupted_prob_diffs)
+        clean_prob_diff = sum(clean_prob_diffs) / len(clean_prob_diffs)
+        corrupted_cache = ActivationCache(
+            {k: torch.cat(v, dim=0) for k, v in corrupted_dict.items()}, 
+            model=model
+        )
+        clean_cache = ActivationCache(
+            {k: torch.cat(v, dim=0) for k, v in clean_dict.items()},
+            model=model
+        )
+        return CleanCorruptedCacheResults(
+            dataset=self,
+            corrupted_cache=corrupted_cache,
+            clean_cache=clean_cache,
+            corrupted_logit_diff=corrupted_logit_diff,
+            clean_logit_diff=clean_logit_diff,
+            corrupted_prob_diff=corrupted_prob_diff,
+            clean_prob_diff=clean_prob_diff,
+        )
+
+
+class CleanCorruptedCacheResults:
+
+    def __init__(
+        self, dataset: CleanCorruptedDataset,
+        corrupted_cache: ActivationCache,
+        clean_cache: ActivationCache,
+        corrupted_logit_diff: float,
+        clean_logit_diff: float,
+        corrupted_prob_diff: float,
+        clean_prob_diff: float,
+    ) -> None:
+        self.dataset = dataset
+        self.corrupted_cache = corrupted_cache
+        self.clean_cache = clean_cache
+        self.corrupted_logit_diff = corrupted_logit_diff
+        self.clean_logit_diff = clean_logit_diff
+        self.corrupted_prob_diff = corrupted_prob_diff
+        self.clean_prob_diff = clean_prob_diff
 
 
 def get_dataset(
