@@ -415,14 +415,16 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
     def run_with_cache(
         self, 
         model: HookedTransformer, 
-        names_filter: str = None, 
-        batch_size: int = 16,
-        run_device: torch.device = None, 
-        out_device: torch.device = None
+        names_filter: str, 
+        batch_size: int,
+        run_device: torch.device, 
+        out_device: torch.device
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
+        if model.cfg.device != run_device:
+            model = model.to(run_device)
         corrupted_dict = dict()
         clean_dict = dict()
         dataloader = self.get_dataloader(batch_size=batch_size)
@@ -438,21 +440,21 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 corrupted_logits, corrupted_cache = model.run_with_cache(
                     corrupted_tokens, names_filter=names_filter
                 )
+                corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
+                corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
                 corrupted_cache.to(out_device)
                 corrupted_dict = {
                     k: corrupted_dict.get(k, []) + [v] for k, v in corrupted_cache.items()
                 }
-                corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
-                corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
                 clean_logits, clean_cache = model.run_with_cache(
                     clean_tokens, names_filter=names_filter
                 )
+                clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
+                clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
                 clean_cache.to(out_device)
                 clean_dict = {
                     k: clean_dict.get(k, []) + [v] for k, v in clean_cache.items()
                 }   
-                clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
-                clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
         corrupted_logit_diff = sum(corrupted_logit_diffs) / len(corrupted_logit_diffs)
         clean_logit_diff = sum(clean_logit_diffs) / len(clean_logit_diffs)
         corrupted_prob_diff = sum(corrupted_prob_diffs) / len(corrupted_prob_diffs)
