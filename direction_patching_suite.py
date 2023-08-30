@@ -32,10 +32,10 @@ MODELS = [
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
-    'EleutherAI/pythia-160m',
-    'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-160m',
+    # 'EleutherAI/pythia-410m',
+    # 'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-2.8b',
 ]
 #%%
 def get_model(name: str) -> HookedTransformer:
@@ -50,10 +50,31 @@ def get_model(name: str) -> HookedTransformer:
     model.set_use_attn_result(True)
     return model
 #%% # Data loading
+class DirectionPatchingData:
+
+    def __init__(
+        self, all_prompts, clean_tokens, corrupted_tokens, answer_tokens,
+        clean_logits, clean_cache, clean_logit_diff, clean_prob_diff,
+        corrupted_logits, corrupted_cache, corrupted_logit_diff, corrupted_prob_diff,
+    ) -> None:
+        self.all_prompts = all_prompts
+        self.clean_tokens = clean_tokens
+        self.corrupted_tokens = corrupted_tokens
+        self.answer_tokens = answer_tokens
+        self.clean_logits = clean_logits
+        self.clean_cache = clean_cache
+        self.clean_logit_diff = clean_logit_diff
+        self.clean_prob_diff = clean_prob_diff
+        self.corrupted_logits = corrupted_logits
+        self.corrupted_cache = corrupted_cache
+        self.corrupted_logit_diff = corrupted_logit_diff
+        self.corrupted_prob_diff = corrupted_prob_diff
+
+
 def load_data(
     prompt_type: str, model: HookedTransformer, verbose: bool = False,
     names_filter = None,
-) -> dict:
+) -> DirectionPatchingData:
     model.reset_hooks()
     clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
     all_prompts = clean_corrupt_data.all_prompts
@@ -85,20 +106,20 @@ def load_data(
     corrupted_prob_diff = get_prob_diff(corrupted_logits, answer_tokens, per_prompt=False)
     if verbose:
         print('corrupted prob diff', corrupted_prob_diff)
-    return {
-        "all_prompts": all_prompts,
-        "answer_tokens": answer_tokens,
-        "clean_tokens": clean_tokens,
-        "corrupted_tokens": corrupted_tokens,
-        "clean_logits": clean_logits,
-        "clean_cache": clean_cache,
-        "clean_logit_diff": clean_logit_diff,
-        "clean_prob_diff": clean_prob_diff,
-        "corrupted_logits": corrupted_logits,
-        "corrupted_cache": corrupted_cache,
-        "corrupted_logit_diff": corrupted_logit_diff,
-        "corrupted_prob_diff": corrupted_prob_diff,
-    }
+    return DirectionPatchingData(
+        all_prompts=all_prompts,
+        clean_tokens=clean_tokens,
+        corrupted_tokens=corrupted_tokens,
+        answer_tokens=answer_tokens,
+        clean_logits=clean_logits,
+        clean_cache=clean_cache,
+        clean_logit_diff=clean_logit_diff,
+        clean_prob_diff=clean_prob_diff,
+        corrupted_logits=corrupted_logits,
+        corrupted_cache=corrupted_cache,
+        corrupted_logit_diff=corrupted_logit_diff,
+        corrupted_prob_diff=corrupted_prob_diff,
+    )
 #%%
 def display_cosine_sims(
     direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
@@ -237,21 +258,21 @@ def get_results_for_direction_and_position(
         names_filter = lambda name: 'resid' in name
     else:
         names_filter = lambda name: 'result' in name
-    data_dict = load_data(prompt_type, model, names_filter=names_filter)
-    example_prompt = model.to_str_tokens(data_dict["all_prompts"][0])
+    patching_dataset = load_data(prompt_type, model, names_filter=names_filter)
+    example_prompt = model.to_str_tokens(patching_dataset.all_prompts[0])
     if position == 'ALL':
         seq_pos = None
     else:
         seq_pos = prompt_type.get_placeholder_positions(example_prompt)[position][-1]
     if "logit" in patching_metric_base.__name__:
-        clean_diff = data_dict["clean_logit_diff"]
-        corrupt_diff = data_dict["corrupted_logit_diff"]
+        clean_diff = patching_dataset.clean_logit_diff
+        corrupt_diff = patching_dataset.corrupted_logit_diff
     else:
-        clean_diff = data_dict["clean_prob_diff"]
-        corrupt_diff = data_dict["corrupted_prob_diff"]
+        clean_diff = patching_dataset.clean_prob_diff
+        corrupt_diff = patching_dataset.corrupted_prob_diff
     patching_metric = partial(
         patching_metric_base, 
-        answer_tokens=data_dict["answer_tokens"],
+        answer_tokens=patching_dataset.answer_tokens,
         corrupted_value=corrupt_diff,
         clean_value=clean_diff,
         return_tensor=True,
@@ -259,14 +280,14 @@ def get_results_for_direction_and_position(
 
     direction = direction / direction.norm()
     new_cache = create_cache_for_dir_patching(
-        data_dict["clean_cache"], data_dict["corrupted_cache"], direction, model
+        patching_dataset.clean_cache, patching_dataset.corrupted_cache, direction, model
     )
     if heads is None:
         return run_position_patching(
-            model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, direction_label
+            model, patching_dataset.corrupted_tokens, new_cache, patching_metric, seq_pos, direction_label
         )
     return run_head_patching(
-        model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, heads
+        model, patching_dataset.corrupted_tokens, new_cache, patching_metric, seq_pos, heads
     )
 
 #%%
