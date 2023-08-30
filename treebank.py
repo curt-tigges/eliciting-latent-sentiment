@@ -32,7 +32,7 @@ from utils.prompts import CleanCorruptedDataset
 from utils.store import save_pickle, load_pickle
 # %%
 ROOT = "stanfordSentimentTreebank"
-phrase_ids = pd.read_csv(os.path.join(ROOT, "dictionary.txt"), sep="|", header=None, names=["phrase", "phrase_id"])
+phrase_ids = pd.read_csv(os.path.join(ROOT, "dictionary_fixed.txt"), sep="|", header=None, names=["phrase", "phrase_id"])
 phrase_ids.head()
 # %%
 phrase_labels = pd.read_csv(os.path.join(ROOT, "sentiment_labels.txt"), sep="|").rename(
