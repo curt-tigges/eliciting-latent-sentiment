@@ -417,8 +417,8 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         model: HookedTransformer, 
         names_filter: str, 
         batch_size: int,
-        run_device: torch.device, 
-        out_device: torch.device
+        run_device: torch.device = torch.device("cuda:0"), 
+        out_device: torch.device = torch.device("cpu"),
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
