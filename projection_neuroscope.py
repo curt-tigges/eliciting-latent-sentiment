@@ -22,12 +22,18 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import pandas as pd
-from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text
-from utils.neuroscope import plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, harry_potter_start, harry_potter_fr_start, get_batch_pos_mask
+import scipy.stats as stats
+from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv
+from utils.neuroscope import (
+    plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
+    harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window
+)
 #%%
+pd.set_option('display.max_colwidth', 200)
 torch.set_grad_enabled(False)
+#%%
 device = "cuda"
-MODEL_NAME = "EleutherAI/pythia-2.8b"
+MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -37,13 +43,6 @@ model = HookedTransformer.from_pretrained(
     device=device,
 )
 model.name = MODEL_NAME
-#%%
-array = np.load("loss_change_by_token.npy")
-dataloader = get_dataloader(model, "stas/openwebtext-10k", batch_size=8)
-#%%
-array = torch.tensor(array).to(device=device, dtype=torch.float32)
-#%%
-plot_topk(array, dataloader, model, k=10, layer=1, window_size=20, centred=True)
 #%%
 sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
@@ -64,9 +63,9 @@ plot_neuroscope(text, model, centred=True, verbose=False, special_dir=sentiment_
 #%%
 # ============================================================================ #
 
-harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
-save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-harry_potter_fr_neuroscope
+# harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+# save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+# harry_potter_fr_neuroscope
 #%%
 # Mandarin example
 # mandarin_text = """
@@ -161,9 +160,6 @@ def run_steering_search(
 # )
 # #%%
 # plot_neuroscope(steering_text, centred=True)
-#%%
-
-
 #%%
 # ============================================================================ #
 # Prefixes
@@ -295,6 +291,213 @@ else:
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(dataloader)
     save_array(sentiment_activations, "sentiment_activations", model)
 sentiment_activations.shape, sentiment_activations.device
+#%%
+# ============================================================================ #
+# Anthropic Graph 1
+
+#%%
+def sample_by_bin(
+    data: Float[Tensor, "batch pos"],
+    bins: int = 20,
+    samples_per_bin: int = 20,
+    seed: int = 0,
+    window_size: int = 10,
+    verbose: bool = False,
+):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    flat = data.flatten()
+    hist, bin_edges = np.histogram(flat.cpu().numpy(), bins=bins)
+    bin_indices: Int[np.ndarray, "batch pos"] = np.digitize(data.cpu().numpy(), bin_edges)
+    if verbose:
+        print(bin_edges)
+    indices = []
+    for bin_idx in range(1, bins + 1):
+        lb = bin_edges[bin_idx - 1]
+        ub = bin_edges[bin_idx]
+        bin_batches, bin_positions = np.where(bin_indices == bin_idx)
+        bin_samples = np.random.randint(0, len(bin_batches), samples_per_bin)
+        indices += [
+            (bin_idx, lb, ub, bin_batches[bin_sample], bin_positions[bin_sample])
+            for bin_sample in bin_samples
+        ]
+    df =  pd.DataFrame(indices, columns=["bin", "lb", "ub", "batch", "position"])
+    tokens = []
+    texts = []
+    for _, row in df.iterrows():
+        text = extract_text_window(
+            int(row.batch), int(row.position), dataloader, model, window_size=window_size
+        )
+        tokens.append(text[window_size])
+        texts.append("".join(text))
+    df.reset_index(drop=True, inplace=True)
+    df['token'] = tokens
+    df['text'] = texts
+    return df.sample(frac=1, random_state=seed).reset_index(drop=True)
+#%%
+bin_samples = sample_by_bin(
+    sentiment_activations[:, :, 1], verbose=False
+)
+to_csv(bin_samples, "bin_samples", model)
+bin_samples
+#%%
+labelled_bin_samples = get_csv(
+    "labelled_bin_samples", model
+)
+labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
+assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
+labelled_bin_samples
+#%%
+sampled_activations = []
+for idx, row in labelled_bin_samples.iterrows():
+    sampled_activations.append(sentiment_activations[row.batch, row.position, 1].detach().cpu().numpy())
+labelled_bin_samples['activation'] = sampled_activations
+labelled_bin_samples
+#%%
+fig = px.histogram(
+    labelled_bin_samples,
+    x="activation",
+    color="sentiment",
+    nbins=200,
+    title="Histogram of sentiment activations by label",
+    barmode="overlay",
+    marginal="rug",
+    histnorm="probability density",
+    hover_data=["token", "text"]
+)
+fig.update_layout(
+    title_x=0.5,
+    showlegend=True,
+)
+fig.show()
+
+#%%
+def plot_bin_proportions(df: pd.DataFrame, nbins=50):
+    sentiments = df['sentiment'].unique()
+    df = df.sort_values(by='activation').reset_index(drop=True)
+    df['activation_cut'] = pd.cut(df.activation, bins=nbins)
+    df.activation_cut = df.activation_cut.apply(lambda x: 0.5 * (x.left + x.right))
+    
+    fig = go.Figure()
+    data = []
+    
+    for x, bin_df in df.groupby('activation_cut'):
+        label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
+        data.append([label_props.get(sentiment, 0) for sentiment in sentiments])
+    
+    data = pd.DataFrame(data, columns=sentiments)
+    cumulative_data = data.cumsum(axis=1)  # Cumulative sum along columns
+    
+    x_values = df['activation_cut'].unique()
+    
+    # Adding traces for the rest of the sentiments
+    for idx, sentiment in enumerate(sentiments):
+        fig.add_trace(go.Scatter(
+            x=x_values, y=cumulative_data[sentiment], name=sentiment,
+            hovertemplate='<br>'.join([
+                'Sentiment: ' + sentiment,
+                'Activation: %{x}',
+                'Cum. Label proportion: %{y:.4f}',
+            ]),
+            fill='tonexty',
+            mode='lines',
+        ))
+    
+    fig.update_layout(
+        title="Anthropic Graph 1: Proportion of Sentiment by Activation",
+        title_x=0.5,
+        showlegend=True,
+        xaxis_title="Activation",
+        yaxis_title="Cum. Label proportion",
+    )
+
+    return fig
+#%%
+plot_bin_proportions(labelled_bin_samples)
+#%%
+# plot_stacked_histogram(labelled_bin_samples)
+#%%
+# ============================================================================ #
+# Anthropic Graph 2
+ecdf = stats.ecdf(sentiment_activations[:, :, 1].flatten().cpu().numpy())
+ecdf
+#%%
+def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
+    sentiments = df['sentiment'].unique()
+    df = df.sort_values(by='activation').reset_index(drop=True)
+    df['activation_cut'] = pd.cut(df.activation, bins=nbins)
+    fig = go.Figure()
+    data = []
+    for x, bin_df in df.groupby('activation_cut'):
+        prob_x = ecdf.cdf.evaluate(x.right) - ecdf.cdf.evaluate(x.left)
+        label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
+        data.append([prob_x * label_props.get(sentiment, 0) for sentiment in sentiments])
+    data = pd.DataFrame(data, columns=sentiments)
+    # Adding bar traces for each sentiment
+    x_values = df['activation_cut'].apply(lambda x: 0.5 * (x.left + x.right)).unique()
+    for sentiment in sentiments:
+        fig.add_trace(go.Bar(
+            x=x_values, y=data[sentiment], name=sentiment,
+            hovertemplate='<br>'.join([
+                'Sentiment: ' + sentiment,
+                'Activation: %{x}',
+                'Probability density: %{y:.4f}',
+            ]),
+            xaxis='x1', yaxis='y1',
+        ))
+
+    fig.update_layout(
+        barmode="stack", title="Anthropic Graph 2: Stacked Histogram of Sentiment by Activation",
+        title_x=0.5,
+        showlegend=True,
+        xaxis_title="Activation",
+        yaxis_title="Probability density",
+    )
+
+    return fig
+#%%
+plot_weighted_histogram(labelled_bin_samples)
+#%%
+# ============================================================================ #
+# Anthropic Graph 3
+#%%
+def plot_ev_histogram(df: pd.DataFrame, nbins: int = 100):
+    sentiments = df['sentiment'].unique()
+    df = df.sort_values(by='activation').reset_index(drop=True)
+    df['activation_cut'] = pd.cut(df.activation, bins=nbins)
+    fig = go.Figure()
+    data = []
+    for x_interval, bin_df in df.groupby('activation_cut'):
+        x_mid = 0.5 * (x_interval.left + x_interval.right)
+        prob_x = ecdf.cdf.evaluate(x_interval.right) - ecdf.cdf.evaluate(x_interval.left)
+        ev = x_mid * prob_x
+        label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
+        data.append([ev * label_props.get(sentiment, 0) for sentiment in sentiments])
+    data = pd.DataFrame(data, columns=sentiments)
+    # Adding bar traces for each sentiment
+    x_values = df['activation_cut'].apply(lambda x: 0.5 * (x.left + x.right)).unique()
+    for sentiment in sentiments:
+        fig.add_trace(go.Bar(
+            x=x_values, y=data[sentiment], name=sentiment,
+            hovertemplate='<br>'.join([
+                'Sentiment: ' + sentiment,
+                'Activation: %{x}',
+                'EV Contribution: %{y:.4f}',
+            ]),
+            xaxis='x1', yaxis='y1',
+        ))
+
+    fig.update_layout(
+        barmode="stack", title="Anthropic Graph 3: Stacked Histogram of EV contribution",
+        title_x=0.5,
+        showlegend=True,
+        xaxis_title="Activation",
+        yaxis_title="EV Contribution",
+    )
+
+    return fig
+#%%
+plot_ev_histogram(labelled_bin_samples)
 #%%
 # ============================================================================ #
 # Top k max activating examples
