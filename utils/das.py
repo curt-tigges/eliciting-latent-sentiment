@@ -328,6 +328,7 @@ def get_das_dataset(
     for orig_tokens, new_tokens, answer_tokens in token_answer_dataloader:
         orig_tokens = orig_tokens.to(run_device)
         new_tokens = new_tokens.to(run_device)
+        answer_tokens = answer_tokens.to(run_device)
         with torch.inference_mode():
             orig_logits, orig_cache = model.run_with_cache(
                 orig_tokens, names_filter=name_filter
