@@ -247,6 +247,7 @@ def fit_rotation(
             orig_tokens_train = orig_tokens_train.to(device)
             orig_resid_train = orig_resid_train.to(device)
             new_resid_train = new_resid_train.to(device)
+            answers_train = answers_train.to(device)
             optimizer.zero_grad()
             loss = rotation_module(
                 orig_resid_train,
@@ -271,6 +272,7 @@ def fit_rotation(
                 orig_tokens_test = orig_tokens_test.to(device)
                 orig_resid_test = orig_resid_test.to(device)
                 new_resid_test = new_resid_test.to(device)
+                answers_test = answers_test.to(device)
                 eval_loss = rotation_module(
                     orig_resid_test,
                     new_resid_test,
