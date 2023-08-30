@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import pandas as pd
+import scipy.stats as stats
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv
 from utils.neuroscope import (
     plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
@@ -369,111 +370,93 @@ fig.update_layout(
     showlegend=True,
 )
 fig.show()
+
 #%%
-def cumulative_proportion_plot(
-    df: pd.DataFrame,
-):
+def plot_bin_proportions(df: pd.DataFrame, nbins=50):
     sentiments = df['sentiment'].unique()
     df = df.sort_values(by='activation').reset_index(drop=True)
-
+    df['activation_cut'] = pd.cut(df.activation, bins=nbins)
+    df.activation_cut = df.activation_cut.apply(lambda x: 0.5 * (x.left + x.right))
+    
     fig = go.Figure()
-    df['global_cum_count'] = df.index + 1
-    for sentiment in sentiments:
-        sentiment_clean = sentiment.lower().replace(' ', '_')
-        df[f'{sentiment_clean}_cum_count'] = (df.sentiment == sentiment).cumsum()
-        cum_prop = df[f'{sentiment_clean}_cum_count'] / df.global_cum_count
-        df[f'{sentiment_clean}_cum_prop'] = cum_prop
-        hovertext = [f"Sentiment: {sentiment}<br>Activation: {act:.3f}<br>Cumulative Proportion: {prop:.3f}" 
-                     for act, prop in zip(df['activation'], cum_prop)]
+    data = []
+    
+    for x, bin_df in df.groupby('activation_cut'):
+        label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
+        data.append([label_props.get(sentiment, 0) for sentiment in sentiments])
+    
+    data = pd.DataFrame(data, columns=sentiments)
+    cumulative_data = data.cumsum(axis=1)  # Cumulative sum along columns
+    
+    x_values = df['activation_cut'].unique()
+    
+    # Adding traces for the rest of the sentiments
+    for idx, sentiment in enumerate(sentiments):
         fig.add_trace(go.Scatter(
-            x=df['activation'], y=cum_prop, fill='tonexty', name=sentiment, 
-            hoverinfo="text", hovertext=hovertext,
-            stackgroup='one', hoveron = 'points',
+            x=x_values, y=cumulative_data[sentiment], name=sentiment,
+            hovertemplate='<br>'.join([
+                'Sentiment: ' + sentiment,
+                'Activation: %{x}',
+                'Cum. Label proportion: %{y:.4f}',
+            ]),
+            fill='tonexty',
+            mode='lines',
         ))
-
-    fig.update_layout(title="Anthropic Graph 1: Cumulative Proportion of Sentiment by Activation",
-                    xaxis_title="Activation",
-                    yaxis_title="Cumulative Proportion",
-                    title_x=0.5,
-                    showlegend=True)
-
-    return fig
-#%%
-def plot_stacked_histogram(df: pd.DataFrame):
-    fig = px.histogram(
-        df, x="activation", color="sentiment", barmode="stack",
-        hover_data=["token", "text"],
-        nbins=100,
-        title="Anthropic Graph 2: Stacked Histogram of Activation by Sentiment",
-        labels={'activation': 'Activation Value'},
-        color_discrete_sequence=px.colors.qualitative.Pastel,
-        marginal="rug"
-    ) 
+    
     fig.update_layout(
+        title="Anthropic Graph 1: Proportion of Sentiment by Activation",
         title_x=0.5,
-        showlegend=True,   
+        showlegend=True,
+        xaxis_title="Activation",
+        yaxis_title="Cum. Label proportion",
     )
+
     return fig
 #%%
-cumulative_proportion_plot(labelled_bin_samples)
+plot_bin_proportions(labelled_bin_samples)
 #%%
 # plot_stacked_histogram(labelled_bin_samples)
 #%%
 # ============================================================================ #
 # Anthropic Graph 2
+ecdf = stats.ecdf(sentiment_activations[:, :, 1].flatten().cpu().numpy())
+ecdf
 #%%
-def get_normal_sample(
-    data: Float[Tensor, "batch pos"],
-    n_samples: int = 800,
-    window_size: int = 10,
-    layer: int = 1,
-    seed: int = 0,
-):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    batch_size, seq_len = data.shape
-    data_size = batch_size * seq_len
-    index: Int[Tensor, "batch_size seq_len"] = einops.rearrange(
-        torch.arange(data_size),
-        "(batch_size seq_len) -> batch_size seq_len",
-        batch_size=batch_size,
-        seq_len=seq_len,
+def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
+    sentiments = df['sentiment'].unique()
+    df = df.sort_values(by='activation').reset_index(drop=True)
+    df['activation_cut'] = pd.cut(df.activation, bins=nbins)
+    fig = go.Figure()
+    data = []
+    for x, bin_df in df.groupby('activation_cut'):
+        prob_x = ecdf.cdf.evaluate(x.right) - ecdf.cdf.evaluate(x.left)
+        label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
+        data.append([prob_x * label_props.get(sentiment, 0) for sentiment in sentiments])
+    data = pd.DataFrame(data, columns=sentiments)
+    # Adding bar traces for each sentiment
+    x_values = df['activation_cut'].apply(lambda x: 0.5 * (x.left + x.right)).unique()
+    for sentiment in sentiments:
+        fig.add_trace(go.Bar(
+            x=x_values, y=data[sentiment], name=sentiment,
+            hovertemplate='<br>'.join([
+                'Sentiment: ' + sentiment,
+                'Activation: %{x}',
+                'Probability density: %{y:.4f}',
+            ]),
+            xaxis='x1', yaxis='y1',
+        ))
+
+    fig.update_layout(
+        barmode="stack", title="Anthropic Graph 2: Stacked Histogram of Sentiment by Activation",
+        title_x=0.5,
+        showlegend=True,
+        xaxis_title="Activation",
+        yaxis_title="Probability density",
     )
-    indices: Int[Tensor, "sample"] = torch.randperm(data_size)[:n_samples]
-    batches, positions = torch.where(torch.isin(index, indices))
-    df = pd.DataFrame({"batch": batches, "position": positions})
-    tokens = []
-    texts = []
-    activations = []
-    for _, row in df.iterrows():
-        batch = int(row.batch)
-        position = int(row.position)
-        text = extract_text_window(
-            batch, position, dataloader, model, window_size=window_size
-        )
-        activation = sentiment_activations[batch, position, layer].detach().cpu().numpy()
-        tokens.append(model.to_string(dataloader.dataset[batch]['tokens'][position]))
-        texts.append("".join(text))
-        activations.append(activation)
-    df.reset_index(drop=True, inplace=True)
-    df['token'] = tokens
-    df['text'] = texts
-    df['activation'] = activations
-    return df.sample(frac=1, random_state=seed).reset_index(drop=True)
+
+    return fig
 #%%
-normal_samples = get_normal_sample(sentiment_activations[:, :, 1])
-to_csv(normal_samples, "normal_samples", model)
-normal_samples
-    
-#%%
-labelled_normal_samples = get_csv(
-    "labelled_normal_samples", model
-)
-labelled_normal_samples.sentiment = labelled_normal_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
-assert labelled_normal_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
-labelled_normal_samples
-#%%
-plot_stacked_histogram(labelled_normal_samples)
+plot_weighted_histogram(labelled_bin_samples)
 #%%
 # ============================================================================ #
 # Anthropic Graph 3
@@ -482,17 +465,17 @@ def plot_ev_histogram(df: pd.DataFrame, nbins: int = 100):
     sentiments = df['sentiment'].unique()
     df = df.sort_values(by='activation').reset_index(drop=True)
     df['activation_cut'] = pd.cut(df.activation, bins=nbins)
-    df.activation_cut = df.activation_cut.apply(lambda x: 0.5 * (x.left + x.right))
     fig = go.Figure()
     data = []
-    for x, bin_df in df.groupby('activation_cut'):
-        prob_x = len(bin_df) / len(df)
-        ev = x * prob_x
+    for x_interval, bin_df in df.groupby('activation_cut'):
+        x_mid = 0.5 * (x_interval.left + x_interval.right)
+        prob_x = ecdf.cdf.evaluate(x_interval.right) - ecdf.cdf.evaluate(x_interval.left)
+        ev = x_mid * prob_x
         label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
         data.append([ev * label_props.get(sentiment, 0) for sentiment in sentiments])
     data = pd.DataFrame(data, columns=sentiments)
     # Adding bar traces for each sentiment
-    x_values = df['activation_cut'].unique()
+    x_values = df['activation_cut'].apply(lambda x: 0.5 * (x.left + x.right)).unique()
     for sentiment in sentiments:
         fig.add_trace(go.Bar(
             x=x_values, y=data[sentiment], name=sentiment,
@@ -514,7 +497,7 @@ def plot_ev_histogram(df: pd.DataFrame, nbins: int = 100):
 
     return fig
 #%%
-plot_ev_histogram(labelled_normal_samples)
+plot_ev_histogram(labelled_bin_samples)
 #%%
 # ============================================================================ #
 # Top k max activating examples
