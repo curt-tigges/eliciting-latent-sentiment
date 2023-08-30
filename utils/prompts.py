@@ -4,6 +4,7 @@ import torch
 from torch import Tensor
 from jaxtyping import Float, Int, Bool
 from typing import Dict, List, Tuple, Union
+from typeguard import typechecked
 import einops
 from enum import Enum
 import re
@@ -127,6 +128,8 @@ class PromptType(Enum):
     TREEBANK_TEST = "treebank_test"
 
     def get_format_string(self):
+        if self in (PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV):
+            return None
         prompt_strings = {
             PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TRAIN: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
@@ -162,12 +165,15 @@ class PromptType(Enum):
         formatter = self.get_format_string()
         return extract_placeholders(formatter)
     
+    @typechecked
     def get_placeholder_positions(self, token_list: List[str]) -> Dict[str, List[int]]:
         '''
         Identifies placeholder positions in a list of string tokens.
         Handles whether the placeholder is a single token or multi-token.
         Example output: {'ADJ': [4, 5], 'VRB': [8]}
         '''
+        if self in (PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV):
+            return {}
         format_string = self.get_format_string()
         format_idx = 0
         curr_sub_token = None

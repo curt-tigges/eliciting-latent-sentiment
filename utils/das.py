@@ -196,12 +196,8 @@ class TrainingConfig:
 
 
 def fit_rotation(
-    orig_tokens_train: Int[Tensor, "batch pos"],
-    orig_cache_train: ActivationCache,
-    new_cache_train: ActivationCache,
-    orig_tokens_test: Int[Tensor, "batch pos"],
-    orig_cache_test: ActivationCache,
-    new_cache_test: ActivationCache,
+    trainloader: DataLoader,
+    testloader: DataLoader,
     metric_train: Callable,
     metric_test: Callable,
     model: HookedTransformer, 
@@ -221,26 +217,6 @@ def fit_rotation(
     if config.wandb_enabled:
         wandb.init(config=config.to_dict(), project=project)
         config = wandb.config
-
-    train_act_name, _ = get_resid_name(config.train_layer, model)
-    eval_act_name, _ = get_resid_name(config.eval_layer, model)
-
-    orig_resid_train_base: Float[Tensor, "batch *pos d_model"] = orig_cache_train[train_act_name]
-    new_resid_train_base: Float[Tensor, "batch *pos d_model"] = new_cache_train[train_act_name]
-    if config.train_position is not None:
-        orig_resid_train_base = orig_resid_train_base[:, config.train_position, :]
-        new_resid_train_base = new_resid_train_base[:, config.train_position, :]
-    orig_resid_test_base: Float[Tensor, "batch *pos d_model"] = orig_cache_test[eval_act_name]
-    new_resid_test_base: Float[Tensor, "batch *pos d_model"] = new_cache_test[eval_act_name]
-    if config.eval_position is not None:
-        orig_resid_test_base = orig_resid_test_base[:, config.eval_position, :]
-        new_resid_test_base = new_resid_test_base[:, config.eval_position, :]
-    # Create a TensorDataset from the tensors
-    trainset = TensorDataset(orig_resid_train_base, new_resid_train_base)
-    testset = TensorDataset(orig_resid_test_base, new_resid_test_base)
-    # Create a DataLoader from the dataset
-    trainloader = DataLoader(trainset, batch_size=config.batch_size)
-    testloader = DataLoader(testset, batch_size=config.batch_size)
 
     # Create a list to store the losses and models
     losses_train = []
@@ -267,23 +243,23 @@ def fit_rotation(
         epoch_train_loss = 0
         epoch_test_loss = 0
         rotation_module.train()
-        for orig_resid, new_resid in trainloader:
-            orig_resid = orig_resid.to(device)
-            new_resid = new_resid.to(device)
+        for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in trainloader:
+            orig_tokens_train = orig_tokens_train.to(device)
+            orig_resid_train = orig_resid_train.to(device)
+            new_resid_train = new_resid_train.to(device)
             optimizer.zero_grad()
             loss = rotation_module(
-                orig_resid_train_base.clone().requires_grad_(True).to(device),
-                new_resid_train_base.clone().requires_grad_(True).to(device),
+                orig_resid_train,
+                new_resid_train,
                 layer=config.train_layer,
                 position=config.train_position,
                 orig_tokens=orig_tokens_train,
-                patching_metric=metric_train,
+                patching_metric=partial(metric_train, answer_tokens=answers_train),
             )
             assert loss.requires_grad, (
                 "The loss must be a scalar that requires grad. \n"
                 f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
-                f"train layer: {config.train_layer}, train position: {config.train_position}, "
-                f"train act name: {train_act_name}, "
+                f"train layer: {config.train_layer}, train position: {config.train_position} "
             )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
@@ -291,16 +267,17 @@ def fit_rotation(
             epoch_train_loss += loss.item()
         rotation_module.eval()
         with torch.inference_mode():
-            for orig_resid, new_resid in testloader:
-                orig_resid = orig_resid.to(device)
-                new_resid = new_resid.to(device)
+            for orig_tokens_test, orig_resid_test, new_resid_test, answers_test in testloader:
+                orig_tokens_test = orig_tokens_test.to(device)
+                orig_resid_test = orig_resid_test.to(device)
+                new_resid_test = new_resid_test.to(device)
                 eval_loss = rotation_module(
-                    orig_resid,
-                    new_resid,
+                    orig_resid_test,
+                    new_resid_test,
                     layer=config.eval_layer,
                     position=config.eval_position,
                     orig_tokens=orig_tokens_test,
-                    patching_metric=metric_test,
+                    patching_metric=partial(metric_test, answer_tokens=answers_test),
                 )
                 epoch_test_loss += eval_loss.item()
 
@@ -328,40 +305,67 @@ def fit_rotation(
 
 
 def get_das_dataset(
-    prompt_type: PromptType, layer: int, model: HookedTransformer, device: torch.device,
+    prompt_type: PromptType, position: str, layer: int, model: HookedTransformer, out_device: torch.device,
+    batch_size: int = 32, run_device: torch.device = torch.device('cuda')
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
-    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
+    clean_corrupt_data = get_dataset(model, out_device, prompt_type=prompt_type)
+    example = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
+    placeholders = prompt_type.get_placeholder_positions(example)
+    pos: int = placeholders[position][-1] if position is not None else None
     new_tokens = clean_corrupt_data.clean_tokens
     orig_tokens = clean_corrupt_data.corrupted_tokens
     name_filter = lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0])
-    with torch.inference_mode():
-        orig_logits, orig_cache = model.run_with_cache(
-            orig_tokens, names_filter=name_filter
-        )
-        new_logits, new_cache = model.run_with_cache(
-            new_tokens, names_filter=name_filter
-        )
-    orig_cache.to(device)
-    new_cache.to(device)
-    orig_logit_diff = get_logit_diff(orig_logits, clean_corrupt_data.answer_tokens)
-    new_logit_diff = get_logit_diff(new_logits, clean_corrupt_data.answer_tokens)
+    token_answer_dataset = TensorDataset(orig_tokens, new_tokens, clean_corrupt_data.answer_tokens)
+    token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
+    act_name, _ = get_resid_name(layer, model)
+    orig_resids = []
+    new_resids = []
+    orig_logit_diff = 0
+    new_logit_diff = 0
+    for orig_tokens, new_tokens, answer_tokens in token_answer_dataloader:
+        orig_tokens = orig_tokens.to(run_device)
+        new_tokens = new_tokens.to(run_device)
+        with torch.inference_mode():
+            orig_logits, orig_cache = model.run_with_cache(
+                orig_tokens, names_filter=name_filter
+            )
+            orig_cache.to(out_device)
+            orig_resids.append(orig_cache[act_name])
+            orig_logit_diff += get_logit_diff(orig_logits, answer_tokens).item()
+            new_logits, new_cache = model.run_with_cache(
+                new_tokens, names_filter=name_filter
+            )
+            new_cache.to(out_device)
+            new_resids.append(new_cache[act_name])
+            new_logit_diff += get_logit_diff(new_logits, answer_tokens).item()
+    orig_logit_diff /= len(token_answer_dataloader)
+    new_logit_diff /= len(token_answer_dataloader)
     loss_fn = partial(
         logit_diff_denoising, 
-        answer_tokens=clean_corrupt_data.answer_tokens, 
         flipped_value=new_logit_diff, 
         clean_value=orig_logit_diff,
         return_tensor=True,
     )
-    return clean_corrupt_data.all_prompts, orig_tokens, orig_cache, new_cache, loss_fn
+    orig_resid_base: Float[Tensor, "batch *pos d_model"] = torch.cat(orig_resids, dim=0)
+    new_resid_base: Float[Tensor, "batch *pos d_model"] = torch.cat(new_resids, dim=0)
+    if pos is not None:
+        orig_resid_base = orig_resid_base[:, pos, :]
+        new_resid_base = new_resid_base[:, pos, :]
+    # Create a TensorDataset from the tensors
+    das_dataset = TensorDataset(orig_tokens, orig_resid_base, new_resid_base, clean_corrupt_data.answer_tokens)
+    # Create a DataLoader from the dataset
+    das_dataloader = DataLoader(das_dataset, batch_size=batch_size)
+    return das_dataloader, loss_fn, pos
 
 
 def train_das_subspace(
     model: HookedTransformer, device_train: torch.device, device_cache: torch.device,
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
+    batch_size: int = 32,
     **config_arg,
 ):
     """
@@ -369,30 +373,25 @@ def train_das_subspace(
     Given training/validation datasets, train a DAS subspace.
     Initially the data is loaded onto device_cache but training happens on device_train.
     """
-    all_prompts, orig_tokens, orig_cache, new_cache, loss_fn = get_das_dataset(
-        train_type, layer=train_layer, model=model, device=device_cache,
+    trainloader, loss_fn, train_position = get_das_dataset(
+        train_type, position=train_pos, layer=train_layer, model=model, out_device=device_cache,
+        batch_size=batch_size, run_device=device_train,
     )
-    all_prompts_val, orig_tokens_val, orig_cache_val, new_cache_val, loss_fn_val = get_das_dataset(
-        test_type, layer=test_layer, model=model, device=device_cache,
+    testloader, loss_fn_val, test_position = get_das_dataset(
+        test_type, position=test_pos, layer=test_layer, model=model, out_device=device_cache,
+        batch_size=batch_size, run_device=device_train,
     )
-    example_train = model.to_str_tokens(all_prompts[0])
-    placeholders_train = train_type.get_placeholder_positions(example_train)
-    example_val = model.to_str_tokens(all_prompts_val[0])
-    placeholders_val = test_type.get_placeholder_positions(example_val)
     config = dict(
         train_layer=train_layer,
-        train_position=placeholders_train[train_pos][-1] if train_pos is not None else None,
+        train_position=train_position,
         eval_layer=test_layer,
-        eval_position=placeholders_val[test_pos][-1] if test_pos is not None else None,
+        eval_position=test_position,
+        batch_size=batch_size,
     )
     config.update(config_arg)
     directions = fit_rotation(
-        orig_tokens_train=orig_tokens,
-        orig_cache_train=orig_cache,
-        new_cache_train=new_cache,
-        orig_tokens_test=orig_tokens_val,
-        orig_cache_test=orig_cache_val,
-        new_cache_test=new_cache_val,
+        trainloader=trainloader,
+        testloader=testloader,
         metric_train=loss_fn,
         metric_test=loss_fn_val,
         model=model,
