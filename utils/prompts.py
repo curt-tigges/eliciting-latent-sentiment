@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple, Union
 import einops
 from enum import Enum
 import re
+from utils.store import load_pickle
 
 
 def extract_placeholders(text: str) -> List[str]:
@@ -121,6 +122,9 @@ class PromptType(Enum):
     PROPER_NOUNS = "proper_nouns"
     MEDICAL = "medical"
     MULTI_SUBJECT_1 = "multi_subject_1"
+    TREEBANK_TRAIN = "treebank_train"
+    TREEBANK_DEV = "treebank_dev"
+    TREEBANK_TEST = "treebank_test"
 
     def get_format_string(self):
         prompt_strings = {
@@ -153,6 +157,8 @@ class PromptType(Enum):
         '''
         Example output: ['ADJ', 'VRB']
         '''
+        if self in (PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV):
+            return []
         formatter = self.get_format_string()
         return extract_placeholders(formatter)
     
@@ -398,6 +404,10 @@ def get_dataset(
     comparison: Tuple[str, str] = ("positive", "negative"),
 ) -> CleanCorruptedDataset:
     prompt_type = PromptType(prompt_type)
+    if prompt_type in (
+        PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV
+    ):
+        return get_pickle_dataset(model, prompt_type)
     prompts_dict, answers_dict = get_prompts(
         model, prompt_type
     )
@@ -449,6 +459,17 @@ def get_dataset(
         clean_tokens=clean_tokens, 
         corrupted_tokens=corrupted_tokens,
     )
+
+
+def get_pickle_dataset(
+    model: HookedTransformer,
+    prompt_type: PromptType,
+):
+    return load_pickle(
+        prompt_type.value.replace('_', '-'),
+        model
+    )
+
 
 def get_onesided_datasets(
     model: HookedTransformer, 
