@@ -221,9 +221,13 @@ def get_batch_pos_mask(
     device: str = None,
 ):
     """Helper function to get a mask for inclusions/exclusions (used in topk plotting)"""
-    if device is None:
+    if device is None and activations is not None:
+        device = activations.device
+    elif device is None:
         device = model.cfg.device
-    mask_values: Int[Tensor, "words"] = torch.unique(model.to_tokens(tokens, prepend_bos=False).flatten())
+    mask_values: Int[Tensor, "words"] = torch.unique(
+        model.to_tokens(tokens, prepend_bos=False).flatten()
+    ).to(device)
     masks = []
     for batch_idx, batch_value in enumerate(dataloader):
         batch_tokens: Int[Tensor, "batch_size pos 1"] = batch_value['tokens'].to(device).unsqueeze(-1)
@@ -232,6 +236,7 @@ def get_batch_pos_mask(
     mask: Bool[Tensor, "row pos"] = torch.cat(masks, dim=0)
     if activations is not None:
         assert mask.shape == activations.shape[:2]
+        assert mask.device == activations.device
     return mask
 
 
@@ -267,10 +272,6 @@ def _plot_topk(
     # create a mask for the inclusions/exclusions
     if exclusions is not None:
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, dataloader, model, all_activations)
-        # get activations device
-        activations_device = activations.device
-        # put mask on same device as activations
-        mask = mask.to(activations_device)
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, dataloader, model, all_activations)
