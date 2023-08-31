@@ -24,6 +24,7 @@
 # !pip install circuitsvis
 
 # %%
+from typing import List
 import pandas as pd
 from datasets import Dataset, DatasetDict
 import os
@@ -44,7 +45,9 @@ phrase_labels.sentiment_value = phrase_labels.sentiment_value.apply(lambda x: in
 print(phrase_labels.sentiment_value.value_counts())
 phrase_labels.head()
 # %%
-phrases_df = pd.merge(phrase_ids, phrase_labels, on="phrase_id", how="inner", validate="one_to_one")
+phrases_df = pd.merge(
+    phrase_ids, phrase_labels, on="phrase_id", how="inner", validate="one_to_one"
+).drop_duplicates('phrase', keep='first')
 phrases_df.head()
 # %%
 sentence_ids = pd.read_csv(os.path.join(ROOT, "datasetSentences_fixed.txt"), sep="\t")
@@ -106,26 +109,44 @@ def pair_by_num_tokens_and_split(df: pd.DataFrame):
 
 # %%
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#%%
+def convert_prompts_to_classification(prompts: List[str]):
+    clf_prompts = [
+        f"Review Text: {prompt} Review Sentiment:"
+        for prompt in prompts
+    ]
+    return clf_prompts
 # %%
 def create_dataset_for_split(
     full_df: pd.DataFrame,
     split: str,
     model: HookedTransformer,
+    classification: bool = True,
 ):
     df = full_df.loc[full_df.split == split]
     clean_prompts = df.phrase_pos.tolist() + df.phrase_neg.tolist()
     corrupt_prompts = df.phrase_neg.tolist() + df.phrase_pos.tolist()
+    if classification:
+        clean_prompts = convert_prompts_to_classification(clean_prompts)
+        corrupt_prompts = convert_prompts_to_classification(corrupt_prompts)
     clean_tokens = model.to_tokens(clean_prompts)
     corrupted_tokens = model.to_tokens(corrupt_prompts)
-    answer_tokens = torch.tensor([(1, 0)] * len(df) + [(0, 1)] * len(df)).unsqueeze(1)
+    if classification:
+        answer_tokens = torch.tensor(
+            [(model.to_single_token(' Positive'), model.to_single_token(' Negative'))] * len(df) +
+            [(model.to_single_token(' Negative'), model.to_single_token(' Positive'))] * len(df)
+        )
+    else:
+        answer_tokens = torch.tensor([(1, 0)] * len(df) + [(0, 1)] * len(df)).unsqueeze(1)
     dataset = CleanCorruptedDataset(
         clean_tokens=clean_tokens,
         corrupted_tokens=corrupted_tokens,
         answer_tokens=answer_tokens,
         all_prompts=clean_prompts
     )
-    save_pickle(dataset, f'treebank-{split}', model)
-    print(split, clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts))
+    clf_str = '_clf' if classification else ''
+    save_pickle(dataset, f'treebank_{split}{clf_str}', model)
+    print(split, classification, clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts))
 # %%
 def create_dataset_for_model(
     model: HookedTransformer,
@@ -137,9 +158,9 @@ def create_dataset_for_model(
         sentence_phrase_df.loc[idx, 'num_tokens'] = len(str_tokens)
     sentence_phrase_df.num_tokens = sentence_phrase_df.num_tokens.astype(int)
     paired_df = pair_by_num_tokens_and_split(sentence_phrase_df)
-    create_dataset_for_split(paired_df, 'train', model)
-    create_dataset_for_split(paired_df, 'dev', model)
-    create_dataset_for_split(paired_df, 'test', model)
+    for split in ('train', 'dev', 'test'):
+        for clf in (True, False):
+            create_dataset_for_split(paired_df, split, model, classification=clf)
 # %%
 MODELS = [
     'gpt2-small',
@@ -179,8 +200,7 @@ def convert_to_dataset_dict(df: pd.DataFrame) -> DatasetDict:
     dataset_dict = dataset_dict.remove_columns(['sentence_index', 'splitset_label', 'phrase', 'phrase_id', '__index_level_0__'])
     dataset_dict = dataset_dict.rename_column('sentiment_value', 'label')
     dataset_dict = dataset_dict.rename_column('sentence', 'text')
-    save_dataset_dict(dataset_dict, 'sst2', model)
-    dataset_dict.save_to_disk('sst2')
+    dataset_dict.save_to_disk('data/sst2')
     return dataset_dict
 
 # %%
