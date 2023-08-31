@@ -47,7 +47,7 @@ phrase_labels.head()
 phrases_df = pd.merge(phrase_ids, phrase_labels, on="phrase_id", how="inner", validate="one_to_one")
 phrases_df.head()
 # %%
-sentence_ids = pd.read_csv(os.path.join(ROOT, "datasetSentences.txt"), sep="\t")
+sentence_ids = pd.read_csv(os.path.join(ROOT, "datasetSentences_fixed.txt"), sep="\t")
 sentence_ids.head()
 
 # %%
