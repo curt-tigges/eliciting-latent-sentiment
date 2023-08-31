@@ -59,6 +59,10 @@ sentences_df = pd.merge(
 ).drop_duplicates('sentence', keep='first')
 sentences_df.head()
 # %%
+# eliminate duplicates in phrase column in phrases_df
+phrases_df = phrases_df.drop_duplicates('phrase', keep='first')
+
+# %%
 sentence_phrase_df = pd.merge(
     sentences_df, phrases_df, 
     left_on="sentence", right_on="phrase", 
