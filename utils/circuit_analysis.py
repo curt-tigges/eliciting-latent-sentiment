@@ -82,7 +82,7 @@ def get_logit_diff(
     logits: Float[Tensor, "batch *pos vocab"],
     answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
-):
+) -> Float[Tensor, "*batch"]:
     """
     Gets the difference between the logits of the provided tokens 
     e.g., the correct and incorrect tokens in IOI
@@ -97,20 +97,18 @@ def get_logit_diff(
     if answer_tokens.ndim == 2:
         answer_tokens = answer_tokens.unsqueeze(1)
     n_pairs = answer_tokens.shape[1]
-    if len(logits.shape) == 3:
-        # Get final logits only
-        final_token_logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
-    else:
-        final_token_logits = logits
-    repeated_logits = einops.repeat(
+    final_token_logits: Float[Tensor, "batch vocab"] = (
+        logits[:, -1, :] if len(logits.shape) == 3 else logits
+    )
+    repeated_logits: Float[Tensor, "batch n_pairs d_vocab"] = einops.repeat(
         final_token_logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
     )
     left_logits: Float[Tensor, "batch n_pairs"] = repeated_logits.gather(
         -1, answer_tokens[:, :, 0].unsqueeze(-1)
-    )
+    ).squeeze(-1)
     right_logits: Float[Tensor, "batch n_pairs"] = repeated_logits.gather(
         -1, answer_tokens[:, :, 1].unsqueeze(-1)
-    )
+    ).squeeze(-1)
     left_logits_batch: Float[Tensor, "batch"] = left_logits.mean(dim=1)
     right_logits_batch: Float[Tensor, "batch"] = right_logits.mean(dim=1)
     if per_prompt:
