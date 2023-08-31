@@ -45,13 +45,13 @@ from utils.das import FittingMethod, train_das_subspace
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODELS = [
     'gpt2-small',
-    'gpt2-medium',
-    'gpt2-large',
-    'gpt2-xl',
-    'EleutherAI/pythia-160m',
-    'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b'
+    # 'gpt2-medium',
+    # 'gpt2-large',
+    # 'gpt2-xl',
+    # 'EleutherAI/pythia-160m',
+    # 'EleutherAI/pythia-410m',
+    # 'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-2.8b'
 ]
 METHODS = [
     ClassificationMethod.KMEANS,
@@ -63,13 +63,14 @@ METHODS = [
 ]
 PROMPT_TYPES = [
     PromptType.SIMPLE_TRAIN,
-    PromptType.SIMPLE_TEST,
-    PromptType.CLASSIFICATION_4,
-    PromptType.SIMPLE_ADVERB,
-    PromptType.SIMPLE_MOOD,
+    # PromptType.SIMPLE_TEST,
+    # PromptType.CLASSIFICATION_4,
+    # PromptType.SIMPLE_ADVERB,
+    # PromptType.SIMPLE_MOOD,
     # PromptType.SIMPLE_FRENCH,
     # PromptType.PROPER_NOUNS,
     # PromptType.MEDICAL,
+    # PromptType.TREEBANK_TRAIN,
 ]
 #%%
 def get_model(name: str):
@@ -83,6 +84,24 @@ def get_model(name: str):
     model.name = name
     return model
 #%%
+sweep_model = get_model(MODELS[0])
+sweep_layer = sweep_model.cfg.n_layers // 2
+batch_size = 128
+epochs = 1
+train_das_subspace(
+    model=sweep_model, device_train=device, device_cache='cpu',
+    train_type=PromptType.TREEBANK_TRAIN, train_pos=None, train_layer=sweep_layer,
+    test_type=PromptType.TREEBANK_DEV, test_pos=None, test_layer=sweep_layer,
+    wandb_enabled=True, batch_size=batch_size, epochs=epochs,
+)
+#%%
+train_das_subspace(
+    model=sweep_model, device_train=device, device_cache='cpu',
+    train_type=PromptType.SIMPLE_TRAIN, train_pos=None, train_layer=sweep_layer,
+    test_type=PromptType.SIMPLE_TEST, test_pos=None, test_layer=sweep_layer,
+    wandb_enabled=True, batch_size=batch_size, epochs=50,
+)
+#%%
 # ============================================================================ #
 # DAS sweep with wandb
 #%%
@@ -91,9 +110,9 @@ for sweep_model in MODELS:
     sweep_layer = sweep_model.cfg.n_layers // 2
     sweep_func = partial(
         train_das_subspace,
-        model=sweep_model, device=device,
-        train_type=PromptType.SIMPLE_TRAIN, train_pos='ADJ', train_layer=sweep_layer,
-        test_type=PromptType.SIMPLE_MOOD, test_pos=None, test_layer=sweep_layer,
+        model=sweep_model, device_train=device, device_cache='cpu',
+        train_type=PromptType.TREEBANK_TRAIN, train_pos=None, train_layer=sweep_layer,
+        test_type=PromptType.TREEBANK_DEV, test_pos=None, test_layer=sweep_layer,
         wandb_enabled=True,
     )
     sweep_config = {
@@ -163,7 +182,7 @@ for model_name, train_type, test_type, method in BAR:
             if is_file(das_path, model):
                 continue
             train_das_subspace(
-                model, device,
+                model, device, 'cpu' if 'treebank' in train_type.value else device,
                 train_type, train_pos, train_layer,
                 test_type, test_pos, test_layer,
                 wandb_enabled=False,
@@ -218,7 +237,6 @@ for model in MODELS:
             method.value,
             model,
         )
-#%%
 #%%
 # ============================================================================ #
 # PCA/SVD plots
