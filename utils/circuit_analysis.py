@@ -80,7 +80,7 @@ def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
 @typechecked
 def get_logit_diff(
     logits: Float[Tensor, "batch *pos vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"], 
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
 ):
     """
@@ -121,7 +121,7 @@ def get_logit_diff(
 
 def get_prob_diff(
     logits: Float[Tensor, "batch pos vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"], 
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
 ):
     """
@@ -161,7 +161,7 @@ def get_prob_diff(
 
 def get_log_probs(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"],
     per_prompt: bool = False,
 ) -> Float[Tensor, "batch n_pairs"]:
     if answer_tokens.ndim == 2:
@@ -192,7 +192,7 @@ def get_log_probs(
 
 def log_prob_diff_noising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -213,7 +213,7 @@ def log_prob_diff_noising(
 
 def log_prob_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -234,7 +234,7 @@ def log_prob_diff_denoising(
 
 def logit_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -255,7 +255,7 @@ def logit_diff_denoising(
 
 def prob_diff_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -276,7 +276,7 @@ def prob_diff_denoising(
 
 def logit_flip_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
@@ -300,7 +300,7 @@ def logit_flip_denoising(
 
 def logit_diff_noising(
     logits: Float[Tensor, "batch seq d_vocab"],
-    answer_tokens: Float[Tensor, "batch *n_pairs 2"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"],
     flipped_value: float,
     clean_value: float,
     return_tensor: bool = False,
