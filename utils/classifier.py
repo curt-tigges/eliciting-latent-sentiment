@@ -1,5 +1,6 @@
 from typing import List, Union
 import jaxtyping
+from typeguard import typechecked
 import torch
 from torch import Tensor
 from transformers import AutoModelForCausalLM
@@ -19,21 +20,24 @@ class HookedClassifier(HookedTransformer):
         self.device = self.base_model.cfg.device
         self.class_layer_weights = class_layer_weights.to(self.device)
 
+    @typechecked
     def forward(
         self, 
         input: Union[str, List[str], jaxtyping.Int[Tensor, 'batch pos']], 
         return_type: str = 'logits'
-    ):
+    ) -> jaxtyping.Float[Tensor, "batch *num_classes"]:
         _, cache = self.base_model.run_with_cache(input, return_type=None)
-        last_token_act = cache['ln_final.hook_normalized'][0, -1, :]
-        logits = torch.softmax(
+        last_token_act: jaxtyping.Float[
+            Tensor, "batch d_model"
+        ] = cache['ln_final.hook_normalized'][:, -1, :]
+        logits: jaxtyping.Float[Tensor, "batch num_classes"] = torch.softmax(
             self.class_layer_weights @ last_token_act, 
             dim=-1
         )
         if return_type == 'logits':
             return logits
         elif return_type == 'prediction':
-            return logits.argmax()
+            return logits.argmax(dim=-1)
         else:
             raise ValueError(f"Invalid return_type: {return_type}")
 
