@@ -423,6 +423,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
+        was_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(False)
         model = model.eval().requires_grad_(False)
         assert batch_size is not None, "run_with_cache: must specify batch size"
@@ -435,46 +436,60 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         clean_logit_diffs = []
         corrupted_prob_diffs = []
         clean_prob_diffs = []
-        for corrupted_tokens, clean_tokens, answer_tokens in tqdm(dataloader):
+        buffer_initialized = False
+        total_samples = len(dataloader.dataset)
+        corrupted_dict = dict()
+        clean_dict = dict()
+        for idx, (corrupted_tokens, clean_tokens, answer_tokens) in enumerate(tqdm(dataloader)):
             corrupted_tokens = corrupted_tokens.cuda()
             clean_tokens = clean_tokens.cuda()
             answer_tokens = answer_tokens.cuda()
             with torch.inference_mode():
+                # corrupted forward pass
                 corrupted_logits, corrupted_cache = model.run_with_cache(
                     corrupted_tokens, names_filter=names_filter
                 )
                 corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
                 corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
                 corrupted_cache.to('cpu')
-                corrupted_dict = {
-                    k: corrupted_dict.get(k, []) + [v.detach().cpu()] 
-                    for k, v in corrupted_cache.items()
-                }
+
+                # clean forward pass
                 clean_logits, clean_cache = model.run_with_cache(
                     clean_tokens, names_filter=names_filter
                 )
                 clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
                 clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
                 clean_cache.to('cpu')
-                clean_dict = {
-                    k: clean_dict.get(k, []) + [v.detach().cpu()] 
-                    for k, v in clean_cache.items()
-                }   
+
+                # Initialise the buffer tensors if necessary
+                if not buffer_initialized:
+                    for k, v in corrupted_cache.items():
+                        corrupted_dict[k] = torch.zeros((total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu')
+                        clean_dict[k] = torch.zeros((total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu')
+                    buffer_initialized = True
+
+                # Fill the buffer tensors
+                start_idx = idx * batch_size
+                end_idx = start_idx + corrupted_tokens.size(0)
+                for k, v in corrupted_cache.items():
+                    corrupted_dict[k][start_idx:end_idx] = v
+                for k, v in clean_cache.items():
+                    clean_dict[k][start_idx:end_idx] = v
         corrupted_logit_diff = sum(corrupted_logit_diffs) / len(corrupted_logit_diffs)
         clean_logit_diff = sum(clean_logit_diffs) / len(clean_logit_diffs)
         corrupted_prob_diff = sum(corrupted_prob_diffs) / len(corrupted_prob_diffs)
         clean_prob_diff = sum(clean_prob_diffs) / len(clean_prob_diffs)
         corrupted_cache = ActivationCache(
-            {k: torch.cat(v, dim=0) for k, v in corrupted_dict.items()}, 
+            corrupted_dict, 
             model=model
         )
         clean_cache = ActivationCache(
-            {k: torch.cat(v, dim=0) for k, v in clean_dict.items()},
+            clean_dict,
             model=model
         )
         corrupted_cache.to('cpu')
         clean_cache.to('cpu')
-        torch.set_grad_enabled(True)
+        torch.set_grad_enabled(was_grad_enabled)
         model = model.train().requires_grad_(True)
         return CleanCorruptedCacheResults(
             dataset=self,

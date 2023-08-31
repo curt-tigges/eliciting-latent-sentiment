@@ -363,11 +363,11 @@ def train_das_subspace(
     """
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model, out_device=device_cache,
-        batch_size=batch_size, run_device=device_train,
+        batch_size=batch_size,
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model, out_device=device_cache,
-        batch_size=batch_size, run_device=device_train,
+        batch_size=batch_size,
     )
     config = dict(
         train_layer=train_layer,
