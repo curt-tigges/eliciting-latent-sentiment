@@ -1,3 +1,4 @@
+import einops
 from typing import List, Union
 import jaxtyping
 from typeguard import typechecked
@@ -30,14 +31,17 @@ class HookedClassifier(HookedTransformer):
         last_token_act: jaxtyping.Float[
             Tensor, "batch d_model"
         ] = cache['ln_final.hook_normalized'][:, -1, :]
-        logits: jaxtyping.Float[Tensor, "batch num_classes"] = torch.softmax(
-            self.class_layer_weights @ last_token_act, 
-            dim=-1
+        logits: jaxtyping.Float[Tensor, "batch num_classes"] = einops.einsum(
+            self.class_layer_weights,
+            last_token_act,
+            "batch d_model, num_classes d_model -> batch num_classes"
         )
         if return_type == 'logits':
             return logits
         elif return_type == 'prediction':
             return logits.argmax(dim=-1)
+        elif return_type == 'probabilities':
+            return torch.softmax(logits, dim=-1)
         else:
             raise ValueError(f"Invalid return_type: {return_type}")
 
