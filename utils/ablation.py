@@ -171,3 +171,28 @@ def ablate_attn_head_pos_hook(
     for p in pos:
         component[:, p, head_idx, :] = ablation_func(cache[f"blocks.{layer}.attn.{component_type}"][:, p, head_idx, :])
     return component
+
+
+def ablate_resid_with_precalc_mean(
+    component: Float[Tensor, "batch pos d_model"],
+    hook: HookPoint,
+    cached_means: Float[Tensor, "layer d_model"],
+    pos_by_batch: List[List[int]],
+    layer: int = 0,
+) -> Float[Tensor, "batch pos d_model"]:
+    """
+    Mean-ablates a batch tensor
+
+    :param component: the tensor to compute the mean over the batch dim of
+    :return: the mean over the cache component of the tensor
+    """
+    assert 'resid' in hook.name
+
+    batch_size = component.shape[0]
+    assert len(pos_by_batch) == batch_size
+
+    for i in range(batch_size):
+        for p in pos_by_batch[i]:
+            component[i, p, :] = cached_means[layer]
+            
+    return component
