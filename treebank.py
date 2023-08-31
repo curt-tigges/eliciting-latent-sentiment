@@ -25,11 +25,12 @@
 
 # %%
 import pandas as pd
+from datasets import Dataset, DatasetDict
 import os
 from transformer_lens import HookedTransformer
 import torch
 from utils.prompts import CleanCorruptedDataset
-from utils.store import save_pickle, load_pickle
+from utils.store import save_pickle, load_pickle, save_dataset_dict
 # %%
 ROOT = "stanfordSentimentTreebank"
 phrase_ids = pd.read_csv(os.path.join(ROOT, "dictionary_fixed.txt"), sep="|", header=None, names=["phrase", "phrase_id"])
@@ -149,49 +150,35 @@ MODELS = [
 for model in MODELS:
     model = HookedTransformer.from_pretrained(model, device=device)
     create_dataset_for_model(model)
-# %%
-dataset.clean_tokens.shape, dataset.corrupted_tokens.shape, dataset.answer_tokens.shape
 
 # %%
-import pandas as pd
-from datasets import Dataset, DatasetDict
+def convert_to_dataset_dict(df: pd.DataFrame) -> DatasetDict:
+    # Filter DataFrame based on 'split' column
+    train_df = df[df['split'] == 'train']
+    test_df = df[df['split'] == 'test']
+    dev_df = df[df['split'] == 'dev']
 
-# Code snippet to turn the above into a DatasetDict
-data = {
-    'sentence': ['Hello, world!', 'I love AI.', 'How are you?', 'Goodbye!'],
-    'split': ['train', 'test', 'train', 'dev'],
-    'sentiment_value': [1, 0, 1, 0]
-}
-df = sentence_phrase_df
-# Filter DataFrame based on 'split' column
-train_df = df[df['split'] == 'train']
-test_df = df[df['split'] == 'test']
-dev_df = df[df['split'] == 'dev']
+    # Convert filtered DataFrames to Hugging Face Datasets
+    train_dataset = Dataset.from_pandas(train_df.drop(columns=['split']))
+    test_dataset = Dataset.from_pandas(test_df.drop(columns=['split']))
+    dev_dataset = Dataset.from_pandas(dev_df.drop(columns=['split']))
 
-# Convert filtered DataFrames to Hugging Face Datasets
-train_dataset = Dataset.from_pandas(train_df.drop(columns=['split']))
-test_dataset = Dataset.from_pandas(test_df.drop(columns=['split']))
-dev_dataset = Dataset.from_pandas(dev_df.drop(columns=['split']))
-
-# Combine into a DatasetDict
-dataset_dict = DatasetDict({
-    'train': train_dataset,
-    'test': test_dataset,
-    'dev': dev_dataset
-})
-
-# Display the DatasetDict
-print(dataset_dict)
-
-    
+    # Combine into a DatasetDict
+    dataset_dict = DatasetDict({
+        'train': train_dataset,
+        'test': test_dataset,
+        'dev': dev_dataset
+    })
+    # Display the DatasetDict
+    print(dataset_dict)
+    # remove dataset columns
+    dataset_dict = dataset_dict.remove_columns(['sentence_index', 'splitset_label', 'phrase', 'phrase_id', '__index_level_0__'])
+    dataset_dict = dataset_dict.rename_column('sentiment_value', 'label')
+    dataset_dict = dataset_dict.rename_column('sentence', 'text')
+    save_dataset_dict(dataset_dict, 'sst2', model)
+    dataset_dict.save_to_disk('sst2')
+    return dataset_dict
 
 # %%
-# remove dataset columns
-dataset_dict = dataset_dict.remove_columns(['sentence_index', 'splitset_label', 'phrase', 'phrase_id', '__index_level_0__'])
-dataset_dict = dataset_dict.rename_column('sentiment_value', 'label')
-dataset_dict = dataset_dict.rename_column('sentence', 'text')
-
-# %%
-dataset_dict.save_to_disk('sst2')
-
-# %%
+convert_to_dataset_dict(sentence_phrase_df)
+#%%

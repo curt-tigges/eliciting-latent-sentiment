@@ -10,6 +10,7 @@ from circuitsvis.utils.render import RenderedHTML
 from pandas.io.formats.style import Styler
 import re
 import pickle
+from datasets import dataset_dict
 
 
 def add_styling(html):
@@ -269,3 +270,18 @@ def load_pickle(
     with open(path, 'rb') as f:
         obj = pickle.load(f)
     return obj
+
+
+def save_dataset_dict(
+    dataset_dict: dataset_dict,
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.pkl')
+    dataset_dict.save_to_disk(path)
+    return path
