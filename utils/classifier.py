@@ -34,7 +34,7 @@ class HookedClassifier(HookedTransformer):
         logits: jaxtyping.Float[Tensor, "batch num_classes"] = einops.einsum(
             self.class_layer_weights,
             last_token_act,
-            "batch d_model, num_classes d_model -> batch num_classes"
+            "num_classes d_model, batch d_model -> batch num_classes"
         )
         if return_type == 'logits':
             return logits
