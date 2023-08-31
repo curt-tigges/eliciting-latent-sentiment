@@ -174,12 +174,12 @@ def ablate_attn_head_pos_hook(
 
 
 def ablate_resid_with_precalc_mean(
-    component: Float[Tensor, "batch ..."],
+    component: Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
-    cached_means: Float[Tensor, "layer ..."],
+    cached_means: Float[Tensor, "layer d_model"],
     pos_by_batch: List[List[int]],
     layer: int = 0,
-) -> Float[Tensor, "batch ..."]:
+) -> Float[Tensor, "batch pos d_model"]:
     """
     Mean-ablates a batch tensor
 
