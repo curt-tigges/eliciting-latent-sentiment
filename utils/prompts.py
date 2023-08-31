@@ -9,6 +9,7 @@ from typeguard import typechecked
 import einops
 from enum import Enum
 import re
+from tqdm.notebook import tqdm
 from utils.store import load_pickle
 from utils.circuit_analysis import get_logit_diff, get_prob_diff
 
@@ -404,6 +405,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         )
     
     def get_dataloader(self, batch_size: int) -> torch.utils.data.DataLoader:
+        assert batch_size is not None, "get_dataloader: must specify batch size"
         token_answer_dataset = TensorDataset(
             self.corrupted_tokens, 
             self.clean_tokens, 
@@ -417,14 +419,15 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         model: HookedTransformer, 
         names_filter: str, 
         batch_size: int,
-        run_device: torch.device = torch.device("cuda:0"), 
-        out_device: torch.device = torch.device("cpu"),
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
-        if model.cfg.device != run_device:
-            model = model.to(run_device)
+        torch.set_grad_enabled(False)
+        model = model.eval().requires_grad_(False)
+        assert batch_size is not None, "run_with_cache: must specify batch size"
+        if model.cfg.device != 'cuda':
+            model = model.cuda()
         corrupted_dict = dict()
         clean_dict = dict()
         dataloader = self.get_dataloader(batch_size=batch_size)
@@ -432,28 +435,30 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         clean_logit_diffs = []
         corrupted_prob_diffs = []
         clean_prob_diffs = []
-        for corrupted_tokens, clean_tokens, answer_tokens in dataloader:
-            corrupted_tokens = corrupted_tokens.to(run_device)
-            clean_tokens = clean_tokens.to(run_device)
-            answer_tokens = answer_tokens.to(run_device)
+        for corrupted_tokens, clean_tokens, answer_tokens in tqdm(dataloader):
+            corrupted_tokens = corrupted_tokens.cuda()
+            clean_tokens = clean_tokens.cuda()
+            answer_tokens = answer_tokens.cuda()
             with torch.inference_mode():
                 corrupted_logits, corrupted_cache = model.run_with_cache(
                     corrupted_tokens, names_filter=names_filter
                 )
                 corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
                 corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
-                corrupted_cache.to(out_device)
+                corrupted_cache.to('cpu')
                 corrupted_dict = {
-                    k: corrupted_dict.get(k, []) + [v] for k, v in corrupted_cache.items()
+                    k: corrupted_dict.get(k, []) + [v.detach().cpu()] 
+                    for k, v in corrupted_cache.items()
                 }
                 clean_logits, clean_cache = model.run_with_cache(
                     clean_tokens, names_filter=names_filter
                 )
                 clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
                 clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
-                clean_cache.to(out_device)
+                clean_cache.to('cpu')
                 clean_dict = {
-                    k: clean_dict.get(k, []) + [v] for k, v in clean_cache.items()
+                    k: clean_dict.get(k, []) + [v.detach().cpu()] 
+                    for k, v in clean_cache.items()
                 }   
         corrupted_logit_diff = sum(corrupted_logit_diffs) / len(corrupted_logit_diffs)
         clean_logit_diff = sum(clean_logit_diffs) / len(clean_logit_diffs)
@@ -467,6 +472,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             {k: torch.cat(v, dim=0) for k, v in clean_dict.items()},
             model=model
         )
+        corrupted_cache.to('cpu')
+        clean_cache.to('cpu')
+        torch.set_grad_enabled(True)
+        model = model.train().requires_grad_(True)
         return CleanCorruptedCacheResults(
             dataset=self,
             corrupted_cache=corrupted_cache,

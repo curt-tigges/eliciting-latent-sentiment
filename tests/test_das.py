@@ -1,11 +1,12 @@
 import unittest
 import torch
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.hook_points import HookPoint
 from utils.das import RotateLayer, InverseRotateLayer, hook_fn_base, act_patch_simple, TrainingConfig, train_das_subspace
 from utils.prompts import PromptType
 
-class TestFunctions(unittest.TestCase):
+
+class TestDASFunctions(unittest.TestCase):
 
     def test_rotate_layer(self):
         torch.manual_seed(42)
@@ -79,6 +80,7 @@ class TestFunctions(unittest.TestCase):
             epochs=1,
         )
         self.assertTrue(isinstance(direction, torch.Tensor))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -311,7 +311,7 @@ def fit_rotation(
 
 def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer, out_device: torch.device,
-    batch_size: int = 32, run_device: torch.device = torch.device('cuda')
+    batch_size: int = 32
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
@@ -323,8 +323,7 @@ def get_das_dataset(
     results = clean_corrupt_data.run_with_cache(
         model,
         names_filter=lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0]),
-        run_device=run_device,
-        out_device=out_device,
+        batch_size=batch_size,
     )
     act_name, _ = get_resid_name(layer, model)
     loss_fn = partial(
