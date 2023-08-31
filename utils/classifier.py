@@ -1,3 +1,4 @@
+from typing import List, Union
 import jaxtyping
 import torch
 from torch import Tensor
@@ -18,7 +19,11 @@ class HookedClassifier(HookedTransformer):
         self.device = self.base_model.cfg.device
         self.class_layer_weights = class_layer_weights.to(self.device)
 
-    def forward(self, input, return_type: str = 'logits'):
+    def forward(
+        self, 
+        input: Union[str, List[str], jaxtyping.Int[Tensor, 'batch pos']], 
+        return_type: str = 'logits'
+    ):
         _, cache = self.base_model.run_with_cache(input, return_type=None)
         last_token_act = cache['ln_final.hook_normalized'][0, -1, :]
         logits = torch.softmax(

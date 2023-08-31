@@ -5,7 +5,7 @@ import torch
 from torchtyping import TensorType as TT
 from torch import Tensor
 from jaxtyping import Float, Int
-from typing import Tuple
+from typeguard import typechecked
 import einops
 
 from fancy_einsum import einsum
@@ -77,12 +77,11 @@ def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
 
 
 # =============== METRIC UTILS ===============
-
+@typechecked
 def get_logit_diff(
     logits: Float[Tensor, "batch pos vocab"],
     answer_tokens: Float[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
-    per_completion: bool = False,
 ):
     """
     Gets the difference between the logits of the provided tokens 
@@ -112,8 +111,6 @@ def get_logit_diff(
     right_logits: Float[Tensor, "batch n_pairs"] = repeated_logits.gather(
         -1, answer_tokens[:, :, 1].unsqueeze(-1)
     )
-    if per_completion:
-        print(left_logits - right_logits)
     left_logits_batch: Float[Tensor, "batch"] = left_logits.mean(dim=1)
     right_logits_batch: Float[Tensor, "batch"] = right_logits.mean(dim=1)
     if per_prompt:
