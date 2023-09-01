@@ -394,6 +394,14 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             f"does not match corrupted tokens shape {self.corrupted_tokens.shape}"
         )
 
+    def get_subset(self, indices: List[int]):
+        return CleanCorruptedDataset(
+            self.clean_tokens[indices],
+            self.corrupted_tokens[indices],
+            self.answer_tokens[indices],
+            [self.all_prompts[i] for i in indices],
+        )
+
     def to(self, device: torch.device):
         self.clean_tokens = self.clean_tokens.to(device)
         self.corrupted_tokens = self.corrupted_tokens.to(device)

@@ -74,11 +74,14 @@ def hook_fn_base(
         batch=batch_size,
         d_model=d_model,
     )
-    return torch.where(
+    out = torch.where(
         position_index == position,
         new_value_repeat,
         resid,
     )
+    if new_value.requires_grad:
+        assert out.requires_grad
+    return out
     
 
 def act_patch_simple(
@@ -323,12 +326,16 @@ def fit_rotation(
 
 def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer, out_device: torch.device,
-    batch_size: int = 32
+    batch_size: int = 32, max_dataset_size: int = None,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
     clean_corrupt_data = get_dataset(model, out_device, prompt_type=prompt_type)
+    if max_dataset_size is not None:
+        clean_corrupt_data = clean_corrupt_data.get_subset(
+            list(range(max_dataset_size))
+        )
     example = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     placeholders = prompt_type.get_placeholder_positions(example)
     pos: int = placeholders[position][-1] if position is not None else None
@@ -366,7 +373,7 @@ def train_das_subspace(
     model: HookedTransformer, device_train: torch.device, device_cache: torch.device,
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
-    batch_size: int = 32,
+    batch_size: int = 32, max_dataset_size: int = None,
     **config_arg,
 ):
     """
@@ -376,11 +383,11 @@ def train_das_subspace(
     """
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model, out_device=device_cache,
-        batch_size=batch_size,
+        batch_size=batch_size, max_dataset_size=max_dataset_size,
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model, out_device=device_cache,
-        batch_size=batch_size,
+        batch_size=batch_size, max_dataset_size=max_dataset_size,
     )
     config = dict(
         train_layer=train_layer,
