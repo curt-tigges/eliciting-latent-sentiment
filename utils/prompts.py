@@ -469,7 +469,8 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         total_samples = len(dataloader.dataset)
         corrupted_dict = dict()
         clean_dict = dict()
-        for idx, (corrupted_tokens, clean_tokens, answer_tokens) in enumerate(tqdm(dataloader)):
+        bar = enumerate(tqdm(dataloader, disable=len(dataloader) > 1))
+        for idx, (corrupted_tokens, clean_tokens, answer_tokens) in bar:
             corrupted_tokens = corrupted_tokens.to(device)
             clean_tokens = clean_tokens.to(device)
             answer_tokens = answer_tokens.to(device)
