@@ -298,7 +298,7 @@ def fit_rotation(
             train_bar.set_description(
                 f"Epoch {epoch} training: backpropagating. Profiler: {profiler}. Device: {device}"
             )
-            if (device == 'cuda') and profiler:
+            if (device.type == 'cuda') and profiler:
                 with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
                     with record_function("backpropagation"):
                         scaler.scale(loss).backward()
