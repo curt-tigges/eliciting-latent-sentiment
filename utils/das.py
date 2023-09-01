@@ -268,11 +268,17 @@ def fit_rotation(
         )
         for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in train_bar:
             assert orig_resid_train.requires_grad and new_resid_train.requires_grad
+            train_bar.set_description(
+                f"Epoch {epoch} training: moving data to device={device}"
+            )
             orig_tokens_train = orig_tokens_train.to(device)
             orig_resid_train = orig_resid_train.to(device)
             new_resid_train = new_resid_train.to(device)
             answers_train = answers_train.to(device)
             optimizer.zero_grad()
+            train_bar.set_description(
+                f"Epoch {epoch} training: computing loss"
+            )
             with autocast():
                 loss = rotation_module(
                     orig_resid_train,
@@ -287,8 +293,17 @@ def fit_rotation(
                 f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
                 f"train layer: {config.train_layer}, train position: {config.train_position} "
             )
+            train_bar.set_description(
+                f"Epoch {epoch} training: backpropagating"
+            )
             scaler.scale(loss).backward()
+            train_bar.set_description(
+                f"Epoch {epoch} training: clipping gradients"
+            )
             torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
+            train_bar.set_description(
+                f"Epoch {epoch} training: stepping"
+            )
             optimizer.step()
             step += 1
             if config.wandb_enabled:
