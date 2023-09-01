@@ -28,7 +28,7 @@ class HookedClassifier(HookedTransformer):
         self, 
         input: Union[str, List[str], jaxtyping.Int[Tensor, 'batch pos']], 
         return_type: str = 'logits',
-        return_cache_object=True,
+        return_cache_object=False,
         names_filter: Callable = None,
     ) -> Union[
             Tuple[jaxtyping.Float[Tensor, "batch *num_classes"], ActivationCache], 

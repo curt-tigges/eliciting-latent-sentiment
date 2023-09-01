@@ -432,7 +432,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         torch.set_grad_enabled(False)
         model = model.eval().requires_grad_(False)
         assert batch_size is not None, "run_with_cache: must specify batch size"
-        if model.cfg.device != 'cuda':
+        if model.cfg.device != 'cuda' and torch.cuda.is_available():
             model = model.cuda()
         corrupted_dict = dict()
         clean_dict = dict()
