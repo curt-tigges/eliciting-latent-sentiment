@@ -264,7 +264,7 @@ def fit_rotation(
         rotation_module.train()
         train_bar = tqdm(trainloader, disable=disable)
         train_bar.set_description(
-            f"Epoch {epoch}: training. Batch size: {trainloader.batch_size}"
+            f"Epoch {epoch}: training. Batch size: {trainloader.batch_size}. Device: {device}"
         )
         for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in train_bar:
             assert orig_resid_train.requires_grad and new_resid_train.requires_grad
@@ -298,7 +298,7 @@ def fit_rotation(
         with torch.inference_mode():
             test_bar = tqdm(testloader, disable=disable)
             test_bar.set_description(
-                f"Epoch {epoch}: validation. Batch size: {testloader.batch_size}"
+                f"Epoch {epoch}: validation. Batch size: {testloader.batch_size}. Device: {device}"
             )
             for orig_tokens_test, orig_resid_test, new_resid_test, answers_test in test_bar:
                 orig_tokens_test = orig_tokens_test.to(device)
@@ -339,7 +339,7 @@ def fit_rotation(
 
 def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer, out_device: torch.device,
-    batch_size: int = 32, max_dataset_size: int = None, num_workers: int = 0,
+    batch_size: int = 32, max_dataset_size: int = None
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
@@ -379,7 +379,7 @@ def get_das_dataset(
     )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(
-        das_dataset, batch_size=batch_size, pin_memory=True, num_workers=num_workers
+        das_dataset, batch_size=batch_size, pin_memory=True
         )
     return das_dataloader, loss_fn, pos
 
@@ -388,7 +388,7 @@ def train_das_subspace(
     model: HookedTransformer, device_train: torch.device, device_cache: torch.device,
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
-    batch_size: int = 32, max_dataset_size: int = None, num_workers: int = 0,
+    batch_size: int = 32, max_dataset_size: int = None,
     **config_arg,
 ):
     """
@@ -398,11 +398,11 @@ def train_das_subspace(
     """
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model, out_device=device_cache,
-        batch_size=batch_size, max_dataset_size=max_dataset_size, num_workers=num_workers,
+        batch_size=batch_size, max_dataset_size=max_dataset_size
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model, out_device=device_cache,
-        batch_size=batch_size, max_dataset_size=max_dataset_size, num_workers=num_workers,
+        batch_size=batch_size, max_dataset_size=max_dataset_size
     )
     config = dict(
         train_layer=train_layer,
