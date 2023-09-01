@@ -97,9 +97,11 @@ def act_patch_simple(
         orig_input,
         fwd_hooks=[(act_name, hook_fn)],
     )
+    metric = patching_metric(logits)
     if orig_input.requires_grad:
         assert logits.requires_grad
-    return patching_metric(logits)
+        assert metric.requires_grad
+    return metric
 
 
 class RotationModule(torch.nn.Module):
