@@ -221,7 +221,6 @@ def fit_rotation(
     model: HookedTransformer, 
     device: torch.device,
     project: str = None,
-    disable: bool = False,
     profiler: bool = False,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
@@ -265,7 +264,7 @@ def fit_rotation(
         epoch_train_loss = 0
         epoch_test_loss = 0
         rotation_module.train()
-        train_bar = tqdm(trainloader, disable=disable)
+        train_bar = tqdm(trainloader, disable=config.epochs > 1)
         train_bar.set_description(
             f"Epoch {epoch}: training. Batch size: {trainloader.batch_size}. Device: {device}"
         )
