@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
+from torch.cuda.amp import GradScaler, autocast
 from jaxtyping import Float, Int
 from typing import Callable, Union, List, Tuple
 from transformer_lens.hook_points import HookPoint
@@ -225,6 +226,7 @@ def fit_rotation(
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
+    scaler = GradScaler()
     if device != model.cfg.device:
         model = model.to(device)
     if 'model_name' not in config_dict:
@@ -271,20 +273,21 @@ def fit_rotation(
             new_resid_train = new_resid_train.to(device)
             answers_train = answers_train.to(device)
             optimizer.zero_grad()
-            loss = rotation_module(
-                orig_resid_train,
-                new_resid_train,
-                layer=config.train_layer,
-                position=config.train_position,
-                orig_tokens=orig_tokens_train,
-                patching_metric=partial(metric_train, answer_tokens=answers_train),
-            )
+            with autocast():
+                loss = rotation_module(
+                    orig_resid_train,
+                    new_resid_train,
+                    layer=config.train_layer,
+                    position=config.train_position,
+                    orig_tokens=orig_tokens_train,
+                    patching_metric=partial(metric_train, answer_tokens=answers_train),
+                )
             assert loss.requires_grad, (
                 "The loss must be a scalar that requires grad. \n"
                 f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
                 f"train layer: {config.train_layer}, train position: {config.train_position} "
             )
-            loss.backward()
+            scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
             optimizer.step()
             step += 1
@@ -336,7 +339,7 @@ def fit_rotation(
 
 def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer, out_device: torch.device,
-    batch_size: int = 32, max_dataset_size: int = None,
+    batch_size: int = 32, max_dataset_size: int = None, num_workers: int = 0,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
@@ -375,7 +378,9 @@ def get_das_dataset(
         clean_corrupt_data.answer_tokens,
     )
     # Create a DataLoader from the dataset
-    das_dataloader = DataLoader(das_dataset, batch_size=batch_size)
+    das_dataloader = DataLoader(
+        das_dataset, batch_size=batch_size, pin_memory=True, num_workers=num_workers
+        )
     return das_dataloader, loss_fn, pos
 
 
@@ -383,7 +388,7 @@ def train_das_subspace(
     model: HookedTransformer, device_train: torch.device, device_cache: torch.device,
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
-    batch_size: int = 32, max_dataset_size: int = None,
+    batch_size: int = 32, max_dataset_size: int = None, num_workers: int = 0,
     **config_arg,
 ):
     """
@@ -393,11 +398,11 @@ def train_das_subspace(
     """
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model, out_device=device_cache,
-        batch_size=batch_size, max_dataset_size=max_dataset_size,
+        batch_size=batch_size, max_dataset_size=max_dataset_size, num_workers=num_workers,
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model, out_device=device_cache,
-        batch_size=batch_size, max_dataset_size=max_dataset_size,
+        batch_size=batch_size, max_dataset_size=max_dataset_size, num_workers=num_workers,
     )
     config = dict(
         train_layer=train_layer,
