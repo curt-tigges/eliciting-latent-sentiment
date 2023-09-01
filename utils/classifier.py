@@ -68,6 +68,7 @@ class HookedClassifier(HookedTransformer):
             raise ValueError(f"Invalid return_type: {return_type}")
         if return_cache_object:
             return out, cache
+        return out
         
     def run_with_cache(
         self, *model_args, return_cache_object=True, **kwargs
