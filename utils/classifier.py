@@ -71,6 +71,10 @@ class HookedClassifier(HookedTransformer):
             out = torch.softmax(logits, dim=-1)
         else:
             raise ValueError(f"Invalid return_type: {return_type}")
+        if input.requires_grad:
+            assert last_token_act.requires_grad
+            assert logits.requires_grad
+            assert out.requires_grad
         if return_cache_object:
             return out, cache
         return out
