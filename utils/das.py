@@ -245,6 +245,7 @@ def fit_rotation(
         epoch_test_loss = 0
         rotation_module.train()
         for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in trainloader:
+            assert orig_resid_train.requires_grad and new_resid_train.requires_grad
             orig_tokens_train = orig_tokens_train.to(device)
             orig_resid_train = orig_resid_train.to(device)
             new_resid_train = new_resid_train.to(device)
@@ -338,6 +339,7 @@ def get_das_dataset(
         orig_resid = orig_resid[:, pos, :]
         new_resid = new_resid[:, pos, :]
     # Create a TensorDataset from the tensors
+    assert orig_resid.requires_grad and new_resid.requires_grad
     das_dataset = TensorDataset(
         clean_corrupt_data.corrupted_tokens, 
         orig_resid, 
