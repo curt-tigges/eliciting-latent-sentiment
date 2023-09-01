@@ -261,6 +261,7 @@ def fit_rotation(
         epoch_test_loss = 0
         rotation_module.train()
         train_bar = tqdm(trainloader, disable=disable)
+        train_bar.set_description(f"Epoch {epoch}: training")
         for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in train_bar:
             assert orig_resid_train.requires_grad and new_resid_train.requires_grad
             orig_tokens_train = orig_tokens_train.to(device)
@@ -291,6 +292,7 @@ def fit_rotation(
         rotation_module.eval()
         with torch.inference_mode():
             test_bar = tqdm(testloader, disable=disable)
+            test_bar.set_description(f"Epoch {epoch}: validation")
             for orig_tokens_test, orig_resid_test, new_resid_test, answers_test in test_bar:
                 orig_tokens_test = orig_tokens_test.to(device)
                 orig_resid_test = orig_resid_test.to(device)
