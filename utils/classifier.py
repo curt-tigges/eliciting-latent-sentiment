@@ -35,10 +35,6 @@ class HookedClassifier(HookedTransformer):
         return_type: str = 'logits',
         return_cache_object=False,
         names_filter: Callable = None,
-        fwd_hooks: List[Tuple[Union[str, Callable], Callable]] = [],
-        bwd_hooks: List[Tuple[Union[str, Callable], Callable]] = [],
-        reset_hooks_end=True,
-        clear_contexts=False,
     ) -> Union[
             Tuple[jaxtyping.Float[Tensor, "batch *num_classes"], ActivationCache], 
             jaxtyping.Float[Tensor, "batch *num_classes"]
@@ -46,13 +42,7 @@ class HookedClassifier(HookedTransformer):
         if names_filter is None:
             names_filter = lambda _: True
         new_names_filter = lambda name: names_filter(name) or name == 'ln_final.hook_normalized'
-        if fwd_hooks or bwd_hooks:
-            with self.base_model.hooks(fwd_hooks, bwd_hooks, reset_hooks_end, clear_contexts) as base_model:
-                _, cache = base_model.run_with_cache(
-                    input, return_type=None, names_filter=new_names_filter
-                )
-        else:
-            _, cache = self.base_model.run_with_cache(
+        _, cache = self.base_model.run_with_cache(
                 input, return_type=None, names_filter=new_names_filter
             )
         last_token_act: jaxtyping.Float[
@@ -95,18 +85,19 @@ class HookedClassifier(HookedTransformer):
         *model_args,
         fwd_hooks: List[Tuple[Union[str, Callable], Callable]] = [],
         bwd_hooks: List[Tuple[Union[str, Callable], Callable]] = [],
-        reset_hooks_end=True,
-        clear_contexts=False,
         **model_kwargs,
     ):
-        return self.forward(
+        self.base_model.reset_hooks()
+        for name, hook in fwd_hooks:
+            self.base_model.add_hook(name, hook, dir='fwd')
+        for name, hook in bwd_hooks:
+            self.base_model.add_hook(name, hook, dir='bwd')
+        out = self.forward(
             *model_args,
-            fwd_hooks=fwd_hooks,
-            bwd_hooks=bwd_hooks,
-            reset_hooks_end=reset_hooks_end,
-            clear_contexts=clear_contexts,
             **model_kwargs,
         )
+        self.base_model.reset_hooks()
+        return out
 
 
     @classmethod

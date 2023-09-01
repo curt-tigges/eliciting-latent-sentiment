@@ -99,7 +99,11 @@ def act_patch_simple(
     )
     metric = patching_metric(logits)
     if new_value.requires_grad:
-        assert logits.requires_grad
+        assert logits.requires_grad, (
+            "Output of run_with_hooks should require grad. "
+            "Are you sure that the hook was applied? "
+            f"act_name={act_name}, patch_layer={patch_layer}" 
+        )
         assert metric.requires_grad
     return metric
 
