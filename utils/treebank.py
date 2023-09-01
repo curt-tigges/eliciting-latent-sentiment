@@ -5,14 +5,8 @@ from datasets import Dataset, DatasetDict
 from typing import List
 from transformer_lens import HookedTransformer
 import torch
-from utils.prompts import CleanCorruptedDataset
+from utils.prompts import CleanCorruptedDataset, ReviewScaffold
 from utils.store import save_pickle
-
-
-class ReviewScaffold(Enum):
-    PLAIN = 'plain'
-    CLASSIFICATION = 'classification'
-    CONTINUATION = 'continuation'
 
 
 def get_merged_dataframe(root: str = "stanfordSentimentTreebank"):

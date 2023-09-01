@@ -12,7 +12,12 @@ import re
 from tqdm.notebook import tqdm
 from utils.store import load_pickle
 from utils.circuit_analysis import get_logit_diff, get_prob_diff
-from utils.treebank import ReviewScaffold
+
+
+class ReviewScaffold(Enum):
+    PLAIN = 'plain'
+    CLASSIFICATION = 'classification'
+    CONTINUATION = 'continuation'
 
 
 def extract_placeholders(text: str) -> List[str]:
