@@ -353,13 +353,13 @@ def fit_rotation(
 
 
 def get_das_dataset(
-    prompt_type: PromptType, position: str, layer: int, model: HookedTransformer, out_device: torch.device,
+    prompt_type: PromptType, position: str, layer: int, model: HookedTransformer,
     batch_size: int = 32, max_dataset_size: int = None
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
-    clean_corrupt_data = get_dataset(model, out_device, prompt_type=prompt_type)
+    clean_corrupt_data = get_dataset(model, 'cpu', prompt_type=prompt_type)
     if max_dataset_size is not None:
         clean_corrupt_data = clean_corrupt_data.get_subset(
             list(range(max_dataset_size))
@@ -387,10 +387,10 @@ def get_das_dataset(
     # Create a TensorDataset from the tensors
     assert orig_resid.requires_grad and new_resid.requires_grad
     das_dataset = TensorDataset(
-        clean_corrupt_data.corrupted_tokens.cpu(), 
-        orig_resid.cpu(), 
-        new_resid.cpu(), 
-        clean_corrupt_data.answer_tokens.cpu(),
+        clean_corrupt_data.corrupted_tokens.cpu().detach(), 
+        orig_resid.cpu().detach().requires_grad_(), 
+        new_resid.cpu().detach().requires_grad_(), 
+        clean_corrupt_data.answer_tokens.cpu().detach(),
     )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(
@@ -400,7 +400,7 @@ def get_das_dataset(
 
 
 def train_das_subspace(
-    model: HookedTransformer, device_train: torch.device, device_cache: torch.device,
+    model: HookedTransformer, device: torch.device,
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     batch_size: int = 32, max_dataset_size: int = None,
@@ -409,14 +409,14 @@ def train_das_subspace(
     """
     Entrypoint to be used in directional patching experiments
     Given training/validation datasets, train a DAS subspace.
-    Initially the data is loaded onto device_cache but training happens on device_train.
+    Initially the data is loaded onto cpu but training happens on device.
     """
     trainloader, loss_fn, train_position = get_das_dataset(
-        train_type, position=train_pos, layer=train_layer, model=model, out_device=device_cache,
+        train_type, position=train_pos, layer=train_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
-        test_type, position=test_pos, layer=test_layer, model=model, out_device=device_cache,
+        test_type, position=test_pos, layer=test_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size
     )
     config = dict(
@@ -433,7 +433,7 @@ def train_das_subspace(
         metric_train=loss_fn,
         metric_test=loss_fn_val,
         model=model,
-        device=device_train,
+        device=device,
         **config,
     )
     if directions.shape[1] == 1:
