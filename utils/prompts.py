@@ -428,12 +428,13 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         was_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(False)
         model = model.eval().requires_grad_(False)
         assert batch_size is not None, "run_with_cache: must specify batch size"
-        if model.cfg.device != 'cuda' and torch.cuda.is_available():
-            model = model.cuda()
+        if model.cfg.device != device:
+            model = model.to(device)
         corrupted_dict = dict()
         clean_dict = dict()
         dataloader = self.get_dataloader(batch_size=batch_size)
@@ -446,9 +447,9 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_dict = dict()
         clean_dict = dict()
         for idx, (corrupted_tokens, clean_tokens, answer_tokens) in enumerate(tqdm(dataloader)):
-            corrupted_tokens = corrupted_tokens.cuda()
-            clean_tokens = clean_tokens.cuda()
-            answer_tokens = answer_tokens.cuda()
+            corrupted_tokens = corrupted_tokens.to(device)
+            clean_tokens = clean_tokens.to(device)
+            answer_tokens = answer_tokens.to(device)
             with torch.inference_mode():
                 # corrupted forward pass
                 corrupted_logits, corrupted_cache = model.run_with_cache(

@@ -339,10 +339,10 @@ def get_das_dataset(
         new_resid = new_resid[:, pos, :]
     # Create a TensorDataset from the tensors
     das_dataset = TensorDataset(
-        clean_corrupt_data.corrupted_tokens.requires_grad_(), 
+        clean_corrupt_data.corrupted_tokens, 
         orig_resid.requires_grad_(), 
         new_resid.requires_grad_(), 
-        clean_corrupt_data.answer_tokens.requires_grad_(),
+        clean_corrupt_data.answer_tokens,
     )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(das_dataset, batch_size=batch_size)
