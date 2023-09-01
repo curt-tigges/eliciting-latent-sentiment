@@ -164,6 +164,9 @@ class RotationModule(torch.nn.Module):
             layer=layer,
             position=position,
         )
+        if orig_resid.requires_grad:
+            assert patched_resid.requires_grad
+            assert metric.requires_grad
         return metric
 
 
