@@ -98,7 +98,7 @@ def act_patch_simple(
         fwd_hooks=[(act_name, hook_fn)],
     )
     metric = patching_metric(logits)
-    if orig_input.requires_grad:
+    if new_value.requires_grad:
         assert logits.requires_grad
         assert metric.requires_grad
     return metric
