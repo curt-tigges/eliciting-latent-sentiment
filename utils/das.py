@@ -372,10 +372,10 @@ def get_das_dataset(
     # Create a TensorDataset from the tensors
     assert orig_resid.requires_grad and new_resid.requires_grad
     das_dataset = TensorDataset(
-        clean_corrupt_data.corrupted_tokens, 
-        orig_resid, 
-        new_resid, 
-        clean_corrupt_data.answer_tokens,
+        clean_corrupt_data.corrupted_tokens.cpu(), 
+        orig_resid.cpu(), 
+        new_resid.cpu(), 
+        clean_corrupt_data.answer_tokens.cpu(),
     )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(
