@@ -16,12 +16,17 @@ class HookedClassifier(HookedTransformer):
     def __init__(
         self, 
         base_model: HookedTransformer, 
-        class_layer_weights: jaxtyping.Float[Tensor, "num_classes d_model"]
+        class_layer_weights: jaxtyping.Float[Tensor, "num_classes d_model"],
     ):
         super().__init__(base_model.cfg)
         self.base_model = base_model
         self.device = self.base_model.cfg.device
         self.class_layer_weights = class_layer_weights.to(self.device)
+
+    def set_requires_grad(self, requires_grad: bool):
+        self.class_layer_weights.requires_grad = requires_grad
+        for param in self.base_model.parameters():
+            param.requires_grad = requires_grad
 
     @typechecked
     def forward(
