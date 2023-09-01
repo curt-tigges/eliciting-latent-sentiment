@@ -73,7 +73,7 @@ class TestDASFunctions(unittest.TestCase):
         ).train()
         model.name = 'test'
         direction = train_das_subspace(
-            model, device, device,
+            model, device,
             PromptType.SIMPLE, 'ADJ', 0,
             PromptType.SIMPLE, 'ADJ', 0,
             wandb_enabled=False,

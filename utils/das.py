@@ -296,7 +296,10 @@ def fit_rotation(
             train_bar.set_description(
                 f"Epoch {epoch} training: backpropagating"
             )
-            scaler.scale(loss).backward()
+            if device == 'cuda':
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
             train_bar.set_description(
                 f"Epoch {epoch} training: clipping gradients"
             )
