@@ -472,10 +472,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 if not buffer_initialized:
                     for k, v in corrupted_cache.items():
                         corrupted_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu', requires_grad=requires_grad
+                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu'
                         )
                         clean_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu', requires_grad=requires_grad
+                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu'
                         )
                     buffer_initialized = True
 
@@ -491,17 +491,18 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_prob_diff = sum(corrupted_prob_diffs) / len(corrupted_prob_diffs)
         clean_prob_diff = sum(clean_prob_diffs) / len(clean_prob_diffs)
         corrupted_cache = ActivationCache(
-            corrupted_dict, 
+            {k: v.detach().clone().requires_grad_(requires_grad) for k, v in corrupted_dict.items()}, 
             model=model
         )
         clean_cache = ActivationCache(
-            clean_dict,
+            {k: v.detach().clone().requires_grad_(requires_grad) for k, v in clean_dict.items()}, 
             model=model
         )
         corrupted_cache.to('cpu')
         clean_cache.to('cpu')
         torch.set_grad_enabled(was_grad_enabled)
         model = model.train().requires_grad_(True)
+
         return CleanCorruptedCacheResults(
             dataset=self,
             corrupted_cache=corrupted_cache,
