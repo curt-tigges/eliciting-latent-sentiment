@@ -30,7 +30,10 @@ class HookedClassifier(HookedTransformer):
         return_type: str = 'logits',
         return_cache_object=True,
         names_filter: Callable = None,
-    ) -> jaxtyping.Float[Tensor, "batch *num_classes"]:
+    ) -> Union[
+            Tuple[jaxtyping.Float[Tensor, "batch *num_classes"], ActivationCache], 
+            jaxtyping.Float[Tensor, "batch *num_classes"]
+        ]:
         if names_filter is None:
             names_filter = lambda _: True
         new_names_filter = lambda name: names_filter(name) or name == 'ln_final.hook_normalized'
