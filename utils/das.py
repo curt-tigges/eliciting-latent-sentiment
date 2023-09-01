@@ -299,10 +299,11 @@ def fit_rotation(
                 f"Epoch {epoch} training: backpropagating. Profiler: {profiler}. Device: {device}"
             )
             if (device.type == 'cuda') and profiler:
-                with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
+                with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
                     with record_function("backpropagation"):
                         scaler.scale(loss).backward()
                 print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+                print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
             elif device == 'cuda':
                 scaler.scale(loss).backward()
             else:
