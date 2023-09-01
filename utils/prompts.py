@@ -12,6 +12,7 @@ import re
 from tqdm.notebook import tqdm
 from utils.store import load_pickle
 from utils.circuit_analysis import get_logit_diff, get_prob_diff
+from utils.treebank import ReviewScaffold
 
 
 def extract_placeholders(text: str) -> List[str]:
@@ -548,12 +549,13 @@ def get_dataset(
     n_pairs: int = None,
     prompt_type: str = "simple",
     comparison: Tuple[str, str] = ("positive", "negative"),
+    scaffold: ReviewScaffold = None,
 ) -> CleanCorruptedDataset:
     prompt_type = PromptType(prompt_type)
     if prompt_type in (
         PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV
     ):
-        return get_pickle_dataset(model, prompt_type)
+        return get_pickle_dataset(model, prompt_type, scaffold)
     prompts_dict, answers_dict = get_prompts(
         model, prompt_type
     )
@@ -610,9 +612,10 @@ def get_dataset(
 def get_pickle_dataset(
     model: HookedTransformer,
     prompt_type: PromptType,
+    scaffold: ReviewScaffold
 ):
     return load_pickle(
-        prompt_type.value.replace('_', '-'),
+        prompt_type.value + '_' + scaffold.value,
         model
     )
 

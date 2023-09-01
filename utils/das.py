@@ -17,6 +17,7 @@ from utils.circuit_analysis import get_logit_diff, logit_diff_denoising
 from utils.prompts import PromptType, get_dataset
 from utils.residual_stream import get_resid_name
 from utils.store import save_array
+from utils.treebank import ReviewScaffold
 
 
 class FittingMethod(Enum):
@@ -365,12 +366,12 @@ def fit_rotation(
 
 def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer,
-    batch_size: int = 32, max_dataset_size: int = None
+    batch_size: int = 32, max_dataset_size: int = None, scaffold: ReviewScaffold = None,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
-    clean_corrupt_data = get_dataset(model, 'cpu', prompt_type=prompt_type)
+    clean_corrupt_data = get_dataset(model, 'cpu', prompt_type=prompt_type, scaffold=scaffold)
     if max_dataset_size is not None:
         clean_corrupt_data = clean_corrupt_data.get_subset(
             list(range(max_dataset_size))
@@ -415,6 +416,7 @@ def train_das_subspace(
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
+    scaffold: ReviewScaffold = None,
     **config_arg,
 ):
     """
@@ -424,11 +426,13 @@ def train_das_subspace(
     """
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model,
-        batch_size=batch_size, max_dataset_size=max_dataset_size
+        batch_size=batch_size, max_dataset_size=max_dataset_size,
+        scaffold=scaffold,
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model,
-        batch_size=batch_size, max_dataset_size=max_dataset_size
+        batch_size=batch_size, max_dataset_size=max_dataset_size,
+        scaffold=scaffold,
     )
     config = dict(
         train_layer=train_layer,
