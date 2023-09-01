@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 from torch.cuda.amp import GradScaler, autocast
+from torch.profiler import profile, record_function, ProfilerActivity
 from jaxtyping import Float, Int
 from typing import Callable, Union, List, Tuple
 from transformer_lens.hook_points import HookPoint
@@ -220,6 +221,7 @@ def fit_rotation(
     device: torch.device,
     project: str = None,
     disable: bool = False,
+    profiler: bool = False,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
@@ -296,7 +298,12 @@ def fit_rotation(
             train_bar.set_description(
                 f"Epoch {epoch} training: backpropagating"
             )
-            if device == 'cuda':
+            if device == 'cuda' and profiler:
+                with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof:
+                    with record_function("backpropagation"):
+                        scaler.scale(loss).backward()
+                print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+            elif device == 'cuda':
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
@@ -406,7 +413,7 @@ def train_das_subspace(
     model: HookedTransformer, device: torch.device,
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
-    batch_size: int = 32, max_dataset_size: int = None,
+    batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
     **config_arg,
 ):
     """
@@ -437,6 +444,7 @@ def train_das_subspace(
         metric_test=loss_fn_val,
         model=model,
         device=device,
+        profiler=profiler,
         **config,
     )
     if directions.shape[1] == 1:
