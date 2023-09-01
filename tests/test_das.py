@@ -66,7 +66,7 @@ class TestDASFunctions(unittest.TestCase):
         self.assertTrue(torch.is_grad_enabled())
 
     def test_train_das_direction(self):
-        device = 'cpu'
+        device = torch.device('cpu')
         model = HookedTransformer.from_pretrained(
             'attn-only-1l',
             device=device,

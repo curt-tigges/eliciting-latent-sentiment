@@ -56,5 +56,5 @@ MODELS = [
 ]
 for model in MODELS:
     model = HookedTransformer.from_pretrained(model, device=device)
-    create_dataset_for_model(model)
+    create_dataset_for_model(model, sentence_phrase_df)
 #%%
