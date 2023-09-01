@@ -1,5 +1,5 @@
 import einops
-from typing import Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 import jaxtyping
 from jaxtyping import Float
 from typeguard import typechecked
@@ -29,8 +29,14 @@ class HookedClassifier(HookedTransformer):
         input: Union[str, List[str], jaxtyping.Int[Tensor, 'batch pos']], 
         return_type: str = 'logits',
         return_cache_object=True,
+        names_filter: Callable = None,
     ) -> jaxtyping.Float[Tensor, "batch *num_classes"]:
-        _, cache = self.base_model.run_with_cache(input, return_type=None)
+        if names_filter is None:
+            names_filter = lambda _: True
+        new_names_filter = lambda name: names_filter(name) or name == 'ln_final.hook_normalized'
+        _, cache = self.base_model.run_with_cache(
+            input, return_type=None, names_filter=new_names_filter
+        )
         last_token_act: jaxtyping.Float[
             Tensor, "batch d_model"
         ] = cache['ln_final.hook_normalized'][:, -1, :]
