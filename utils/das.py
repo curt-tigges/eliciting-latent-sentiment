@@ -322,7 +322,7 @@ def fit_rotation(
             epoch_train_loss += loss.item()
         rotation_module.eval()
         with torch.inference_mode():
-            test_bar = tqdm(testloader, disable=disable)
+            test_bar = tqdm(testloader, disable=config.epochs > 1)
             test_bar.set_description(
                 f"Epoch {epoch}: validation. Batch size: {testloader.batch_size}. Device: {device}"
             )
