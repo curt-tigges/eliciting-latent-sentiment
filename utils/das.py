@@ -10,6 +10,7 @@ from typing import Callable, Union, List, Tuple
 from transformer_lens.hook_points import HookPoint
 from transformer_lens import HookedTransformer, ActivationCache
 import wandb
+from tqdm.notebook import tqdm
 from utils.circuit_analysis import get_logit_diff, logit_diff_denoising
 from utils.prompts import PromptType, get_dataset
 from utils.residual_stream import get_resid_name
@@ -217,6 +218,7 @@ def fit_rotation(
     model: HookedTransformer, 
     device: torch.device,
     project: str = None,
+    disable: bool = False,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
@@ -258,7 +260,8 @@ def fit_rotation(
         epoch_train_loss = 0
         epoch_test_loss = 0
         rotation_module.train()
-        for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in trainloader:
+        train_bar = tqdm(trainloader, disable=disable)
+        for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in train_bar:
             assert orig_resid_train.requires_grad and new_resid_train.requires_grad
             orig_tokens_train = orig_tokens_train.to(device)
             orig_resid_train = orig_resid_train.to(device)
@@ -287,7 +290,8 @@ def fit_rotation(
             epoch_train_loss += loss.item()
         rotation_module.eval()
         with torch.inference_mode():
-            for orig_tokens_test, orig_resid_test, new_resid_test, answers_test in testloader:
+            test_bar = tqdm(testloader, disable=disable)
+            for orig_tokens_test, orig_resid_test, new_resid_test, answers_test in test_bar:
                 orig_tokens_test = orig_tokens_test.to(device)
                 orig_resid_test = orig_resid_test.to(device)
                 new_resid_test = new_resid_test.to(device)
