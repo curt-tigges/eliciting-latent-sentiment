@@ -424,6 +424,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         model: HookedTransformer, 
         names_filter: str, 
         batch_size: int,
+        requires_grad: bool = True,
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
@@ -470,8 +471,12 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 # Initialise the buffer tensors if necessary
                 if not buffer_initialized:
                     for k, v in corrupted_cache.items():
-                        corrupted_dict[k] = torch.zeros((total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu')
-                        clean_dict[k] = torch.zeros((total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu')
+                        corrupted_dict[k] = torch.zeros(
+                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu', requires_grad=requires_grad
+                        )
+                        clean_dict[k] = torch.zeros(
+                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu', requires_grad=requires_grad
+                        )
                     buffer_initialized = True
 
                 # Fill the buffer tensors
