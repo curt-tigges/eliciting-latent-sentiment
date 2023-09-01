@@ -399,6 +399,14 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             f"Clean tokens shape {self.clean_tokens.shape} "
             f"does not match corrupted tokens shape {self.corrupted_tokens.shape}"
         )
+        assert len(answer_tokens) == len(clean_tokens), (
+            f"Answer tokens length {len(answer_tokens)} "
+            f"does not match clean tokens length {len(clean_tokens)}"
+        )
+        assert len(all_prompts) == len(clean_tokens), (
+            f"Prompt list length {len(all_prompts)} "
+            f"does not match clean tokens length {len(clean_tokens)}"
+        )
 
     def get_subset(self, indices: List[int]):
         return CleanCorruptedDataset(

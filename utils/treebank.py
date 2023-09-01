@@ -117,18 +117,18 @@ def apply_scaffold_to_prompts(prompts: List[str], scaffold: str):
         raise ValueError(f"Invalid scaffold: {scaffold}")
     
 
-def construct_answer_tokens(scaffold: str, length: int, model: HookedTransformer):
+def construct_answer_tokens(scaffold: str, half_length: int, model: HookedTransformer):
     if scaffold == ReviewScaffold.PLAIN:
-        return torch.tensor([(1, 0)] * length + [(0, 1)] * length).unsqueeze(1)
+        return torch.tensor([(1, 0)] * half_length + [(0, 1)] * half_length).unsqueeze(1)
     elif scaffold == ReviewScaffold.CLASSIFICATION:
         return torch.tensor(
-            [(model.to_single_token(' Positive'), model.to_single_token(' Negative'))] * length +
-            [(model.to_single_token(' Negative'), model.to_single_token(' Positive'))] * length
+            [(model.to_single_token(' Positive'), model.to_single_token(' Negative'))] * half_length +
+            [(model.to_single_token(' Negative'), model.to_single_token(' Positive'))] * half_length
         )
     elif scaffold == ReviewScaffold.CONTINUATION:
         return torch.tensor(
-            [(model.to_single_token(' good'), model.to_single_token(' bad'))] * length +
-            [(model.to_single_token(' bad'), model.to_single_token(' good'))] * length
+            [(model.to_single_token(' good'), model.to_single_token(' bad'))] * half_length +
+            [(model.to_single_token(' bad'), model.to_single_token(' good'))] * half_length
         )
     else:
         raise ValueError(f"Invalid scaffold: {scaffold}")
@@ -147,7 +147,7 @@ def create_dataset_for_split(
     corrupt_prompts = apply_scaffold_to_prompts(corrupt_prompts, scaffold)
     clean_tokens = model.to_tokens(clean_prompts)
     corrupted_tokens = model.to_tokens(corrupt_prompts)
-    answer_tokens = construct_answer_tokens(scaffold, len(clean_prompts), model)
+    answer_tokens = construct_answer_tokens(scaffold, len(df), model)
     dataset = CleanCorruptedDataset(
         clean_tokens=clean_tokens,
         corrupted_tokens=corrupted_tokens,
