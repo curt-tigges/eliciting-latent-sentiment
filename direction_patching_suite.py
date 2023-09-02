@@ -18,7 +18,7 @@ from functools import partial
 from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
-from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType
+from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
 from utils.circuit_analysis import get_logit_diff, get_prob_diff, create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
 from utils.store import save_array, load_array, save_html, to_csv
 from utils.residual_stream import get_resid_name
@@ -28,14 +28,14 @@ pio.renderers.default = "notebook"
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    'gpt2-small',
-    # 'gpt2-medium',
-    # 'gpt2-large',
-    # 'gpt2-xl',
-    # 'EleutherAI/pythia-160m',
-    # 'EleutherAI/pythia-410m',
-    # 'EleutherAI/pythia-1.4b',
-    # 'EleutherAI/pythia-2.8b',
+    # 'gpt2-small',
+    'gpt2-medium',
+    'gpt2-large',
+    'gpt2-xl',
+    'EleutherAI/pythia-160m',
+    'EleutherAI/pythia-410m',
+    'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b',
 ]
 #%%
 def get_model(name: str) -> HookedTransformer:
@@ -236,19 +236,25 @@ def get_results_for_direction_and_position(
     direction_label: str, 
     direction: Float[Tensor, "d_model"],
     model: HookedTransformer,
+    device: torch.device = None,
     batch_size: int = 16,
     heads: List[Tuple[int]] = None,
+    scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
 ) -> float:
     if heads is None:
-        names_filter = lambda name: 'resid' in name and 'mid' not in name
+        layer = extract_layer_from_string(direction_label)
+        resid_name = get_resid_name(layer, model)[0]
+        names_filter = lambda name: name == resid_name
     else:
         names_filter = lambda name: 'result' in name
     model.reset_hooks()
-    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
+    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type, scaffold=scaffold)
     patching_dataset: CleanCorruptedCacheResults = clean_corrupt_data.run_with_cache(
         model, 
         names_filter=names_filter,
         batch_size=batch_size,
+        device=device,
+        disable_tqdm=False,
     )
     example_prompt = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     if position == 'ALL':
@@ -299,8 +305,11 @@ def get_results_for_metric(
     patching_metric_base: Callable, prompt_types: Iterable[PromptType], 
     direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
     model: HookedTransformer,
+    device: torch.device = None,
     heads: List[Tuple[int]] = None,
     disable_tqdm: bool = False,
+    scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
+    batch_size: int = 16,
 ) -> Float[pd.DataFrame, "direction prompt"]:
     use_heads_label = "resid" if heads is None else "attn_result"
     metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
@@ -322,7 +331,10 @@ def get_results_for_metric(
                 direction_label=direction_label,
                 direction=direction,
                 model=model,
+                device=device,
                 heads=heads,
+                scaffold=scaffold,
+                batch_size=batch_size,
             )
             # Ensure the column exists
             if (prompt_type.value, position) not in results.columns:
@@ -362,11 +374,24 @@ METRICS = [
     # prob_diff_denoising,
 ]
 USE_HEADS = [True, False]
+SCAFFOLD = ReviewScaffold.CONTINUATION
 model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
 )
+BATCH_SIZES = {
+    "gpt2-small": 128,
+    "gpt2-medium": 16,
+    "gpt2-large": 32,
+    "gpt2-xl": 16,
+    "EleutherAI/pythia-160m": 128,
+    "EleutherAI/pythia-410m": 64,
+    "EleutherAI/pythia-1.4b": 32,
+    "EleutherAI/pythia-2.8b": 16,
+}
 model = None
+device = 'cpu'
 for model_name, metric, use_heads in model_metric_bar:
+    batch_size = BATCH_SIZES[model_name]
     if use_heads and model_name not in HEADS:
         continue
     elif use_heads:
@@ -374,11 +399,12 @@ for model_name, metric, use_heads in model_metric_bar:
     else:
         heads = None
     patch_label = "attn_result" if use_heads else "resid" 
-    model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label}")
+    model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label} batch size {batch_size}")
     if model is None or model.name != model_name:
         model = get_model(model_name)
     DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
     results = get_results_for_metric(
-        metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, heads
+        metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, device, heads, 
+        scaffold=SCAFFOLD, batch_size=batch_size
     )
 # %%
