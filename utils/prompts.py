@@ -447,11 +447,13 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         names_filter: str, 
         batch_size: int,
         requires_grad: bool = True,
+        device: torch.device = None,
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         was_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(False)
         model = model.eval().requires_grad_(False)
