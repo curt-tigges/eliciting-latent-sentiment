@@ -469,8 +469,12 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         total_samples = len(dataloader.dataset)
         corrupted_dict = dict()
         clean_dict = dict()
-        bar = enumerate(tqdm(dataloader, disable=len(dataloader) > 1))
-        for idx, (corrupted_tokens, clean_tokens, answer_tokens) in bar:
+        bar = tqdm(dataloader, disable=len(dataloader) > 1)
+        bar.set_description(
+            f"Running with cache: model={model.cfg.model_name}, "
+            f"batch_size={batch_size}"
+        )
+        for idx, (corrupted_tokens, clean_tokens, answer_tokens) in enumerate(bar):
             corrupted_tokens = corrupted_tokens.to(device)
             clean_tokens = clean_tokens.to(device)
             answer_tokens = answer_tokens.to(device)
@@ -524,7 +528,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_cache.to('cpu')
         clean_cache.to('cpu')
         torch.set_grad_enabled(was_grad_enabled)
-        model = model.train().requires_grad_(True)
+        model = model.train().requires_grad_(requires_grad)
 
         return CleanCorruptedCacheResults(
             dataset=self,
