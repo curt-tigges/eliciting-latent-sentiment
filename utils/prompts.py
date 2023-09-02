@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 from jaxtyping import Float, Int, Bool
-from typing import Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 from typeguard import typechecked
 import einops
 from enum import Enum
@@ -445,10 +445,12 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
     def run_with_cache(
         self, 
         model: HookedTransformer, 
-        names_filter: str, 
+        names_filter: Callable, 
         batch_size: int,
         requires_grad: bool = True,
         device: torch.device = None,
+        disable_tqdm: bool = None,
+        dtype: torch.dtype = torch.float32,
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
@@ -472,7 +474,9 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         total_samples = len(dataloader.dataset)
         corrupted_dict = dict()
         clean_dict = dict()
-        bar = tqdm(dataloader, disable=len(dataloader) > 1)
+        if disable_tqdm is None:
+            disable_tqdm = len(dataloader) > 1
+        bar = tqdm(dataloader, disable=disable_tqdm)
         bar.set_description(
             f"Running with cache: model={model.cfg.model_name}, "
             f"batch_size={batch_size}"
@@ -502,10 +506,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 if not buffer_initialized:
                     for k, v in corrupted_cache.items():
                         corrupted_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu'
+                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
                         )
                         clean_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=v.dtype, device='cpu'
+                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
                         )
                     buffer_initialized = True
 
