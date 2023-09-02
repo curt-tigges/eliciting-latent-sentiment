@@ -420,6 +420,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         self.clean_tokens = self.clean_tokens.to(device)
         self.corrupted_tokens = self.corrupted_tokens.to(device)
         self.answer_tokens = self.answer_tokens.to(device)
+        return self
 
     def __len__(self):
         return self.clean_tokens.shape[0]
