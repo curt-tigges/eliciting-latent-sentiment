@@ -575,7 +575,7 @@ def get_dataset(
     if prompt_type in (
         PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV
     ):
-        return get_pickle_dataset(model, prompt_type, scaffold)
+        return get_pickle_dataset(model, prompt_type, scaffold).to(device)
     prompts_dict, answers_dict = get_prompts(
         model, prompt_type
     )
