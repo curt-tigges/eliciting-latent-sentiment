@@ -20,6 +20,28 @@
 # ## Setup
 
 # %%
+# !ls
+
+# %%
+# %cd eliciting-latent-sentiment
+
+# %%
+# #!pip install git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python
+# !pip install fancy_einsum==0.0.3
+# !pip install transformer_lens
+# !pip install jaxtyping==0.2.13
+# !pip install einops
+# !pip install protobuf==3.20.*
+# !pip install plotly
+# !pip install torchtyping
+# !pip install git+https://github.com/neelnanda-io/neel-plotly.git
+# !pip install circuitsvis
+# !pip install -U kaleido 
+# # !curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -; sudo apt-get install -y nodejs
+# # %pip install git+https://github.com/neelnanda-io/PySvelte.git
+# # %pip install typeguard==2.13.3
+
+# %%
 from IPython import get_ipython
 ipython = get_ipython()
 ipython.run_line_magic("load_ext", "autoreload")
@@ -176,27 +198,6 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 
 # %% [markdown]
 # ### Dataset Construction
-
-# %%
-from utils.prompts import get_onesided_datasets
-prompts, answer_tokens, answer_list = get_onesided_datasets(
-    model,
-    device=device,
-    n_answers=5,
-    prompt_type="simple",
-    dataset_sentiments=["positive", "neutral"],
-    answer_sentiment="positive"
-)
-
-# %%
-print("Prompts:")
-print(prompts["positive"].shape)
-print(prompts["neutral"].shape)
-print(answer_tokens.shape)
-
-
-# %%
-answer_tokens
 
 # %%
 #pos_answers = [" Positive", " amazing", " good"]
@@ -396,10 +397,44 @@ results = act_patch(
 )
 
 # %%
+import plotly.io as pio
+def imshow_p(tensor, renderer=None, save_path=None, **kwargs):
+    kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
+    kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
+    facet_labels = kwargs_pre.pop("facet_labels", None)
+    border = kwargs_pre.pop("border", False)
+    if "color_continuous_scale" not in kwargs_pre:
+        kwargs_pre["color_continuous_scale"] = "RdBu"
+    if "margin" in kwargs_post and isinstance(kwargs_post["margin"], int):
+        kwargs_post["margin"] = dict.fromkeys(list("tblr"), kwargs_post["margin"])
+    fig = px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, **kwargs_pre)
+    if facet_labels:
+        for i, label in enumerate(facet_labels):
+            fig.layout.annotations[i]['text'] = label
+    if border:
+        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
+        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
+    # things like `xaxis_tickmode` should be applied to all subplots. This is super janky lol but I'm under time pressure
+    for setting in ["tickangle"]:
+      if f"xaxis_{setting}" in kwargs_post:
+          i = 2
+          while f"xaxis{i}" in fig["layout"]:
+            kwargs_post[f"xaxis{i}_{setting}"] = kwargs_post[f"xaxis_{setting}"]
+            i += 1
+    fig.update_layout(**kwargs_post)
+    fig.show(renderer=renderer)
+
+    # Save the figure as a PDF if save_path is provided
+    if save_path:
+        pio.write_image(fig, save_path)
+
+
+# %%
 assert results.keys() == {"resid_pre", "attn_out", "mlp_out"}
 labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
 imshow_p(
     torch.stack([r.T for r in results.values()]) * 100, # we transpose so layer is on the y-axis
+    save_path="patching_at_resid_stream_and_layer_outputs.pdf",
     facet_col=0,
     facet_labels=["resid_pre", "attn_out", "mlp_out"],
     title="Patching at resid stream & layer outputs (corrupted -> clean)",
