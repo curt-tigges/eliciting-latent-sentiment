@@ -1,6 +1,7 @@
 from contextlib import nullcontext
 from enum import Enum
 from functools import partial
+import warnings
 import einops
 import numpy as np
 import torch
@@ -167,6 +168,7 @@ class RotationModule(torch.nn.Module):
         position: Union[None, int],
         orig_tokens: Int[Tensor, "batch pos"],
         patching_metric: Callable,
+        check_requires_grad: bool = False,
     ) -> Float[Tensor, ""]:
         patched_resid: Float[Tensor, "batch d_model"] = self.apply_rotation(
             orig_resid=orig_resid,
@@ -180,7 +182,7 @@ class RotationModule(torch.nn.Module):
             layer=layer,
             position=position,
         )
-        if orig_resid.requires_grad:
+        if check_requires_grad:
             assert patched_resid.requires_grad
             assert metric.requires_grad
         return metric
@@ -272,7 +274,6 @@ def fit_rotation(
             f"Epoch {epoch}: training. Batch size: {trainloader.batch_size}. Device: {device}"
         )
         for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in train_bar:
-            # assert orig_resid_train.requires_grad and new_resid_train.requires_grad
             train_bar.set_description(
                 f"Epoch {epoch} training: moving data to device={device}"
             )
@@ -292,6 +293,7 @@ def fit_rotation(
                     position=config.train_position,
                     orig_tokens=orig_tokens_train,
                     patching_metric=partial(metric_train, answer_tokens=answers_train),
+                    check_requires_grad=True,
                 )
             if downcast:
                 scaled_loss = scaler.scale(loss)
@@ -408,7 +410,6 @@ def get_das_dataset(
         orig_resid = orig_resid[:, pos, :]
         new_resid = new_resid[:, pos, :]
     # Create a TensorDataset from the tensors
-    # assert orig_resid.requires_grad and new_resid.requires_grad
     das_dataset = TensorDataset(
         clean_corrupt_data.corrupted_tokens.detach().cpu(), 
         orig_resid.detach().cpu().requires_grad_(requires_grad), 
@@ -428,13 +429,15 @@ def train_das_subspace(
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
     downcast: bool = True, scaffold: ReviewScaffold = None,
-    data_requires_grad: bool = True,
+    data_requires_grad: bool = False,
     **config_arg,
 ):
     """
     Entrypoint to be used in directional patching experiments
     Given training/validation datasets, train a DAS subspace.
     """
+    if data_requires_grad:
+        warnings.warn("data_requires_grad is True. This is not recommended.")
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
