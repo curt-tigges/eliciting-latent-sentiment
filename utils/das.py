@@ -230,7 +230,9 @@ def fit_rotation(
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
-    loss_context = autocast() if downcast else nullcontext()
+    loss_context = autocast(
+        device=device, dtype=torch.float16
+    ) if downcast else nullcontext()
     scaler = GradScaler()
     if device != model.cfg.device:
         model = model.to(device)
@@ -303,7 +305,7 @@ def fit_rotation(
                 f"train layer: {config.train_layer}, train position: {config.train_position} "
             )
             train_bar.set_description(
-                f"Epoch {epoch} training: backpropagating. Profiler: {profiler}. Device: {device}"
+                f"Epoch {epoch} training: backpropagating. Profiler: {profiler}. Device: {device}. Downcast: {downcast}"
             )
             if profiler:
                 with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
@@ -320,7 +322,11 @@ def fit_rotation(
             train_bar.set_description(
                 f"Epoch {epoch} training: stepping"
             )
-            optimizer.step()
+            if downcast:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             step += 1
             if config.wandb_enabled:
                 wandb.log({"training_loss": scaled_loss.item()}, step=step)
