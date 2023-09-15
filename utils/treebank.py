@@ -153,7 +153,7 @@ def create_dataset_for_split(
         clean_tokens=clean_tokens.cpu(),
         corrupted_tokens=corrupted_tokens.cpu(),
         answer_tokens=answer_tokens.cpu(),
-        all_prompts=clean_prompts.cpu()
+        all_prompts=clean_prompts
     )
     save_pickle(dataset, f'treebank_{split}_{scaffold.value}', model)
     print(split, scaffold.value, clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts))
