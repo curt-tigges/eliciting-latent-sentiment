@@ -230,9 +230,7 @@ def fit_rotation(
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
-    loss_context = autocast(
-        device=device, dtype=torch.float16
-    ) if downcast else nullcontext()
+    loss_context = autocast() if downcast else nullcontext()
     scaler = GradScaler()
     if device != model.cfg.device:
         model = model.to(device)
