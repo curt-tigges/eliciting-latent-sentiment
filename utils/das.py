@@ -375,7 +375,7 @@ def fit_rotation(
 def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer,
     batch_size: int = 32, max_dataset_size: int = None, scaffold: ReviewScaffold = None,
-    pin_memory: bool = True, device: torch.device = None,
+    pin_memory: bool = True, device: torch.device = None, requires_grad: bool = True,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
@@ -393,6 +393,7 @@ def get_das_dataset(
         names_filter=lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0]),
         batch_size=batch_size,
         device=device,
+        requires_grad=requires_grad,
     )
     act_name, _ = get_resid_name(layer, model)
     loss_fn = partial(
@@ -407,11 +408,11 @@ def get_das_dataset(
         orig_resid = orig_resid[:, pos, :]
         new_resid = new_resid[:, pos, :]
     # Create a TensorDataset from the tensors
-    assert orig_resid.requires_grad and new_resid.requires_grad
+    # assert orig_resid.requires_grad and new_resid.requires_grad
     das_dataset = TensorDataset(
         clean_corrupt_data.corrupted_tokens.detach().cpu(), 
-        orig_resid.detach().cpu().requires_grad_(), 
-        new_resid.detach().cpu().requires_grad_(), 
+        orig_resid.detach().cpu().requires_grad_(requires_grad), 
+        new_resid.detach().cpu().requires_grad_(requires_grad), 
         clean_corrupt_data.answer_tokens.detach().cpu(),
     )
     # Create a DataLoader from the dataset
@@ -427,6 +428,7 @@ def train_das_subspace(
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
     downcast: bool = True, scaffold: ReviewScaffold = None,
+    data_requires_grad: bool = True,
     **config_arg,
 ):
     """
@@ -436,12 +438,12 @@ def train_das_subspace(
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
-        scaffold=scaffold, device=device,
+        scaffold=scaffold, device=device, requires_grad=data_requires_grad,
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
-        scaffold=scaffold, device=device,
+        scaffold=scaffold, device=device, requires_grad=data_requires_grad,
     )
     config = dict(
         train_layer=train_layer,
