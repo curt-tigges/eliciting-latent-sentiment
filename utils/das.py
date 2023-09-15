@@ -97,6 +97,7 @@ def act_patch_simple(
     layer: int,
     position: Union[None, int],
     patching_metric: Callable,
+    verbose: bool = False,
 ) -> Float[Tensor, ""]:
     assert layer <= model.cfg.n_layers
     act_name, patch_layer = get_resid_name(layer, model)
@@ -107,6 +108,8 @@ def act_patch_simple(
         fwd_hooks=[(act_name, hook_fn)],
     )
     metric = patching_metric(logits)
+    if verbose:
+        print(f"logits.shape: {logits.shape}, metric: {metric}")
     if new_value.requires_grad:
         assert logits.requires_grad, (
             "Output of run_with_hooks should require grad. "
@@ -169,6 +172,7 @@ class RotationModule(torch.nn.Module):
         orig_tokens: Int[Tensor, "batch pos"],
         patching_metric: Callable,
         check_requires_grad: bool = False,
+        verbose: bool = False,
     ) -> Float[Tensor, ""]:
         patched_resid: Float[Tensor, "batch d_model"] = self.apply_rotation(
             orig_resid=orig_resid,
@@ -181,6 +185,7 @@ class RotationModule(torch.nn.Module):
             patching_metric=patching_metric,
             layer=layer,
             position=position,
+            verbose=verbose,
         )
         if check_requires_grad:
             assert patched_resid.requires_grad
@@ -226,6 +231,7 @@ def fit_rotation(
     project: str = None,
     profiler: bool = False,
     downcast: bool = False,
+    verbose: bool = False,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
@@ -294,6 +300,7 @@ def fit_rotation(
                     orig_tokens=orig_tokens_train,
                     patching_metric=partial(metric_train, answer_tokens=answers_train),
                     check_requires_grad=True,
+                    verbose=verbose,
                 )
             if downcast:
                 scaled_loss = scaler.scale(loss)
@@ -316,16 +323,17 @@ def fit_rotation(
             else:
                 scaled_loss.backward()
             train_bar.set_description(
-                f"Epoch {epoch} training: clipping gradients"
-            )
-            torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
-            train_bar.set_description(
                 f"Epoch {epoch} training: stepping"
             )
             if downcast:
+                # Unscales the gradients of optimizer's assigned params in-place
+                scaler.unscale_(optimizer)
+                # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
+                torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
                 scaler.step(optimizer)
                 scaler.update()
             else:
+                torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
                 optimizer.step()
             step += 1
             if config.wandb_enabled:
@@ -378,6 +386,7 @@ def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer,
     batch_size: int = 32, max_dataset_size: int = None, scaffold: ReviewScaffold = None,
     pin_memory: bool = True, device: torch.device = None, requires_grad: bool = True,
+    verbose: bool = False,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
@@ -404,6 +413,11 @@ def get_das_dataset(
         clean_value=results.corrupted_logit_diff,
         return_tensor=True,
     )
+    if verbose:
+        print(
+            f"clean logit diff: {results.clean_logit_diff}, "
+            f"corrupted logit diff: {results.corrupted_logit_diff}"
+        )
     orig_resid: Float[Tensor, "batch *pos d_model"] = results.corrupted_cache[act_name]
     new_resid: Float[Tensor, "batch *pos d_model"] = results.clean_cache[act_name]
     if pos is not None:
@@ -429,7 +443,7 @@ def train_das_subspace(
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
     downcast: bool = False, scaffold: ReviewScaffold = None,
-    data_requires_grad: bool = False,
+    data_requires_grad: bool = False, verbose: bool = False,
     **config_arg,
 ):
     """
@@ -442,11 +456,13 @@ def train_das_subspace(
         train_type, position=train_pos, layer=train_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
         scaffold=scaffold, device=device, requires_grad=data_requires_grad,
+        verbose=verbose,
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
         scaffold=scaffold, device=device, requires_grad=data_requires_grad,
+        verbose=verbose,
     )
     config = dict(
         train_layer=train_layer,
@@ -465,6 +481,7 @@ def train_das_subspace(
         device=device,
         profiler=profiler,
         downcast=downcast,
+        verbose=verbose,
         **config,
     )
     if directions.shape[1] == 1:
