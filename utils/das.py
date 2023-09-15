@@ -302,6 +302,7 @@ def fit_rotation(
                 with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
                     with record_function("backpropagation"):
                         scaler.scale(loss).backward()
+                    torch.cuda.synchronize()
                 print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
                 print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
             elif device == 'cuda':

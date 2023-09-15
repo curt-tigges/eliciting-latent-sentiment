@@ -285,3 +285,18 @@ def save_dataset_dict(
     path = os.path.join(model_path, label + '.pkl')
     dataset_dict.save_to_disk(path)
     return path
+
+
+def save_image(
+    figure: go.Figure,
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.png')
+    figure.write_image(path)
+    return path
