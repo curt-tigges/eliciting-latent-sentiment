@@ -415,9 +415,9 @@ def get_das_dataset(
     )
     if verbose:
         print(
-            f"clean examples: {clean_corrupt_data.all_prompts[0:6:2]}, "
-            f"corrupted examples: {clean_corrupt_data.all_prompts[1:7:2]},"
-            f"clean logit diff: {results.clean_logit_diff}, "
+            f"example: {example}, \n"
+            f"corrupted examples: {clean_corrupt_data.all_prompts[1:7:2]}, \n"
+            f"clean logit diff: {results.clean_logit_diff}, \n"
             f"corrupted logit diff: {results.corrupted_logit_diff}"
         )
     orig_resid: Float[Tensor, "batch *pos d_model"] = results.corrupted_cache[act_name]

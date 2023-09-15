@@ -139,14 +139,15 @@ def create_dataset_for_split(
     split: str,
     model: HookedTransformer,
     scaffold: str = ReviewScaffold.PLAIN,
+    padding_side: str = 'left',
 ):
     df = full_df.loc[full_df.split == split]
     clean_prompts = df.phrase_pos.tolist() + df.phrase_neg.tolist()
     corrupt_prompts = df.phrase_neg.tolist() + df.phrase_pos.tolist()
     clean_prompts = apply_scaffold_to_prompts(clean_prompts, scaffold)
     corrupt_prompts = apply_scaffold_to_prompts(corrupt_prompts, scaffold)
-    clean_tokens = model.to_tokens(clean_prompts)
-    corrupted_tokens = model.to_tokens(corrupt_prompts)
+    clean_tokens = model.to_tokens(clean_prompts, padding_side=padding_side)
+    corrupted_tokens = model.to_tokens(corrupt_prompts, padding_side=padding_side)
     answer_tokens = construct_answer_tokens(scaffold, len(df), model)
     dataset = CleanCorruptedDataset(
         clean_tokens=clean_tokens.cpu(),

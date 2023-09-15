@@ -541,6 +541,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             dataset=self,
             corrupted_cache=corrupted_cache,
             clean_cache=clean_cache,
+            corrupted_logit_diffs=corrupted_logit_diffs,
+            clean_logit_diffs=clean_logit_diffs,
+            corrupted_prob_diffs=corrupted_prob_diffs,
+            clean_prob_diffs=clean_prob_diffs,
             corrupted_logit_diff=corrupted_logit_diff,
             clean_logit_diff=clean_logit_diff,
             corrupted_prob_diff=corrupted_prob_diff,
@@ -554,6 +558,10 @@ class CleanCorruptedCacheResults:
         self, dataset: CleanCorruptedDataset,
         corrupted_cache: ActivationCache,
         clean_cache: ActivationCache,
+        corrupted_logit_diffs: List[float],
+        clean_logit_diffs: List[float],
+        corrupted_prob_diffs: List[float],
+        clean_prob_diffs: List[float],
         corrupted_logit_diff: float,
         clean_logit_diff: float,
         corrupted_prob_diff: float,
@@ -562,6 +570,10 @@ class CleanCorruptedCacheResults:
         self.dataset = dataset
         self.corrupted_cache = corrupted_cache
         self.clean_cache = clean_cache
+        self.corrupted_logit_diffs = corrupted_logit_diffs
+        self.clean_logit_diffs = clean_logit_diffs
+        self.corrupted_prob_diffs = corrupted_prob_diffs
+        self.clean_prob_diffs = clean_prob_diffs
         self.corrupted_logit_diff = corrupted_logit_diff
         self.clean_logit_diff = clean_logit_diff
         self.corrupted_prob_diff = corrupted_prob_diff
