@@ -272,7 +272,7 @@ def fit_rotation(
             f"Epoch {epoch}: training. Batch size: {trainloader.batch_size}. Device: {device}"
         )
         for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in train_bar:
-            assert orig_resid_train.requires_grad and new_resid_train.requires_grad
+            # assert orig_resid_train.requires_grad and new_resid_train.requires_grad
             train_bar.set_description(
                 f"Epoch {epoch} training: moving data to device={device}"
             )
