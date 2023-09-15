@@ -137,7 +137,7 @@ def construct_answer_tokens(
     else:
         raise ValueError(f"Invalid scaffold: {scaffold}")
     out = pattern.repeat(half_length, 1)
-    assert out.shape == (half_length, 2)
+    assert out.shape == (half_length * 2, 2)
     return out
     
 
