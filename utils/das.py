@@ -231,7 +231,7 @@ def fit_rotation(
     a counterfactual patching dataset.
     """
     loss_context = autocast() if downcast else nullcontext()
-    scaler = GradScaler()
+    scaler = GradScaler() if downcast else None
     if device != model.cfg.device:
         model = model.to(device)
     if 'model_name' not in config_dict:
@@ -327,8 +327,8 @@ def fit_rotation(
                 optimizer.step()
             step += 1
             if config.wandb_enabled:
-                wandb.log({"training_loss": scaled_loss.item()}, step=step)
-            epoch_train_loss += scaled_loss.item()
+                wandb.log({"training_loss": scaled_loss.detach().item()}, step=step)
+            epoch_train_loss += scaled_loss.detach().item()
         rotation_module.eval()
         with torch.inference_mode():
             test_bar = tqdm(testloader, disable=config.epochs > 1)
@@ -375,11 +375,12 @@ def fit_rotation(
 def get_das_dataset(
     prompt_type: PromptType, position: str, layer: int, model: HookedTransformer,
     batch_size: int = 32, max_dataset_size: int = None, scaffold: ReviewScaffold = None,
+    pin_memory: bool = True, device: torch.device = None,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
-    clean_corrupt_data = get_dataset(model, 'cpu', prompt_type=prompt_type, scaffold=scaffold)
+    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type, scaffold=scaffold)
     if max_dataset_size is not None:
         clean_corrupt_data = clean_corrupt_data.get_subset(
             list(range(max_dataset_size))
@@ -391,6 +392,7 @@ def get_das_dataset(
         model,
         names_filter=lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0]),
         batch_size=batch_size,
+        device=device,
     )
     act_name, _ = get_resid_name(layer, model)
     loss_fn = partial(
@@ -407,14 +409,14 @@ def get_das_dataset(
     # Create a TensorDataset from the tensors
     assert orig_resid.requires_grad and new_resid.requires_grad
     das_dataset = TensorDataset(
-        clean_corrupt_data.corrupted_tokens.cpu().detach(), 
-        orig_resid.cpu().detach().requires_grad_(), 
-        new_resid.cpu().detach().requires_grad_(), 
-        clean_corrupt_data.answer_tokens.cpu().detach(),
+        clean_corrupt_data.corrupted_tokens.detach().cpu(), 
+        orig_resid.detach().cpu().requires_grad_(), 
+        new_resid.detach().cpu().requires_grad_(), 
+        clean_corrupt_data.answer_tokens.detach().cpu(),
     )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(
-        das_dataset, batch_size=batch_size, pin_memory=True
+        das_dataset, batch_size=batch_size, pin_memory=pin_memory
         )
     return das_dataloader, loss_fn, pos
 
@@ -430,17 +432,16 @@ def train_das_subspace(
     """
     Entrypoint to be used in directional patching experiments
     Given training/validation datasets, train a DAS subspace.
-    Initially the data is loaded onto cpu but training happens on device.
     """
     trainloader, loss_fn, train_position = get_das_dataset(
         train_type, position=train_pos, layer=train_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
-        scaffold=scaffold,
+        scaffold=scaffold, device=device,
     )
     testloader, loss_fn_val, test_position = get_das_dataset(
         test_type, position=test_pos, layer=test_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
-        scaffold=scaffold,
+        scaffold=scaffold, device=device,
     )
     config = dict(
         train_layer=train_layer,
