@@ -361,7 +361,10 @@ def fit_rotation(
                 epoch_test_loss += eval_loss.item()
 
         if config.wandb_enabled:
-            wandb.log({"epoch_training_loss": epoch_train_loss, "epoch_validation_loss": epoch_test_loss}, step=step)
+            wandb.log({
+                "epoch_training_loss": epoch_train_loss / len(trainloader),
+                "epoch_validation_loss": epoch_test_loss / len(testloader),
+            }, step=step)
         # Store the loss and model for this seed
         losses_train.append(epoch_train_loss)
         losses_test.append(epoch_test_loss)
@@ -416,7 +419,6 @@ def get_das_dataset(
     if verbose:
         print(
             f"example: {example}, \n"
-            f"corrupted examples: {clean_corrupt_data.all_prompts[1:7:2]}, \n"
             f"clean logit diff: {results.clean_logit_diff}, \n"
             f"corrupted logit diff: {results.corrupted_logit_diff}"
         )

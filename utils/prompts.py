@@ -1,3 +1,4 @@
+import random
 import yaml
 from transformer_lens import HookedTransformer, ActivationCache
 import torch
@@ -415,6 +416,12 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.answer_tokens[indices],
             [self.all_prompts[i] for i in indices],
         )
+    
+    def shuffle(self, seed: int = 0):
+        random.seed(seed)
+        indices = list(range(len(self)))
+        random.shuffle(indices)
+        return self.get_subset(indices)
 
     def to(self, device: torch.device):
         self.clean_tokens = self.clean_tokens.to(device)

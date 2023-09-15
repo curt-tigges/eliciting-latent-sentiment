@@ -2,9 +2,11 @@ import pandas as pd
 import os
 from enum import Enum
 from datasets import Dataset, DatasetDict
+from jaxtyping import Float
 from typing import List
 from transformer_lens import HookedTransformer
 import torch
+from torch import Tensor
 from utils.prompts import CleanCorruptedDataset, ReviewScaffold
 from utils.store import save_pickle
 
@@ -117,21 +119,26 @@ def apply_scaffold_to_prompts(prompts: List[str], scaffold: str):
         raise ValueError(f"Invalid scaffold: {scaffold}")
     
 
-def construct_answer_tokens(scaffold: str, half_length: int, model: HookedTransformer):
+def construct_answer_tokens(
+    scaffold: str, half_length: int, model: HookedTransformer
+) -> Float[Tensor, "half_length 2"]:
     if scaffold == ReviewScaffold.PLAIN:
-        return torch.tensor([(1, 0)] * half_length + [(0, 1)] * half_length).unsqueeze(1)
+        pattern = torch.tensor([[0, 1], [1, 0]])
     elif scaffold == ReviewScaffold.CLASSIFICATION:
-        return torch.tensor(
-            [(model.to_single_token(' Positive'), model.to_single_token(' Negative'))] * half_length +
-            [(model.to_single_token(' Negative'), model.to_single_token(' Positive'))] * half_length
-        )
+        pattern = torch.tensor([
+            (model.to_single_token(' Positive'), model.to_single_token(' Negative')),
+            (model.to_single_token(' Negative'), model.to_single_token(' Positive')),
+        ])
     elif scaffold == ReviewScaffold.CONTINUATION:
-        return torch.tensor(
-            [(model.to_single_token(' good'), model.to_single_token(' bad'))] * half_length +
-            [(model.to_single_token(' bad'), model.to_single_token(' good'))] * half_length
-        )
+        pattern = torch.tensor([
+            (model.to_single_token(' good'), model.to_single_token(' bad')),
+            (model.to_single_token(' bad'), model.to_single_token(' good')),
+        ])
     else:
         raise ValueError(f"Invalid scaffold: {scaffold}")
+    out = pattern.repeat(half_length, 1)
+    assert out.shape == (half_length, 2)
+    return out
     
 
 def create_dataset_for_split(
@@ -142,8 +149,12 @@ def create_dataset_for_split(
     padding_side: str = 'left',
 ):
     df = full_df.loc[full_df.split == split]
-    clean_prompts = df.phrase_pos.tolist() + df.phrase_neg.tolist()
-    corrupt_prompts = df.phrase_neg.tolist() + df.phrase_pos.tolist()
+    clean_prompts = [
+        item 
+        for pair in zip(df.phrase_pos.tolist(), df.phrase_neg.tolist()) 
+        for item in pair
+    ]
+    corrupt_prompts = clean_prompts[1:] + [clean_prompts[0]]
     clean_prompts = apply_scaffold_to_prompts(clean_prompts, scaffold)
     corrupt_prompts = apply_scaffold_to_prompts(corrupt_prompts, scaffold)
     clean_tokens = model.to_tokens(clean_prompts, padding_side=padding_side)
@@ -155,6 +166,7 @@ def create_dataset_for_split(
         answer_tokens=answer_tokens.cpu(),
         all_prompts=clean_prompts
     )
+    dataset.shuffle()
     save_pickle(dataset, f'treebank_{split}_{scaffold.value}', model)
     print(split, scaffold.value, clean_tokens.shape, corrupted_tokens.shape, answer_tokens.shape, len(clean_prompts))
 
