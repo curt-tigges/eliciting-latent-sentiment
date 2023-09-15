@@ -225,7 +225,7 @@ def fit_rotation(
     device: torch.device,
     project: str = None,
     profiler: bool = False,
-    downcast: bool = True,
+    downcast: bool = False,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
@@ -264,8 +264,8 @@ def fit_rotation(
         weight_decay=config.weight_decay,
         betas=config.betas,
     )
-
-    for epoch in range(config.epochs):
+    epoch_bar = tqdm(range(config.epochs), disable=config.epochs == 1)
+    for epoch in epoch_bar:
         epoch_train_loss = 0
         epoch_test_loss = 0
         rotation_module.train()
@@ -428,7 +428,7 @@ def train_das_subspace(
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
-    downcast: bool = True, scaffold: ReviewScaffold = None,
+    downcast: bool = False, scaffold: ReviewScaffold = None,
     data_requires_grad: bool = False,
     **config_arg,
 ):
