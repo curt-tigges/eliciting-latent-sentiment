@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from enum import Enum
 from functools import partial
 import einops
@@ -222,12 +223,14 @@ def fit_rotation(
     device: torch.device,
     project: str = None,
     profiler: bool = False,
+    downcast: bool = True,
     **config_dict
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
+    loss_context = autocast() if downcast else nullcontext()
     scaler = GradScaler()
     if device != model.cfg.device:
         model = model.to(device)
@@ -281,7 +284,7 @@ def fit_rotation(
             train_bar.set_description(
                 f"Epoch {epoch} training: computing loss"
             )
-            with autocast():
+            with loss_context:
                 loss = rotation_module(
                     orig_resid_train,
                     new_resid_train,
@@ -290,25 +293,26 @@ def fit_rotation(
                     orig_tokens=orig_tokens_train,
                     patching_metric=partial(metric_train, answer_tokens=answers_train),
                 )
-            assert loss.requires_grad, (
+            if downcast:
+                scaled_loss = scaler.scale(loss)
+            else:
+                scaled_loss = loss
+            assert scaled_loss.requires_grad, (
                 "The loss must be a scalar that requires grad. \n"
-                f"loss: {loss}, loss.requires_grad: {loss.requires_grad}, "
+                f"loss: {scaled_loss}, loss.requires_grad: {scaled_loss.requires_grad}, "
                 f"train layer: {config.train_layer}, train position: {config.train_position} "
             )
             train_bar.set_description(
                 f"Epoch {epoch} training: backpropagating. Profiler: {profiler}. Device: {device}"
             )
-            if (device.type == 'cuda') and profiler:
+            if profiler:
                 with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
                     with record_function("backpropagation"):
-                        scaler.scale(loss).backward()
+                        scaled_loss.backward()
                     torch.cuda.synchronize()
-                print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
                 print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-            elif device == 'cuda':
-                scaler.scale(loss).backward()
             else:
-                loss.backward()
+                scaled_loss.backward()
             train_bar.set_description(
                 f"Epoch {epoch} training: clipping gradients"
             )
@@ -319,8 +323,8 @@ def fit_rotation(
             optimizer.step()
             step += 1
             if config.wandb_enabled:
-                wandb.log({"training_loss": loss.item()}, step=step)
-            epoch_train_loss += loss.item()
+                wandb.log({"training_loss": scaled_loss.item()}, step=step)
+            epoch_train_loss += scaled_loss.item()
         rotation_module.eval()
         with torch.inference_mode():
             test_bar = tqdm(testloader, disable=config.epochs > 1)
@@ -416,7 +420,7 @@ def train_das_subspace(
     train_type: PromptType, train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
     batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
-    scaffold: ReviewScaffold = None,
+    downcast: bool = True, scaffold: ReviewScaffold = None,
     **config_arg,
 ):
     """
@@ -450,6 +454,7 @@ def train_das_subspace(
         model=model,
         device=device,
         profiler=profiler,
+        downcast=downcast,
         **config,
     )
     if directions.shape[1] == 1:
