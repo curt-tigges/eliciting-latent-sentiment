@@ -415,6 +415,8 @@ def get_das_dataset(
     )
     if verbose:
         print(
+            f"clean examples: {clean_corrupt_data.all_prompts[0:6:2]}, "
+            f"corrupted examples: {clean_corrupt_data.all_prompts[1:7:2]},"
             f"clean logit diff: {results.clean_logit_diff}, "
             f"corrupted logit diff: {results.corrupted_logit_diff}"
         )
