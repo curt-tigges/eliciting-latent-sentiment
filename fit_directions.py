@@ -1,9 +1,6 @@
 #%%
 import yaml
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 from torch.utils.data import DataLoader
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
@@ -12,7 +9,6 @@ import einops
 from tqdm.notebook import tqdm
 import random
 import pandas as pd
-from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -25,7 +21,7 @@ from enum import Enum
 import os
 import itertools
 from IPython.display import display, HTML
-import circuitsvis as cv
+from transformers import AutoModelForCausalLM
 from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.utils import test_prompt
 import transformer_lens.evals as evals
@@ -34,35 +30,37 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import save_array, save_html, update_csv, get_csv, eval_csv, is_file
+from utils.store import save_array, save_html, update_csv, get_csv, eval_csv, is_file, load_pickle
 from utils.prompts import PromptType
 from utils.residual_stream import ResidualStreamDataset
 from utils.classification import train_classifying_direction, ClassificationMethod
 from utils.das import FittingMethod, train_das_subspace
+from utils.classifier import HookedClassifier
+from utils.treebank import ReviewScaffold
 #%%
 # ============================================================================ #
 # model loading
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODELS = [
     'gpt2-small',
-    # 'gpt2-medium',
-    # 'gpt2-large',
-    # 'gpt2-xl',
-    # 'EleutherAI/pythia-160m',
-    # 'EleutherAI/pythia-410m',
-    # 'EleutherAI/pythia-1.4b',
-    # 'EleutherAI/pythia-2.8b'
+    'gpt2-medium',
+    'gpt2-large',
+    'gpt2-xl',
+    'EleutherAI/pythia-160m',
+    'EleutherAI/pythia-410m',
+    'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b',
 ]
 METHODS = [
-    ClassificationMethod.KMEANS,
-    ClassificationMethod.LOGISTIC_REGRESSION,
-    ClassificationMethod.PCA,
-    ClassificationMethod.SVD,
+    # ClassificationMethod.KMEANS,
+    # ClassificationMethod.PCA,
+    # ClassificationMethod.SVD,
     ClassificationMethod.MEAN_DIFF,
+    ClassificationMethod.LOGISTIC_REGRESSION,
     FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
-    PromptType.SIMPLE_TRAIN,
+    # PromptType.SIMPLE_TRAIN,
     # PromptType.SIMPLE_TEST,
     # PromptType.CLASSIFICATION_4,
     # PromptType.SIMPLE_ADVERB,
@@ -70,8 +68,9 @@ PROMPT_TYPES = [
     # PromptType.SIMPLE_FRENCH,
     # PromptType.PROPER_NOUNS,
     # PromptType.MEDICAL,
-    # PromptType.TREEBANK_TRAIN,
+    PromptType.TREEBANK_TRAIN,
 ]
+SCAFFOLD = ReviewScaffold.CONTINUATION
 #%%
 def get_model(name: str):
     model = HookedTransformer.from_pretrained(
@@ -84,51 +83,48 @@ def get_model(name: str):
     model.name = name
     return model
 #%%
-sweep_model = get_model(MODELS[0])
-sweep_layer = sweep_model.cfg.n_layers // 2
-batch_size = 128
-epochs = 1
-train_das_subspace(
-    model=sweep_model, device_train=device, device_cache='cpu',
-    train_type=PromptType.TREEBANK_TRAIN, train_pos=None, train_layer=sweep_layer,
-    test_type=PromptType.TREEBANK_DEV, test_pos=None, test_layer=sweep_layer,
-    wandb_enabled=True, batch_size=batch_size, epochs=epochs,
-)
-#%%
-train_das_subspace(
-    model=sweep_model, device_train=device, device_cache='cpu',
-    train_type=PromptType.SIMPLE_TRAIN, train_pos=None, train_layer=sweep_layer,
-    test_type=PromptType.SIMPLE_TEST, test_pos=None, test_layer=sweep_layer,
-    wandb_enabled=True, batch_size=batch_size, epochs=50,
-)
+# sweep_model = HookedClassifier.from_pretrained(
+#     "data/gpt2-small/gpt2_imdb_classifier",
+#     "gpt2_imdb_classifier_classification_head_weights",
+#     "gpt2",
+#     center_unembed=True,
+#     center_writing_weights=True,
+#     fold_ln=True,
+#     refactor_factored_attn_matrices=True,
+# )
+# sweep_model.set_requires_grad(False)
 #%%
 # ============================================================================ #
 # DAS sweep with wandb
 #%%
-for sweep_model in MODELS:
-    sweep_model = get_model(sweep_model)
-    sweep_layer = sweep_model.cfg.n_layers // 2
-    sweep_func = partial(
-        train_das_subspace,
-        model=sweep_model, device_train=device, device_cache='cpu',
-        train_type=PromptType.TREEBANK_TRAIN, train_pos=None, train_layer=sweep_layer,
-        test_type=PromptType.TREEBANK_DEV, test_pos=None, test_layer=sweep_layer,
-        wandb_enabled=True,
-    )
-    sweep_config = {
-        "name": f"DAS subspace dimension ({sweep_model.cfg.model_name})",
-        "method": "grid",
-        "metric": {"name": "loss", "goal": "minimize"},
-        "parameters": {
-            "lr": {"values": [1e-3]},
-            "epochs": {"values": [512]},
-            "weight_decay": {"values": [0.0]},
-            "betas": {"values": [[0.9, 0.999]]},
-            "d_das": {"values": [1, 2, 4, 8, 16]},
-        },
-    }
-    sweep_id = wandb.sweep(sweep_config, project=train_das_subspace.__name__)
-    wandb.agent(sweep_id, function=sweep_func)
+# for sweep_model in MODELS:
+#     sweep_model = get_model(sweep_model)
+#     sweep_layer = sweep_model.cfg.n_layers // 2
+#     sweep_func = partial(
+#         train_das_subspace,
+#         model=sweep_model, device=device,
+#         train_type=PromptType.TREEBANK_TRAIN, train_pos=None, train_layer=sweep_layer,
+#         test_type=PromptType.TREEBANK_DEV, test_pos=None, test_layer=sweep_layer,
+#         wandb_enabled=True,
+#         downcast=False,
+#         scaffold=ReviewScaffold.CONTINUATION,
+#         data_requires_grad=False,
+#     )
+#     sweep_config = {
+#         "name": f"DAS subspace dimension ({sweep_model.cfg.model_name})",
+#         "method": "grid",
+#         "metric": {"name": "loss", "goal": "minimize"},
+#         "parameters": {
+#             "lr": {"values": [1e-3]},
+#             "epochs": {"values": [1]},
+#             "weight_decay": {"values": [0.0]},
+#             "betas": {"values": [[0.9, 0.999]]},
+#             "d_das": {"values": [1, 2, 4, 8, 16]},
+#             "batch_size": {"values": [64]},
+#         },
+#     }
+#     sweep_id = wandb.sweep(sweep_config, project=train_das_subspace.__name__)
+#     wandb.agent(sweep_id, function=sweep_func)
 #%%
 # ============================================================================ #
 # Training loop
@@ -150,11 +146,14 @@ for model_name, train_type, test_type, method in BAR:
     if 'test' in train_type.value:
         # Don't train on test sets
         continue
-    placeholders_layers = itertools.product(
-        train_type.get_placeholders(), 
-        test_type.get_placeholders(),
+    train_placeholders = train_type.get_placeholders() + ['ALL']
+    test_placeholders = test_type.get_placeholders() + ['ALL']
+    placeholders_layers = list(itertools.product(
+        train_placeholders, 
+        test_placeholders,
         range(model.cfg.n_layers + 1)
-    )
+    ))
+    assert len(placeholders_layers) > 0
     kwargs = dict()
     if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
         kwargs['n_components'] = 2
@@ -163,40 +162,35 @@ for model_name, train_type, test_type, method in BAR:
         if train_pos == 'VRB':
             # Don't train on verbs as sample size is too small
             continue
-        query = (
-            f"(train_set == '{train_type.value}') & "
-            f"(test_set == '{test_type.value}') & "
-            f"(train_layer == {train_layer}) & "
-            f"(test_layer == {test_layer}) &"
-            f"(train_pos == '{train_pos}') & "
-            f"(test_pos == '{test_pos}') &"
-            f"(method == '{method.value}')"
-        )
-        if eval_csv(query, "direction_fitting_stats", model):
+        save_path = f"{method.value}_{train_type.value}_{train_pos}_layer{train_layer}.npy"
+        if is_file(save_path, model):
+            print(f"Skipping because file already exists: {save_path}")
             continue
-
         if method == FittingMethod.DAS:
             if train_type != test_type or train_layer != test_layer:
                 continue
-            das_path = f"das_{train_type.value}_{train_pos}_layer{train_layer}.npy"
-            if is_file(das_path, model):
-                continue
-            train_das_subspace(
-                model, device, 'cpu' if 'treebank' in train_type.value else device,
+            das_dirs, das_path = train_das_subspace(
+                model, device,
                 train_type, train_pos, train_layer,
                 test_type, test_pos, test_layer,
                 wandb_enabled=False,
             )
+            print(f"Saving DAS direction to {das_path}")
             
         else:
-            trainset = ResidualStreamDataset.get_dataset(model, device, prompt_type=train_type)
-            testset = ResidualStreamDataset.get_dataset(model, device, prompt_type=test_type)
-            train_classifying_direction(
+            trainset = ResidualStreamDataset.get_dataset(
+                model, device, prompt_type=train_type, scaffold=SCAFFOLD
+            )
+            testset = ResidualStreamDataset.get_dataset(
+                model, device, prompt_type=test_type, scaffold=SCAFFOLD
+            )
+            cls_path = train_classifying_direction(
                 trainset, train_pos, train_layer,
                 testset, test_pos, test_layer,
                 method,
                 **kwargs
             )
+            print(f"Saving classification direction to {cls_path}")
 #%%
 # ============================================================================ #
 # Summary stats
@@ -218,14 +212,14 @@ def plot_accuracy_similarity(df, label: str, model: HookedTransformer):
         index=["train_set", "train_pos", "train_layer", ],
         columns=["test_set", "test_pos"],
         values="accuracy",
-    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} accuracy ({model.name})")
+    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} accuracy ({model})")
     save_html(accuracy_styler, f"{label}_accuracy", model)
     display(accuracy_styler)
     similarity_styler = df.pivot(
         index=["train_set",  "train_pos", "train_layer",],
         columns=["test_set", "test_pos"],
         values="similarity",
-    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} cosine similarities ({model.name})")
+    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} cosine similarities ({model})")
     save_html(similarity_styler, f"{label}_similarity", model)
     display(similarity_styler)
 #%%
@@ -281,6 +275,8 @@ def plot_pca_svd_2d(
     train_label: str = 'train', 
     test_label: str = 'test',
 ):
+    if isinstance(model, HookedTransformer):
+        model = model.cfg.model_name
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -323,7 +319,7 @@ def plot_pca_svd_2d(
     fig.update_layout(
         title=(
             f"{method.value} in and out of sample "
-            f"({model.name})"
+            f"({model})"
         ),
         xaxis_title="PC1",
         yaxis_title="PC2",

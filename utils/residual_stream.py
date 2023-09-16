@@ -5,7 +5,7 @@ import torch
 from torch import Tensor
 from transformer_lens import HookedTransformer
 from transformer_lens.utils import get_act_name
-from utils.prompts import get_dataset, PromptType
+from utils.prompts import ReviewScaffold, get_dataset, PromptType
 
 
 def get_resid_name(layer: int, model: HookedTransformer) -> Tuple[str, int]:
@@ -77,9 +77,15 @@ class ResidualStreamDataset:
         cls,
         model: HookedTransformer,
         device: torch.device,
-        prompt_type: str = "simple_train"
+        prompt_type: str = "simple_train",
+        scaffold: ReviewScaffold = None,
     ) -> 'ResidualStreamDataset':
-        clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
+        """
+        N.B. labels assume that first batch corresponds to 1
+        """
+        clean_corrupt_data = get_dataset(
+            model, device, prompt_type=prompt_type, scaffold=scaffold
+        )
         clean_labels = clean_corrupt_data.answer_tokens[:, 0, 0] == clean_corrupt_data.answer_tokens[0, 0, 0]
         
         assert len(clean_corrupt_data.all_prompts) == len(clean_corrupt_data.answer_tokens)
