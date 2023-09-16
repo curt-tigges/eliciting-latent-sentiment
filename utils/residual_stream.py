@@ -1,4 +1,5 @@
-from typing import List, Tuple
+from typing import List, Tuple, Union
+import einops
 from jaxtyping import Int, Float, Bool
 from typeguard import typechecked
 import torch
@@ -54,23 +55,32 @@ class ResidualStreamDataset:
         return set(self.prompt_strings) == set(other.prompt_strings)
     
     @typechecked
-    def embed(self, position_type: str, layer: int) -> Float[Tensor, "batch d_model"]:
+    def embed(
+        self, position_type: Union[str, None], layer: int
+    ) -> Float[Tensor, "batch_and_pos d_model"]:
         """
         Returns a dataset of embeddings at the specified position and layer.
         Useful for training classifiers on the residual stream.
         """
         assert 0 <= layer <= self.model.cfg.n_layers
-        assert position_type in self.placeholder_dict.keys(), (
+        assert position_type is None or position_type in self.placeholder_dict.keys(), (
             f"Position type {position_type} not found in {self.placeholder_dict.keys()} "
             f"for prompt type {self.prompt_type}"
         )
-        embed_position = self.placeholder_dict[position_type][-1]
+        if position_type is None:
+            embed_position = None
+        else:
+            embed_position = self.placeholder_dict[position_type][-1]
         hook, _ = get_resid_name(layer, self.model)
         _, cache = self.model.run_with_cache(
             self.prompt_tokens, return_type=None, names_filter = lambda name: hook == name
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook]
-        return out[:, embed_position, :].cpu().detach()
+        if position_type is None:
+            return einops.rearrange(
+                out, "batch pos d_model -> (batch pos) d_model"
+            ).detach().cpu()
+        return out[:, embed_position, :].detach().cpu()
     
     @classmethod
     def get_dataset(
