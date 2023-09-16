@@ -276,7 +276,8 @@ def train_classifying_direction(
             )
             return
     # write line to file
-    save_array(train_line, f"{method.value}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
+    array_path = f"{method.value}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}"
+    save_array(train_line, array_path, model)
 
     cosine_sim = safe_cosine_sim(
         train_line, 
@@ -303,3 +304,4 @@ def train_classifying_direction(
             'method', 'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
         )
     )
+    return array_path

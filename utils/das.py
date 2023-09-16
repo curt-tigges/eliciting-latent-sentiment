@@ -488,10 +488,11 @@ def train_das_subspace(
         verbose=verbose,
         **config,
     )
+    save_path = f'das_{train_type.value}_{train_pos}_layer{train_layer}'
     if directions.shape[1] == 1:
         save_array(
             directions.detach().cpu().squeeze(1).numpy(), 
-            f'das_{train_type.value}_{train_pos}_layer{train_layer}', 
+            save_path, 
             model,
         )
-    return directions
+    return directions, save_path
