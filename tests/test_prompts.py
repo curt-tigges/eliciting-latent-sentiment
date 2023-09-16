@@ -49,7 +49,19 @@ class TestCleanCorruptedCacheResults(unittest.TestCase):
         dataset = CleanCorruptedDataset(torch.tensor([[1.0], [2.0]]), torch.tensor([[1.5], [2.5]]), torch.tensor([[1.0, 1.5], [2.0, 2.5]]), ["prompt1", "prompt2"])
         corrupted_cache = ActivationCache({}, model=None)  # Assuming a mock model
         clean_cache = ActivationCache({}, model=None)  # Assuming a mock model
-        self.results = CleanCorruptedCacheResults(dataset, corrupted_cache, clean_cache, 0.5, 0.6, 0.7, 0.8)
+        self.results = CleanCorruptedCacheResults(
+            dataset, 
+            corrupted_cache, 
+            clean_cache, 
+            [0.5],
+            [0.6],
+            [0.7],
+            [0.8],
+            0.5, 
+            0.6, 
+            0.7, 
+            0.8,
+        )
 
     def test_initialization(self):
         self.assertEqual(self.results.corrupted_logit_diff, 0.5)
