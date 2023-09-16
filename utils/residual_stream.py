@@ -80,7 +80,7 @@ class ResidualStreamDataset:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         was_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(False)
-        model = model.eval().requires_grad_(False)
+        model = self.model.eval().requires_grad_(False)
         assert batch_size is not None, "run_with_cache: must specify batch size"
         if model.cfg.device != device:
             model = model.to(device)
