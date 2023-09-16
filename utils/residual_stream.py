@@ -158,7 +158,9 @@ class ResidualStreamDataset:
             valid_positions: Bool[Tensor, "batch pos"] = non_pad_mask & non_constant_mask
 
             # Step 3: Randomly sample from these positions for each batch
-            embed_position: Int[Tensor, "batch"] = torch.multinomial(valid_positions.float(), 1).squeeze()
+            embed_position: Int[Tensor, "batch"] = torch.multinomial(
+                valid_positions.float(), 1
+            ).squeeze().to(device=out.device)
             return out[torch.arange(len(out)), embed_position, :].detach().cpu()
         else:
             embed_position = self.placeholder_dict[position_type][-1]
