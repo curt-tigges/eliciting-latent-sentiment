@@ -383,16 +383,16 @@ def get_prompts(
 
 
 class CleanCorruptedDataset(torch.utils.data.Dataset):
-    clean_tokens: Float[Tensor, "batch pos"]
-    corrupted_tokens: Float[Tensor, "batch pos"]
-    answer_tokens: Float[Tensor, "batch pair correct"]
+    clean_tokens: Int[Tensor, "batch pos"]
+    corrupted_tokens: Int[Tensor, "batch pos"]
+    answer_tokens: Int[Tensor, "batch pair correct"]
 
     @typechecked
     def __init__(
         self, 
-        clean_tokens: Float[Tensor, "batch pos"], 
-        corrupted_tokens: Float[Tensor, "batch pos"],
-        answer_tokens: Float[Tensor, "batch *pair correct"],
+        clean_tokens: Int[Tensor, "batch pos"], 
+        corrupted_tokens: Int[Tensor, "batch pos"],
+        answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
     ):
         super().__init__()
