@@ -1,5 +1,6 @@
 import os
 from functools import partial
+from typing import Union
 
 import torch
 from torchtyping import TensorType as TT
@@ -82,7 +83,7 @@ def get_logit_diff(
     logits: Float[Tensor, "batch *pos vocab"],
     answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
-) -> Float[Tensor, '*batch']:
+) -> Union[Float[Tensor, "batch"], Float[Tensor, ""]]:
     """
     Gets the difference between the logits of the provided tokens 
     e.g., the correct and incorrect tokens in IOI
@@ -93,6 +94,7 @@ def get_logit_diff(
 
     Returns:
         torch.Tensor: Difference between the logits of the provided tokens.
+        May or may not have batch dimension depending on `per_prompt`.
     """
     if answer_tokens.ndim == 2:
         answer_tokens = answer_tokens.unsqueeze(1)
