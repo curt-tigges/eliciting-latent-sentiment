@@ -1,6 +1,5 @@
 FROM pytorch/pytorch:latest
-RUN pip install transformer-lens==1.6.1
-RUN pip install circuitsvis plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
+RUN pip install transformer-lens circuitsvis plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
 RUN pip install --upgrade jax jaxlib
 RUN apt-get update \
     && apt-get install -y curl

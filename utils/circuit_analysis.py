@@ -3,7 +3,6 @@ from functools import partial
 from typing import Union
 
 import torch
-from torchtyping import TensorType as TT
 from torch import Tensor
 from jaxtyping import Float, Int
 from typeguard import typechecked
@@ -369,7 +368,7 @@ def cache_to_logit_diff(
 
 # =============== PATCHING & KNOCKOUT UTILS ===============
 def patch_pos_head_vector(
-    orig_head_vector: TT["batch", "pos", "head_index", "d_head"],
+    orig_head_vector: Float[Tensor, "batch pos head_index d_head"],
     hook,
     pos,
     head_index,
@@ -394,7 +393,7 @@ def patch_pos_head_vector(
 
 
 def patch_head_vector(
-    orig_head_vector: TT["batch", "pos", "head_index", "d_head"],
+    orig_head_vector: Float[Tensor, "batch pos head_index d_head"],
     hook,
     head_index,
     patch_cache,
@@ -415,7 +414,7 @@ def patch_head_vector(
 
 
 def ablate_top_head_hook(
-    z: TT["batch", "pos", "head_index", "d_head"], hook, head_idx=0
+    z: Float[Tensor, "batch pos head_index d_head"], hook, head_idx=0
 ):
     """Hook to ablate the top head of a given layer.
 
