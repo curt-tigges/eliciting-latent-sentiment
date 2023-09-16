@@ -95,7 +95,7 @@ class ResidualStreamDataset:
             f"Running with cache: model={model.cfg.model_name}, "
             f"batch_size={batch_size}"
         )
-        for idx, prompt_tokens in enumerate(bar):
+        for idx, (prompt_tokens, ) in enumerate(bar):
             prompt_tokens = prompt_tokens.to(device)
             with torch.inference_mode():
                 # forward pass
