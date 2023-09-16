@@ -56,7 +56,7 @@ METHODS = [
     # ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
     # ClassificationMethod.MEAN_DIFF,
-    ClassificationMethod.LOGISTIC_REGRESSION,
+    # ClassificationMethod.LOGISTIC_REGRESSION,
     FittingMethod.DAS,
 ]
 PROMPT_TYPES = [
@@ -75,6 +75,16 @@ LAYERS = [
     "0", "1", "{n} // 4", "{n} // 3", "{n} // 2", 
     "2 * {n} // 3", "3 * {n} // 4", "{n} - 1", "{n}"
 ]
+BATCH_SIZES = {
+    'gpt2-small': 256,
+    'gpt2-medium': 128,
+    'gpt2-large': 64,
+    'gpt2-xl': 32,
+    'EleutherAI/pythia-160m': 128,
+    'EleutherAI/pythia-410m': 64,
+    'EleutherAI/pythia-1.4b': 32,
+    'EleutherAI/pythia-2.8b': 16,
+}
 #%%
 def get_model(name: str):
     model = HookedTransformer.from_pretrained(
@@ -113,7 +123,7 @@ def get_model(name: str):
 #         downcast=False,
 #         scaffold=ReviewScaffold.CONTINUATION,
 #         data_requires_grad=False,
-#     )
+# #     )
 #     sweep_config = {
 #         "name": f"DAS subspace dimension ({sweep_model.cfg.model_name})",
 #         "method": "grid",
@@ -129,6 +139,19 @@ def get_model(name: str):
 #     }
 #     sweep_id = wandb.sweep(sweep_config, project=train_das_subspace.__name__)
 #     wandb.agent(sweep_id, function=sweep_func)
+#%%
+# model = get_model('gpt2-small')
+# das_dirs, das_path = train_das_subspace(
+#     model, device,
+#     train_type=PromptType.TREEBANK_TRAIN, train_pos=None, train_layer=0,
+#     test_type=PromptType.TREEBANK_DEV, test_pos=None, test_layer=0,
+#     wandb_enabled=False,
+#     downcast=False,
+#     scaffold=ReviewScaffold.CONTINUATION,
+#     data_requires_grad=False,
+#     batch_size=256,
+#     epochs=1,
+# )
 #%%
 # ============================================================================ #
 # Training loop
@@ -169,7 +192,7 @@ for model_name, train_type, test_type, method in BAR:
             continue
         save_path = f"{method.value}_{train_type.value}_{train_pos}_layer{train_layer}.npy"
         if is_file(save_path, model):
-            print(f"Skipping because file already exists: {save_path}")
+            # print(f"Skipping because file already exists: {save_path}")
             continue
         if train_pos == 'ALL':
             train_pos = None
@@ -182,7 +205,10 @@ for model_name, train_type, test_type, method in BAR:
                 model, device,
                 train_type, train_pos, train_layer,
                 test_type, test_pos, test_layer,
+                scaffold=SCAFFOLD,
                 wandb_enabled=False,
+                epochs = 1 if "treebank" in train_type.value else 64,
+                batch_size=BATCH_SIZES[model_name],
             )
             print(f"Saving DAS direction to {das_path}")
             

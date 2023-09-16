@@ -205,7 +205,7 @@ class TrainingConfig:
         self.lr = config_dict.get("lr", 1e-3)
         self.weight_decay = config_dict.get("weight_decay", 0)
         self.betas = config_dict.get("betas", (0.9, 0.999))
-        self.epochs = config_dict.get("epochs", 64)
+        self.epochs = config_dict.get("epochs", 1)
         self.d_das = config_dict.get("d_das", 1)
         self.wandb_enabled = config_dict.get("wandb_enabled", True)
         self.model_name = config_dict.get("model_name", "unnamed-model")
