@@ -290,7 +290,7 @@ def train_classifying_direction(
             )
             return
     # write line to file
-    train_pos_str = train_pos if train_pos is not None else "all"
+    train_pos_str = train_pos if train_pos is not None else "ALL"
     array_path = f"{method.value}_{train_data.prompt_type.value}_{train_pos_str}_layer{train_layer}"
     save_array(train_line, array_path, model)
 

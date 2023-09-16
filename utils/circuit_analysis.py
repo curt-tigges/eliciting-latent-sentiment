@@ -82,7 +82,7 @@ def get_logit_diff(
     logits: Float[Tensor, "batch *pos vocab"],
     answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
-) -> Float[Tensor, "*batch"]:
+) -> Float[Tensor, '*batch']:
     """
     Gets the difference between the logits of the provided tokens 
     e.g., the correct and incorrect tokens in IOI

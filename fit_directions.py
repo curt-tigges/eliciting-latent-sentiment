@@ -55,7 +55,7 @@ METHODS = [
     # ClassificationMethod.KMEANS,
     # ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
-    ClassificationMethod.MEAN_DIFF,
+    # ClassificationMethod.MEAN_DIFF,
     ClassificationMethod.LOGISTIC_REGRESSION,
     FittingMethod.DAS,
 ]
@@ -71,6 +71,10 @@ PROMPT_TYPES = [
     PromptType.TREEBANK_TRAIN,
 ]
 SCAFFOLD = ReviewScaffold.CONTINUATION
+LAYERS = [
+    "0", "1", "{n} // 4", "{n} // 3", "{n} // 2", 
+    "2 * {n} // 3", "3 * {n} // 4", "{n} - 1", "{n}"
+]
 #%%
 def get_model(name: str):
     model = HookedTransformer.from_pretrained(
@@ -146,12 +150,13 @@ for model_name, train_type, test_type, method in BAR:
     if 'test' in train_type.value:
         # Don't train on test sets
         continue
-    train_placeholders = train_type.get_placeholders() + ['ALL']
-    test_placeholders = test_type.get_placeholders() + ['ALL']
+    train_placeholders = train_type.get_placeholders() + ["ALL"]
+    test_placeholders = test_type.get_placeholders() + ["ALL"]
+    layers = [eval(layer.format(n=model.cfg.n_layers)) for layer in LAYERS]
     placeholders_layers = list(itertools.product(
         train_placeholders, 
         test_placeholders,
-        range(model.cfg.n_layers + 1)
+        layers
     ))
     assert len(placeholders_layers) > 0
     kwargs = dict()
@@ -166,6 +171,10 @@ for model_name, train_type, test_type, method in BAR:
         if is_file(save_path, model):
             print(f"Skipping because file already exists: {save_path}")
             continue
+        if train_pos == 'ALL':
+            train_pos = None
+        if test_pos == "ALL":
+            test_pos = None
         if method == FittingMethod.DAS:
             if train_type != test_type or train_layer != test_layer:
                 continue

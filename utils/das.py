@@ -488,7 +488,7 @@ def train_das_subspace(
         verbose=verbose,
         **config,
     )
-    train_pos = train_pos if train_pos is not None else 'all'
+    train_pos = train_pos if train_pos is not None else 'ALL'
     save_path = f'das_{train_type.value}_{train_pos}_layer{train_layer}'
     if directions.shape[1] == 1:
         save_array(
