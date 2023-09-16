@@ -72,7 +72,7 @@ class TestDASFunctions(unittest.TestCase):
             device=device,
         ).train()
         model.name = 'test'
-        direction = train_das_subspace(
+        direction, save_path = train_das_subspace(
             model, device,
             PromptType.SIMPLE, 'ADJ', 0,
             PromptType.SIMPLE, 'ADJ', 0,
@@ -80,6 +80,7 @@ class TestDASFunctions(unittest.TestCase):
             epochs=1,
         )
         self.assertTrue(isinstance(direction, torch.Tensor))
+        self.assertTrue(isinstance(save_path, str))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@ from torch.utils.data import DataLoader
 import torch
 from transformer_lens import ActivationCache
 import unittest
+
+import typeguard
 from utils.prompts import CleanCorruptedDataset, CleanCorruptedCacheResults
 
 
@@ -9,16 +11,20 @@ class TestCleanCorruptedDataset(unittest.TestCase):
 
     def setUp(self):
         # Sample data for testing
-        self.clean_tokens = torch.tensor([[1.0], [2.0]])
-        self.corrupted_tokens = torch.tensor([[1.5], [2.5]])
-        self.answer_tokens = torch.tensor([[1.0, 1.5], [2.0, 2.5]])
+        self.clean_tokens = torch.tensor([[1], [2]], dtype=torch.int32)
+        self.corrupted_tokens = torch.tensor([[3], [5]], dtype=torch.int32)
+        self.answer_tokens = torch.tensor([[2, 3], [4, 5]], dtype=torch.int32)
         self.all_prompts = ["prompt1", "prompt2"]
-        self.dataset = CleanCorruptedDataset(self.clean_tokens, self.corrupted_tokens, self.answer_tokens, self.all_prompts)
+        self.dataset = CleanCorruptedDataset(
+            self.clean_tokens, self.corrupted_tokens, self.answer_tokens, self.all_prompts
+        )
 
     def test_initialization(self):
         # Test if the assertion works when shapes don't match
         with self.assertRaises(AssertionError):
-            CleanCorruptedDataset(self.clean_tokens, torch.tensor([[1.5]]), self.answer_tokens, self.all_prompts)
+            CleanCorruptedDataset(
+                self.clean_tokens, torch.tensor([[3]]), self.answer_tokens, self.all_prompts
+            )
 
     def test_len(self):
         self.assertEqual(len(self.dataset), 2)

@@ -395,6 +395,8 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
     ):
+        assert len(clean_tokens) == len(corrupted_tokens)
+        assert len(clean_tokens) == len(answer_tokens)
         super().__init__()
         if answer_tokens.ndim == 2:
             answer_tokens = answer_tokens.unsqueeze(1)

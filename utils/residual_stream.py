@@ -1,11 +1,13 @@
-from typing import List, Tuple, Union
+from typing import Callable, List, Tuple, Union
 import einops
 from jaxtyping import Int, Float, Bool
 from typeguard import typechecked
 import torch
 from torch import Tensor
-from transformer_lens import HookedTransformer
+from torch.utils.data import DataLoader, TensorDataset
+from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.utils import get_act_name
+from tqdm.notebook import tqdm
 from utils.prompts import ReviewScaffold, get_dataset, PromptType
 
 
@@ -54,9 +56,81 @@ class ResidualStreamDataset:
     def __eq__(self, other: object) -> bool:
         return set(self.prompt_strings) == set(other.prompt_strings)
     
+    def get_dataloader(self, batch_size: int) -> torch.utils.data.DataLoader:
+        assert batch_size is not None, "get_dataloader: must specify batch size"
+        token_answer_dataset = TensorDataset(
+            self.prompt_tokens, 
+        )
+        token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
+        return token_answer_dataloader
+    
+    def run_with_cache(
+        self, 
+        names_filter: Callable, 
+        batch_size: int,
+        requires_grad: bool = True,
+        device: torch.device = None,
+        disable_tqdm: bool = None,
+        dtype: torch.dtype = torch.float32,
+    ):
+        """
+        Note that variable names here assume denoising, i.e. corrupted -> clean
+        """
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        was_grad_enabled = torch.is_grad_enabled()
+        torch.set_grad_enabled(False)
+        model = model.eval().requires_grad_(False)
+        assert batch_size is not None, "run_with_cache: must specify batch size"
+        if model.cfg.device != device:
+            model = model.to(device)
+        act_dict = dict()
+        dataloader = self.get_dataloader(batch_size=batch_size)
+        buffer_initialized = False
+        total_samples = len(dataloader.dataset)
+        if disable_tqdm is None:
+            disable_tqdm = len(dataloader) > 1
+        bar = tqdm(dataloader, disable=disable_tqdm)
+        bar.set_description(
+            f"Running with cache: model={model.cfg.model_name}, "
+            f"batch_size={batch_size}"
+        )
+        for idx, prompt_tokens in enumerate(bar):
+            prompt_tokens = prompt_tokens.to(device)
+            with torch.inference_mode():
+                # forward pass
+                _, fwd_cache = model.run_with_cache(
+                    prompt_tokens, names_filter=names_filter, return_type=None
+                )
+                fwd_cache.to('cpu')
+
+                # Initialise the buffer tensors if necessary
+                if not buffer_initialized:
+                    for k, v in fwd_cache.items():
+                        act_dict[k] = torch.zeros(
+                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                        )
+                    buffer_initialized = True
+
+                # Fill the buffer tensors
+                start_idx = idx * batch_size
+                end_idx = start_idx + prompt_tokens.size(0)
+                for k, v in fwd_cache.items():
+                    act_dict[k][start_idx:end_idx] = v
+        act_cache = ActivationCache(
+            {k: v.detach().clone().requires_grad_(requires_grad) for k, v in act_dict.items()}, 
+            model=model
+        )
+        act_cache.to('cpu')
+        torch.set_grad_enabled(was_grad_enabled)
+        model = model.train().requires_grad_(requires_grad)
+
+        return _, act_cache
+    
     @typechecked
     def embed(
-        self, position_type: Union[str, None], layer: int, seed: int = 0,
+        self, position_type: Union[str, None], layer: int, 
+        batch_size: int = 64, seed: int = 0,
     ) -> Float[Tensor, "batch d_model"]:
         """
         Returns a dataset of embeddings at the specified position and layer.
@@ -69,8 +143,8 @@ class ResidualStreamDataset:
             f"for prompt type {self.prompt_type}"
         )
         hook, _ = get_resid_name(layer, self.model)
-        _, cache = self.model.run_with_cache(
-            self.prompt_tokens, return_type=None, names_filter = lambda name: hook == name
+        _, cache = self.run_with_cache(
+            names_filter = lambda name: hook == name, batch_size=batch_size
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook]
         if position_type is None:

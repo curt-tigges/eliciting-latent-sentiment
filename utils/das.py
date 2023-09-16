@@ -449,7 +449,7 @@ def train_das_subspace(
     downcast: bool = False, scaffold: ReviewScaffold = None,
     data_requires_grad: bool = False, verbose: bool = False,
     **config_arg,
-):
+) -> Tuple[Float[Tensor, "batch d_model"], str]:
     """
     Entrypoint to be used in directional patching experiments
     Given training/validation datasets, train a DAS subspace.
