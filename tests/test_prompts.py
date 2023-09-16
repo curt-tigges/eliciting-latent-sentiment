@@ -46,7 +46,11 @@ class TestCleanCorruptedCacheResults(unittest.TestCase):
 
     def setUp(self):
         # Sample data for testing
-        dataset = CleanCorruptedDataset(torch.tensor([[1.0], [2.0]]), torch.tensor([[1.5], [2.5]]), torch.tensor([[1.0, 1.5], [2.0, 2.5]]), ["prompt1", "prompt2"])
+        dataset = CleanCorruptedDataset(
+            torch.tensor([[1], [2]], dtype=torch.int), 
+            torch.tensor([[3], [5]], dtype=torch.int), 
+            torch.tensor([[2, 3], [4, 5]], dtype=torch.int), 
+            ["prompt1", "prompt2"])
         corrupted_cache = ActivationCache({}, model=None)  # Assuming a mock model
         clean_cache = ActivationCache({}, model=None)  # Assuming a mock model
         self.results = CleanCorruptedCacheResults(
