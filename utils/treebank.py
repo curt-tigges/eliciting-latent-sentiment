@@ -121,7 +121,7 @@ def apply_scaffold_to_prompts(prompts: List[str], scaffold: str):
 
 def construct_answer_tokens(
     scaffold: str, half_length: int, model: HookedTransformer
-) -> Float[Tensor, "half_length 2"]:
+) -> Float[Tensor, "half_length 1 2"]:
     if scaffold == ReviewScaffold.PLAIN:
         pattern = torch.tensor([[0, 1], [1, 0]])
     elif scaffold == ReviewScaffold.CLASSIFICATION:
@@ -138,6 +138,7 @@ def construct_answer_tokens(
         raise ValueError(f"Invalid scaffold: {scaffold}")
     out = pattern.repeat(half_length, 1)
     assert out.shape == (half_length * 2, 2)
+    out = out.unsqueeze(1)
     return out
     
 

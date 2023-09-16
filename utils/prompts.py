@@ -383,31 +383,25 @@ def get_prompts(
 
 
 class CleanCorruptedDataset(torch.utils.data.Dataset):
+    clean_tokens: Float[Tensor, "batch pos"]
+    corrupted_tokens: Float[Tensor, "batch pos"]
+    answer_tokens: Float[Tensor, "batch pair correct"]
 
+    @typechecked
     def __init__(
         self, 
         clean_tokens: Float[Tensor, "batch pos"], 
         corrupted_tokens: Float[Tensor, "batch pos"],
-        answer_tokens: Float[Tensor, "batch pair correct"],
+        answer_tokens: Float[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
     ):
         super().__init__()
+        if answer_tokens.ndim == 2:
+            answer_tokens = answer_tokens.unsqueeze(1)
         self.clean_tokens = clean_tokens
         self.corrupted_tokens = corrupted_tokens
         self.answer_tokens = answer_tokens
         self.all_prompts = all_prompts
-        assert self.clean_tokens.shape == self.corrupted_tokens.shape, (
-            f"Clean tokens shape {self.clean_tokens.shape} "
-            f"does not match corrupted tokens shape {self.corrupted_tokens.shape}"
-        )
-        assert len(answer_tokens) == len(clean_tokens), (
-            f"Answer tokens length {len(answer_tokens)} "
-            f"does not match clean tokens length {len(clean_tokens)}"
-        )
-        assert len(all_prompts) == len(clean_tokens), (
-            f"Prompt list length {len(all_prompts)} "
-            f"does not match clean tokens length {len(clean_tokens)}"
-        )
 
     def get_subset(self, indices: List[int]):
         return CleanCorruptedDataset(
