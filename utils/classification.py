@@ -156,8 +156,8 @@ def _fit(
             vh_train[0, :] / np.linalg.norm(vh_train[0, :])
         ) * np.sign(s_train[0])
     elif method == ClassificationMethod.MEAN_DIFF:
-        is_pos = train_data.binary_labels == 1, 
-        is_neg = train_data.binary_labels == 0,
+        is_pos = train_data.binary_labels == 1 
+        is_neg = train_data.binary_labels == 0
         train_pos_embeddings = train_embeddings[is_pos, :]
         train_neg_embeddings = train_embeddings[is_neg, :]
         line: Float[np.ndarray, "d_model"]  = (
@@ -233,8 +233,8 @@ def _fit_logistic_regression(
     test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
         test_pos, test_layer
     )
-    train_labels = train_data.binary_labels,
-    test_labels = test_data.binary_labels,
+    train_labels = train_data.binary_labels
+    test_labels = test_data.binary_labels
     lr = LogisticRegression(
         random_state=random_state,
         solver=solver,

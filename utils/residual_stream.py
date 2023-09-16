@@ -85,9 +85,10 @@ class ResidualStreamDataset:
 
             # Step 3: Randomly sample from these positions for each batch
             embed_position: Int[Tensor, "batch"] = torch.multinomial(valid_positions.float(), 1).squeeze()
+            return out[torch.arange(len(out)), embed_position, :].detach().cpu()
         else:
             embed_position = self.placeholder_dict[position_type][-1]
-        return out[torch.arange(len(out)), embed_position, :].detach().cpu()
+            return out[:, embed_position, :].detach().cpu()
     
     @classmethod
     def get_dataset(
