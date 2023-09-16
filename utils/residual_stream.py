@@ -56,31 +56,38 @@ class ResidualStreamDataset:
     
     @typechecked
     def embed(
-        self, position_type: Union[str, None], layer: int
-    ) -> Float[Tensor, "batch_and_pos d_model"]:
+        self, position_type: Union[str, None], layer: int, seed: int = 0,
+    ) -> Float[Tensor, "batch d_model"]:
         """
         Returns a dataset of embeddings at the specified position and layer.
         Useful for training classifiers on the residual stream.
         """
+        torch.manual_seed(seed)
         assert 0 <= layer <= self.model.cfg.n_layers
         assert position_type is None or position_type in self.placeholder_dict.keys(), (
             f"Position type {position_type} not found in {self.placeholder_dict.keys()} "
             f"for prompt type {self.prompt_type}"
         )
-        if position_type is None:
-            embed_position = None
-        else:
-            embed_position = self.placeholder_dict[position_type][-1]
         hook, _ = get_resid_name(layer, self.model)
         _, cache = self.model.run_with_cache(
             self.prompt_tokens, return_type=None, names_filter = lambda name: hook == name
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook]
         if position_type is None:
-            return einops.rearrange(
-                out, "batch pos d_model -> (batch pos) d_model"
-            ).detach().cpu()
-        return out[:, embed_position, :].detach().cpu()
+            # Step 1: Identify non-zero positions in the tensor
+            non_pad_mask: Bool[Tensor, "batch pos"] = self.prompt_tokens != self.model.tokenizer.pad_token_id
+
+            # Step 2: Check if values at these positions are not constant across batches
+            non_constant_mask: Bool[Tensor, "pos"] = (
+                self.prompt_tokens != self.prompt_tokens[0]
+            ).any(dim=0)
+            valid_positions: Bool[Tensor, "batch pos"] = non_pad_mask & non_constant_mask
+
+            # Step 3: Randomly sample from these positions for each batch
+            embed_position: Int[Tensor, "batch"] = torch.multinomial(valid_positions.float(), 1).squeeze()
+        else:
+            embed_position = self.placeholder_dict[position_type][-1]
+        return out[torch.arange(len(out)), embed_position, :].detach().cpu()
     
     @classmethod
     def get_dataset(

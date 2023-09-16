@@ -79,8 +79,12 @@ def _fit(
     n_components: int = None,
     method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
-    train_embeddings: Float[Tensor, "batch_and_pos d_model"] = train_data.embed(train_pos, train_layer)
-    test_embeddings: Float[Tensor, "batch_and_pos d_model"] = test_data.embed(test_pos, test_layer)
+    train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
+        train_pos, train_layer
+    )
+    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
+        test_pos, test_layer
+    )
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
@@ -94,7 +98,7 @@ def _fit(
         kmeans.fit(train_pcs)
         test_km_labels = kmeans.predict(test_pcs)
     elif method == ClassificationMethod.SVD:
-        u_train: Float[np.ndarray, "batch_and_pos s_vector"]
+        u_train: Float[np.ndarray, "batch s_vector"]
         s_train: Float[np.ndarray, "s_vector"]
         vh_train: Float[np.ndarray, "s_vector d_model"]
         u_train, s_train, vh_train = np.linalg.svd(train_embeddings.numpy())
@@ -152,16 +156,8 @@ def _fit(
             vh_train[0, :] / np.linalg.norm(vh_train[0, :])
         ) * np.sign(s_train[0])
     elif method == ClassificationMethod.MEAN_DIFF:
-        is_pos = einops.repeat(
-            train_data.binary_labels == 1, 
-            "batch -> (batch pos)", 
-            pos=len(train_embeddings) // len(train_data.binary_labels)
-        )
-        is_neg = einops.repeat(
-            train_data.binary_labels == 0,
-            "batch -> (batch pos)",
-            pos=len(train_embeddings) // len(train_data.binary_labels)
-        )
+        is_pos = train_data.binary_labels == 1, 
+        is_neg = train_data.binary_labels == 0,
         train_pos_embeddings = train_embeddings[is_pos, :]
         train_neg_embeddings = train_embeddings[is_neg, :]
         line: Float[np.ndarray, "d_model"]  = (
@@ -231,18 +227,14 @@ def _fit_logistic_regression(
     max_iter: int = 1000,
     tol: float = 1e-4,  
 ):
-    train_embeddings = train_data.embed(train_pos, train_layer)
-    test_embeddings = test_data.embed(test_pos, test_layer)
-    train_labels = einops.repeat(
-        train_data.binary_labels,
-        "batch -> (batch pos)",
-        pos=len(train_embeddings) // len(train_data.binary_labels)
+    train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
+        train_pos, train_layer
     )
-    test_labels = einops.repeat(
-        test_data.binary_labels,
-        "batch -> (batch pos)",
-        pos=len(test_embeddings) // len(test_data.binary_labels)
+    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
+        test_pos, test_layer
     )
+    train_labels = train_data.binary_labels,
+    test_labels = test_data.binary_labels,
     lr = LogisticRegression(
         random_state=random_state,
         solver=solver,
