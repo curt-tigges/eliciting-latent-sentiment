@@ -192,7 +192,8 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
 def save_html(
     html_data: Union[go.Figure, RenderedHTML, Styler],
     label: str, 
-    model: Union[HookedTransformer, str]
+    model: Union[HookedTransformer, str],
+    local: bool = True,
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -203,8 +204,9 @@ def save_html(
     if isinstance(html_data, go.Figure):
         html_data.write_html(path)
     elif isinstance(html_data, RenderedHTML):
+        html_str = html_data.local_src if local else html_data.cdn_src
         with open(path, 'w') as f:
-            f.write(str(html_data))
+            f.write(html_str)
     elif isinstance(html_data, Styler):
         html = html_data.to_html()
         html = add_styling(html)
