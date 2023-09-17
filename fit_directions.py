@@ -76,10 +76,10 @@ LAYERS = [
     "2 * {n} // 3", "3 * {n} // 4", "{n} - 1", "{n}"
 ]
 BATCH_SIZES = {
-    'gpt2-small': 256,
-    'gpt2-medium': 128,
-    'gpt2-large': 64,
-    'gpt2-xl': 32,
+    'gpt2-small': 128,
+    'gpt2-medium': 64,
+    'gpt2-large': 16,
+    'gpt2-xl': 8,
     'EleutherAI/pythia-160m': 128,
     'EleutherAI/pythia-410m': 64,
     'EleutherAI/pythia-1.4b': 32,
@@ -149,7 +149,7 @@ def get_model(name: str):
 #     downcast=False,
 #     scaffold=ReviewScaffold.CONTINUATION,
 #     data_requires_grad=False,
-#     batch_size=256,
+#     batch_size=8,
 #     epochs=1,
 # )
 #%%
@@ -169,6 +169,7 @@ for model_name, train_type, test_type, method in BAR:
         f"method:{method.value}"
     )
     if model is None or model.name != model_name:
+        del model
         model = get_model(model_name)
     if 'test' in train_type.value:
         # Don't train on test sets
@@ -185,8 +186,15 @@ for model_name, train_type, test_type, method in BAR:
     kwargs = dict()
     if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
         kwargs['n_components'] = 2
-    for train_pos, test_pos, train_layer in placeholders_layers:
+    layers_bar = tqdm(placeholders_layers, leave=False)
+    for train_pos, test_pos, train_layer in layers_bar:
         test_layer = train_layer # Don't train/eval on different layers
+        layers_bar.set_description(
+            f"train_pos:{train_pos},"
+            f"test_pos:{test_pos},"
+            f"train_layer:{train_layer},"
+            f"test_layer:{test_layer}"
+        )
         if train_pos == 'VRB':
             # Don't train on verbs as sample size is too small
             continue
@@ -201,7 +209,7 @@ for model_name, train_type, test_type, method in BAR:
         if method == FittingMethod.DAS:
             if train_type != test_type or train_layer != test_layer:
                 continue
-            das_dirs, das_path = train_das_subspace(
+            _, das_path = train_das_subspace(
                 model, device,
                 train_type, train_pos, train_layer,
                 test_type, test_pos, test_layer,
