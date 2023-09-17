@@ -275,6 +275,8 @@ def _plot_topk(
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, dataloader, model, all_activations)
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
+        for incl in inclusions:
+            model.to_single_token(incl)
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, dataloader, model, all_activations)
         assert mask.sum() >= k, (
             f"Only {mask.sum()} positions match the inclusions, but {k} are required"

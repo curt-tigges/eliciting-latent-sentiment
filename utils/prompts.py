@@ -136,6 +136,7 @@ class PromptType(Enum):
     TREEBANK_TRAIN = "treebank_train"
     TREEBANK_DEV = "treebank_dev"
     TREEBANK_TEST = "treebank_test"
+    NONE = "none"
 
     def get_format_string(self):
         if self in (PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV):

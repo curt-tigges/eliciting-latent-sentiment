@@ -394,6 +394,8 @@ def get_das_dataset(
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
+    if prompt_type is None or prompt_type == PromptType.NONE:
+        return DataLoader([]), None, None
     clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type, scaffold=scaffold)
     if max_dataset_size is not None:
         clean_corrupt_data = clean_corrupt_data.get_subset(
