@@ -6,7 +6,7 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import numpy as np
 import einops
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 import random
 import pandas as pd
 import plotly.express as px
@@ -214,6 +214,7 @@ for model_name, train_type, method in BAR:
             )
             if train_test_discrepancy:
                 continue
+            print("Calling train_das_subspace...")
             _, das_path = train_das_subspace(
                 model, device,
                 train_type, train_pos, train_layer,
@@ -224,7 +225,8 @@ for model_name, train_type, method in BAR:
                 batch_size=BATCH_SIZES[model_name],
             )
             print(f"Saving DAS direction to {das_path}")
-            
+            torch.cuda.empty_cache()
+            print("Emptied CUDA cache")
         else:
             trainset = ResidualStreamDataset.get_dataset(
                 model, device, prompt_type=train_type, scaffold=SCAFFOLD

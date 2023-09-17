@@ -7,7 +7,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.utils import get_act_name
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 from utils.prompts import ReviewScaffold, get_dataset, PromptType
 
 

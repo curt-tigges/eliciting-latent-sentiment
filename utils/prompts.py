@@ -10,7 +10,7 @@ from typeguard import typechecked
 import einops
 from enum import Enum
 import re
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 from utils.store import load_pickle
 from utils.circuit_analysis import get_logit_diff, get_prob_diff
 

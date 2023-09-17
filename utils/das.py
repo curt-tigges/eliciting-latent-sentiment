@@ -14,7 +14,7 @@ from typing import Callable, Union, List, Tuple
 from transformer_lens.hook_points import HookPoint
 from transformer_lens import HookedTransformer, ActivationCache
 import wandb
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 from utils.circuit_analysis import get_logit_diff, logit_diff_denoising
 from utils.prompts import PromptType, get_dataset
 from utils.residual_stream import get_resid_name
@@ -238,6 +238,7 @@ def fit_rotation(
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
     """
+    torch.cuda.empty_cache()
     loss_context = autocast() if downcast else nullcontext()
     scaler = GradScaler() if downcast else None
     if device != model.cfg.device:
@@ -340,6 +341,7 @@ def fit_rotation(
                 wandb.log({"training_loss": scaled_loss.detach().item()}, step=step)
             epoch_train_loss += scaled_loss.detach().item()
         rotation_module.eval()
+        torch.cuda.empty_cache()
         with torch.inference_mode():
             test_bar = tqdm(testloader, disable=config.epochs > 1)
             test_bar.set_description(
@@ -456,6 +458,7 @@ def train_das_subspace(
     Entrypoint to be used in directional patching experiments
     Given training/validation datasets, train a DAS subspace.
     """
+    torch.cuda.empty_cache()
     if data_requires_grad:
         warnings.warn("data_requires_grad is True. This is not recommended.")
     trainloader, loss_fn, train_position = get_das_dataset(
