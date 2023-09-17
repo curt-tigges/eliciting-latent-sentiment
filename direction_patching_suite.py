@@ -1,5 +1,7 @@
 #%%
+import glob
 import itertools
+import os
 import einops
 import re
 from fancy_einsum import einsum
@@ -19,8 +21,8 @@ from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
-from utils.circuit_analysis import get_logit_diff, get_prob_diff, create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
-from utils.store import save_array, load_array, save_html, to_csv
+from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
+from utils.store import save_array, load_array, save_html, to_csv, get_model_name
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
@@ -29,9 +31,9 @@ pio.renderers.default = "notebook"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
     # 'gpt2-small',
-    'gpt2-medium',
-    'gpt2-large',
-    'gpt2-xl',
+    # 'gpt2-medium',
+    # 'gpt2-large',
+    # 'gpt2-xl',
     'EleutherAI/pythia-160m',
     'EleutherAI/pythia-410m',
     'EleutherAI/pythia-1.4b',
@@ -98,15 +100,29 @@ def zero_pad_layer_string(s: str) -> str:
 
 #%% # Direction loading
 def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List[np.ndarray], List[str]]:
-    n_layers = model.cfg.n_layers + 1
-    direction_labels = (
+    model_name = get_model_name(model)
+    direction_globs = [
+        'logistic_regression_treebank*.npy',
+        'das_treebank*.npy',
+    ]
+    direction_paths = [
+        path
+        for glob_str in direction_globs
+        for path in glob.glob(os.path.join('data', model_name, glob_str))
+    ]
+    direction_labels = [os.path.split(path)[-1] for path in direction_paths]
+    direction_labels = sorted(direction_labels)
+    del direction_paths
+    # direction_labels = (
         # [f'kmeans_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         # [f'pca2_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
         # [f'svd_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'mean_diff_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'das_simple_train_ADJ_layer{l}' for l in range(n_layers)]
-    )
+        # [f'mean_diff_simple_train_ADJ_layer{l}' for l in range(lb, ub)] +
+        # [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(lb, ub)] +
+        # [f'das_simple_train_ADJ_layer{l}' for l in range(lb, ub)] +
+        # [f'logistic_regression_treebank_train_None_layer{l}' for l in range(lb, ub)] +
+        # [f'das_treebank_train_None_layer{l}' for l in range(lb, ub)] 
+    # )
     directions = [
         load_array(label, model) for label in direction_labels
     ]
@@ -254,7 +270,7 @@ def get_results_for_direction_and_position(
         names_filter=names_filter,
         batch_size=batch_size,
         device=device,
-        disable_tqdm=False,
+        disable_tqdm=True,
     )
     example_prompt = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     if position == 'ALL':
@@ -320,7 +336,7 @@ def get_results_for_metric(
     )
     results = pd.DataFrame(index=direction_labels, dtype=float)
     for prompt_type, (direction_label, direction) in bar:
-        bar.set_description(f"{prompt_type.value} {direction_label}")
+        bar.set_description(f"{prompt_type.value} {direction_label} batch size {batch_size}")
         placeholders = prompt_type.get_placeholders() + ['ALL']
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
@@ -379,17 +395,17 @@ model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
 )
 BATCH_SIZES = {
-    "gpt2-small": 128,
-    "gpt2-medium": 16,
-    "gpt2-large": 32,
-    "gpt2-xl": 16,
-    "EleutherAI/pythia-160m": 128,
-    "EleutherAI/pythia-410m": 64,
-    "EleutherAI/pythia-1.4b": 32,
-    "EleutherAI/pythia-2.8b": 16,
+    "gpt2-small": 1024,
+    "gpt2-medium": 512,
+    "gpt2-large": 256,
+    "gpt2-xl": 256,
+    "EleutherAI/pythia-160m": 1024,
+    "EleutherAI/pythia-410m": 512,
+    "EleutherAI/pythia-1.4b": 256,
+    "EleutherAI/pythia-2.8b": 256,
 }
 model = None
-device = 'cpu'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 for model_name, metric, use_heads in model_metric_bar:
     batch_size = BATCH_SIZES[model_name]
     if use_heads and model_name not in HEADS:
