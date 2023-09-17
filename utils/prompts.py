@@ -487,7 +487,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_dict = dict()
         clean_dict = dict()
         if disable_tqdm is None:
-            disable_tqdm = len(dataloader) > 1
+            disable_tqdm = len(dataloader) == 1
         bar = tqdm(dataloader, disable=disable_tqdm)
         bar.set_description(
             f"Running with cache: model={model.cfg.model_name}, "

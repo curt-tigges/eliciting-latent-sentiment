@@ -464,12 +464,15 @@ def train_das_subspace(
         scaffold=scaffold, device=device, requires_grad=data_requires_grad,
         verbose=verbose,
     )
-    testloader, loss_fn_val, test_position = get_das_dataset(
-        test_type, position=test_pos, layer=test_layer, model=model,
-        batch_size=batch_size, max_dataset_size=max_dataset_size,
-        scaffold=scaffold, device=device, requires_grad=data_requires_grad,
-        verbose=verbose,
-    )
+    if test_type != train_type or test_pos != train_pos or test_layer != train_layer:
+        testloader, loss_fn_val, test_position = get_das_dataset(
+            test_type, position=test_pos, layer=test_layer, model=model,
+            batch_size=batch_size, max_dataset_size=max_dataset_size,
+            scaffold=scaffold, device=device, requires_grad=data_requires_grad,
+            verbose=verbose,
+        )
+    else:
+        testloader, loss_fn_val, test_position = trainloader, loss_fn, train_position
     config = dict(
         train_layer=train_layer,
         train_position=train_position,
