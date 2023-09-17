@@ -138,8 +138,16 @@ class PromptType(Enum):
     TREEBANK_TEST = "treebank_test"
     NONE = "none"
 
+    def is_treebank(self):
+        return self in [
+            PromptType.TREEBANK_TRAIN,
+            PromptType.TREEBANK_DEV,
+            PromptType.TREEBANK_TEST,
+            PromptType.NONE,
+        ]
+
     def get_format_string(self):
-        if self in (PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV):
+        if self.is_treebank():
             return None
         prompt_strings = {
             PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
@@ -171,7 +179,7 @@ class PromptType(Enum):
         '''
         Example output: ['ADJ', 'VRB']
         '''
-        if self in (PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV):
+        if self.is_treebank():
             return []
         formatter = self.get_format_string()
         return extract_placeholders(formatter)
@@ -183,7 +191,7 @@ class PromptType(Enum):
         Handles whether the placeholder is a single token or multi-token.
         Example output: {'ADJ': [4, 5], 'VRB': [8]}
         '''
-        if self in (PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV):
+        if self.is_treebank():
             return {}
         format_string = self.get_format_string()
         format_idx = 0
