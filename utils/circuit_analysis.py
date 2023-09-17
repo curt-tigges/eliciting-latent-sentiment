@@ -77,6 +77,7 @@ def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
 
 
 # =============== METRIC UTILS ===============
+@typechecked
 def get_logit_diff(
     logits: Float[Tensor, "batch *pos vocab"],
     answer_tokens: Int[Tensor, "batch *n_pairs 2"], 

@@ -1,6 +1,6 @@
 FROM pytorch/pytorch:latest
 RUN pip install transformer-lens circuitsvis plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
-RUN pip install --upgrade jax jaxlib
+RUN pip install typeguard==2.13.3
 RUN apt-get update \
     && apt-get install -y curl
 
