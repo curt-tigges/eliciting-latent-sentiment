@@ -1,7 +1,7 @@
 #%%
 import yaml
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 import numpy as np
@@ -42,12 +42,12 @@ from utils.treebank import ReviewScaffold
 # model loading
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODELS = [
-    'gpt2-small',
-    'gpt2-medium',
-    'gpt2-large',
-    'gpt2-xl',
-    'EleutherAI/pythia-160m',
-    'EleutherAI/pythia-410m',
+    # 'gpt2-small',
+    # 'gpt2-medium',
+    # 'gpt2-large',
+    # 'gpt2-xl',
+    # 'EleutherAI/pythia-160m',
+    # 'EleutherAI/pythia-410m',
     'EleutherAI/pythia-1.4b',
     'EleutherAI/pythia-2.8b',
 ]
@@ -78,7 +78,7 @@ LAYERS = [
 BATCH_SIZES = {
     'gpt2-small': 128,
     'gpt2-medium': 64,
-    'gpt2-large': 16,
+    'gpt2-large': 32,
     'gpt2-xl': 8,
     'EleutherAI/pythia-160m': 128,
     'EleutherAI/pythia-410m': 64,
@@ -157,11 +157,12 @@ def get_model(name: str):
 # Training loop
 
 BAR = tqdm(
-    itertools.product(MODELS, PROMPT_TYPES, PROMPT_TYPES, METHODS),
-    total=len(PROMPT_TYPES) ** 2 * len(MODELS) * len(METHODS),
+    itertools.product(MODELS, PROMPT_TYPES, METHODS),
+    total=len(PROMPT_TYPES) * len(MODELS) * len(METHODS),
 )
 model = None
-for model_name, train_type, test_type, method in BAR:
+for model_name, train_type, method in BAR:
+    test_type = PromptType.NONE
     BAR.set_description(
         f"model:{model_name},"
         f"trainset:{train_type.value},"
@@ -200,14 +201,18 @@ for model_name, train_type, test_type, method in BAR:
             continue
         save_path = f"{method.value}_{train_type.value}_{train_pos}_layer{train_layer}.npy"
         if is_file(save_path, model):
-            # print(f"Skipping because file already exists: {save_path}")
+            print(f"Skipping because file already exists: {save_path}")
             continue
         if train_pos == 'ALL':
             train_pos = None
         if test_pos == "ALL":
             test_pos = None
         if method == FittingMethod.DAS:
-            if train_type != test_type or train_layer != test_layer:
+            train_test_discrepancy = test_type != PromptType.NONE and (
+                train_type != test_type or
+                train_layer != test_layer
+            )
+            if train_test_discrepancy:
                 continue
             _, das_path = train_das_subspace(
                 model, device,
