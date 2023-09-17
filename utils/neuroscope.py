@@ -173,6 +173,7 @@ def plot_neuroscope(
         first_dimension_name="Layer (resid_pre)",
         second_dimension_name="Model",
         second_dimension_labels=[model.cfg.model_name],
+        first_dimension_default=1,
     )
 
 

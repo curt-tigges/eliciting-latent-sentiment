@@ -1,6 +1,7 @@
 FROM pytorch/pytorch:latest
-RUN pip install transformer-lens circuitsvis plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
+RUN pip install transformer-lens plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
 RUN pip install typeguard==2.13.3
+RUN pip install -e CircuitsVis/python
 RUN apt-get update \
     && apt-get install -y curl
 

@@ -1,0 +1,3 @@
+[submodule "CircuitsVis"]
+	path = CircuitsVis
+	url = https://github.com/ojh31/CircuitsVis.git
