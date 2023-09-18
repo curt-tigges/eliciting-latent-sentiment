@@ -14,6 +14,24 @@ from datasets import dataset_dict
 import imgkit
 
 
+def extract_layer_from_string(s: str) -> int:
+    # Find numbers that directly follow the text "layer"
+    match = re.search(r'(?<=layer)\d+', s)
+    if match:
+        number = match.group()
+        return int(number)
+    else:
+        return None
+
+def zero_pad_layer_string(s: str) -> str:
+    # Find numbers that directly follow the text "layer"
+    number = extract_layer_from_string(s)
+    if number is not None:
+        # Replace the original number with the zero-padded version
+        s = s.replace(f'layer{number}', f'layer{number:02d}')
+    return s
+
+
 def add_styling(html):
     # Extract the table ID from the HTML using regex
     table_id_match = re.search(r'<table id="([^"]+)">', html)
