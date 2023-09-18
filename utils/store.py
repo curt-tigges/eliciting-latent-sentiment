@@ -11,6 +11,7 @@ from pandas.io.formats.style import Styler
 import re
 import pickle
 from datasets import dataset_dict
+import imgkit
 
 
 def add_styling(html):
@@ -194,6 +195,7 @@ def save_html(
     label: str, 
     model: Union[HookedTransformer, str],
     local: bool = True,
+    static: bool = False,
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -212,6 +214,9 @@ def save_html(
         html = add_styling(html)
         with open(path, 'w') as f:
             f.write(html)
+    if static:
+        static_path = os.path.join(model_path, label + '.png')
+        imgkit.from_file(path, static_path)
     return path
 
 
