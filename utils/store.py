@@ -14,6 +14,15 @@ from datasets import dataset_dict
 import imgkit
 
 
+DIRECTION_PATTERN = (
+    r'^(kmeans|pca|das|logistic_regression|mean_diff)_'
+    r'(simple_train|treebank_train)_'
+    r'(ADJ|ALL)_'
+    r'layer(\d*)'
+    r'\.npy$'
+)
+
+
 def extract_layer_from_string(s: str) -> int:
     # Find numbers that directly follow the text "layer"
     match = re.search(r'(?<=layer)\d+', s)
