@@ -325,3 +325,18 @@ def save_image(
     path = os.path.join(model_path, label + '.png')
     figure.write_image(path)
     return path
+
+
+def save_pdf(
+    figure: go.Figure,
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.pdf')
+    figure.write_image(path, format='pdf')
+    return path

@@ -171,12 +171,14 @@ class ResidualStreamDataset:
         cls,
         model: HookedTransformer,
         device: torch.device,
-        prompt_type: str = "simple_train",
+        prompt_type: PromptType = PromptType.SIMPLE_TRAIN,
         scaffold: ReviewScaffold = None,
     ) -> 'ResidualStreamDataset':
         """
         N.B. labels assume that first batch corresponds to 1
         """
+        if prompt_type == PromptType.NONE:
+            return None
         clean_corrupt_data = get_dataset(
             model, device, prompt_type=prompt_type, scaffold=scaffold
         )

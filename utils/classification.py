@@ -230,11 +230,7 @@ def _fit_logistic_regression(
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
         train_pos, train_layer
     )
-    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
-        test_pos, test_layer
-    )
     train_labels = train_data.binary_labels
-    test_labels = test_data.binary_labels
     lr = LogisticRegression(
         random_state=random_state,
         solver=solver,
@@ -242,6 +238,12 @@ def _fit_logistic_regression(
         tol=tol,
     )
     lr.fit(train_embeddings, train_labels)
+    if test_data is None:
+        return lr.coef_[0, :], None, None, None
+    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
+        test_pos, test_layer
+    )
+    test_labels = test_data.binary_labels
     total = len(test_labels)
     accuracy = lr.score(test_embeddings, test_labels)
     correct = int(accuracy * total)
