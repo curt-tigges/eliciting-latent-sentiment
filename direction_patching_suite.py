@@ -22,7 +22,7 @@ from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
 from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
-from utils.store import save_array, load_array, save_html, to_csv, get_model_name
+from utils.store import save_array, load_array, save_html, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
@@ -30,14 +30,20 @@ pio.renderers.default = "notebook"
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    # 'gpt2-small',
+    'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
-    'EleutherAI/pythia-160m',
-    'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-160m',
+    # 'EleutherAI/pythia-410m',
+    # 'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-2.8b',
+]
+DIRECTION_GLOBS = [
+    'kmeans_simple_train_ADJ*.npy',
+    'logistic_regression_simple_train_ADJ*.npy',
+    'das_simple_train_ADJ*.npy',
+    'das_treebank*.npy',
 ]
 #%%
 def get_model(name: str) -> HookedTransformer:
@@ -79,50 +85,18 @@ def display_cosine_sims(
     display(styled)
     save_html(styled, "cosine_similarities", model)
 
-#%%
-def extract_layer_from_string(s: str) -> int:
-    # Find numbers that directly follow the text "layer"
-    match = re.search(r'(?<=layer)\d+', s)
-    if match:
-        number = match.group()
-        return int(number)
-    else:
-        return None
-
-#%%
-def zero_pad_layer_string(s: str) -> str:
-    # Find numbers that directly follow the text "layer"
-    number = extract_layer_from_string(s)
-    if number is not None:
-        # Replace the original number with the zero-padded version
-        s = s.replace(f'layer{number}', f'layer{number:02d}')
-    return s
-
 #%% # Direction loading
 def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List[np.ndarray], List[str]]:
     model_name = get_model_name(model)
-    direction_globs = [
-        'logistic_regression_treebank*.npy',
-        'das_treebank*.npy',
-    ]
+    
     direction_paths = [
         path
-        for glob_str in direction_globs
+        for glob_str in DIRECTION_GLOBS
         for path in glob.glob(os.path.join('data', model_name, glob_str))
+        if "None" not in path and "_all_" not in path
     ]
     direction_labels = [os.path.split(path)[-1] for path in direction_paths]
-    direction_labels = sorted(direction_labels)
     del direction_paths
-    # direction_labels = (
-        # [f'kmeans_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        # [f'pca2_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        # [f'svd_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        # [f'mean_diff_simple_train_ADJ_layer{l}' for l in range(lb, ub)] +
-        # [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(lb, ub)] +
-        # [f'das_simple_train_ADJ_layer{l}' for l in range(lb, ub)] +
-        # [f'logistic_regression_treebank_train_None_layer{l}' for l in range(lb, ub)] +
-        # [f'das_treebank_train_None_layer{l}' for l in range(lb, ub)] 
-    # )
     directions = [
         load_array(label, model) for label in direction_labels
     ]
@@ -134,6 +108,12 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
         assert direction.ndim == 1, f"Direction {direction_labels[i]} has shape {direction.shape}"
         directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
     direction_labels = [zero_pad_layer_string(label) for label in direction_labels]
+    sorted_indices = sorted(
+        range(len(direction_labels)), key=lambda i: direction_labels[i]
+    )
+    direction_labels = [direction_labels[i] for i in sorted_indices]
+    directions = [directions[i] for i in sorted_indices]
+
     if display:
         display_cosine_sims(direction_labels, directions)
     return directions, direction_labels
@@ -356,8 +336,17 @@ def get_results_for_metric(
             if (prompt_type.value, position) not in results.columns:
                 results[column] = np.nan
             results.loc[direction_label, column] = result
-    results.columns = pd.MultiIndex.from_tuples(results.columns, names=['prompt', 'position'])
-    to_csv(results, f"direction_patching_{metric_label}", model)
+    results.columns = pd.MultiIndex.from_tuples(
+        results.columns,
+        names=['prompt', 'position']
+    )
+    results.sort_index(axis=1, level=0, inplace=True)
+    export_results(results, metric_label, use_heads_label)
+    return results
+#%%
+def export_results(
+    results: pd.DataFrame, metric_label: str, use_heads_label: str
+) -> None:
     layers_style = (
         results
         .style
@@ -365,9 +354,31 @@ def get_results_for_metric(
         .format("{:.1f}%")
         .set_caption(f"Direction patching ({metric_label}, {use_heads_label}) in {model.name}")
     )
+    to_csv(results, f"direction_patching_{metric_label}", model)
     save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
-    return results
+
+    s_df = results[~results.index.str.contains("treebank")].sort_index(axis=1, level=0)
+    matches = s_df.index.str.extract(DIRECTION_PATTERN)
+    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['direction', 'dataset', 'position', 'layer'])
+    s_df.index = multiindex
+    s_df = s_df.reset_index().groupby(['direction', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
+    s_style = s_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
+    to_csv(s_df, f"direction_patching_{metric_label}_simple", model)
+    save_html(s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model)
+    display(s_style)
+    
+    t_df = results[results.index.str.contains("das_treebank") & ~results.index.str.contains("None")].sort_index(axis=1, level=0)
+    t_df = t_df.loc[:, t_df.columns.get_level_values(0).str.contains("treebank")]
+    matches = t_df.index.str.extract(DIRECTION_PATTERN)
+    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['direction', 'dataset', 'position', 'layer'])
+    t_df.index = multiindex
+    t_df = t_df.loc[t_df.index.get_level_values(-1).astype(int) < t_df.index.get_level_values(-1).astype(int).max() - 1]
+    t_df.sort_index(level=3)
+    t_style = t_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
+    to_csv(t_df, f"direction_patching_{metric_label}_treebank", model)
+    save_html(t_style, f"direction_patching_{metric_label}_{use_heads_label}_treebank", model)
+    display(t_style)
 # %%
 HEADS = {
     "EleutherAI/pythia-2.8b": [
@@ -378,7 +389,7 @@ HEADS = {
 PROMPT_TYPES = [
     PromptType.TREEBANK_TEST,
     # PromptType.SIMPLE_TRAIN,
-    # PromptType.SIMPLE_TEST,
+    PromptType.SIMPLE_TEST,
     # PromptType.COMPLETION,
     # PromptType.SIMPLE_ADVERB,
     # PromptType.SIMPLE_MOOD,
@@ -389,17 +400,17 @@ METRICS = [
     # logit_flip_metric,
     # prob_diff_denoising,
 ]
-USE_HEADS = [True, False]
+USE_HEADS = [False, ]
 SCAFFOLD = ReviewScaffold.CONTINUATION
 model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
 )
 BATCH_SIZES = {
-    "gpt2-small": 1024,
+    "gpt2-small": 512,
     "gpt2-medium": 512,
     "gpt2-large": 256,
     "gpt2-xl": 256,
-    "EleutherAI/pythia-160m": 1024,
+    "EleutherAI/pythia-160m": 512,
     "EleutherAI/pythia-410m": 512,
     "EleutherAI/pythia-1.4b": 256,
     "EleutherAI/pythia-2.8b": 256,
