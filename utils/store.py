@@ -348,4 +348,5 @@ def save_pdf(
         os.mkdir(model_path)
     path = os.path.join(model_path, label + '.pdf')
     figure.write_image(path, format='pdf')
+    figure.write_image(path, format='pdf')
     return path
