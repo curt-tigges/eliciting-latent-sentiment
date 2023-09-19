@@ -1,5 +1,5 @@
 from jaxtyping import Float, Int, Bool
-from typing import Dict, Iterable, List, Tuple, Union
+from typing import Dict, Iterable, List, Literal, Tuple, Union
 import numpy as np
 import torch
 from torch import Tensor
@@ -104,30 +104,27 @@ def plot_neuroscope(
     activations: Float[Tensor, "pos layer 1"] = None,
     special_dir: Float[Tensor, "d_model"] = None,
     verbose: bool = False,
-    default_layer: int = 1,
+    default_layer: Union[Literal["all"], int] = 1,
 ):
     """
     Wrapper around CircuitVis's `text_neuron_activations`.
     Performs centring if `centred` is True.
     Computes activations based on projecting onto a resid stream direction if not provided.
     If you don't need centring or projection, use `text_neuron_activations` directly.
+    The keyword "all" for default_layer is used to show all layers at once.
     """
     assert activations is not None or special_dir is not None
-    tokens: Int[Tensor, "batch pos"] = model.to_tokens(text)
-    if isinstance(text, str):
-        str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
-    else:
-        str_tokens = text
+    tokens: Int[Tensor, "1 pos"] = model.to_tokens(text)
     if verbose:
         print(f"Tokens shape: {tokens.shape}")
     if activations is None:
         if verbose:
             print("Computing activations")
-        activations: Float[Tensor, "batch pos layer"] = get_projections_for_text(
+        activations: Float[Tensor, "1 pos layer"] = get_projections_for_text(
             tokens, special_dir=special_dir, model=model
         )
         activations: Float[Tensor, "pos layer 1"] = einops.rearrange(
-            activations, "batch pos layer -> pos layer batch"
+            activations, "1 pos layer -> pos layer 1"
         )
         if verbose:
             print(f"Activations shape: {activations.shape}")
@@ -142,17 +139,34 @@ def plot_neuroscope(
     assert (
         activations.ndim == 3
     ), f"activations must be of shape [tokens x layers x neurons], found {activations.shape}"
+    
+    if isinstance(text, str):
+        str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
+    else:
+        str_tokens = text
+
+    if default_layer == "all":
+        assert not centred, "If default_layer is 'all', centred must be False"
+        str_tokens = (str_tokens + ["\n"]) * model.cfg.n_layers
+        activations = einops.rearrange(
+            activations, "pos layer 1 -> (pos layer) 1 1"
+        )
+        first_dimension_labels = ["all"]
+    else:
+        first_dimension_labels = [f"{i}_pre" for i in range(activations.shape[1])]
+    
+    # Check shapes before calling text_neuron_activations()
     assert len(str_tokens) == activations.shape[0], (
         "tokens and activations must have the same length, found "
         f"tokens={len(str_tokens)} and acts={activations.shape[0]}, "
         f"tokens={str_tokens}, "
         f"activations={activations.shape}"
-
     )
     return text_neuron_activations(
         tokens=str_tokens, 
         activations=activations,
-        first_dimension_name="Layer (resid_pre)",
+        first_dimension_name="Layer",
+        first_dimension_labels=first_dimension_labels,
         second_dimension_name="Model",
         second_dimension_labels=[model.cfg.model_name],
         first_dimension_default=default_layer,
