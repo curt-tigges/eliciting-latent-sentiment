@@ -146,12 +146,17 @@ def plot_neuroscope(
         str_tokens = text
 
     if default_layer == "all":
-        assert not centred, "If default_layer is 'all', centred must be False"
-        str_tokens = (str_tokens + ["\n"]) * model.cfg.n_layers
+        n_layers = activations.shape[1]
+        orig_len = len(str_tokens)
+        str_tokens = (str_tokens + ["\n"]) * n_layers
+        activations = torch.cat([activations, torch.zeros_like(activations[:1])], dim=0)
         activations = einops.rearrange(
-            activations, "pos layer 1 -> (pos layer) 1 1"
+            activations, "pos layer 1 -> (layer pos) 1 1"
         )
         first_dimension_labels = ["all"]
+        default_layer = 0
+        assert len(str_tokens) == (orig_len + 1) * n_layers
+        assert len(activations) == (orig_len + 1) * n_layers
     else:
         first_dimension_labels = [f"{i}_pre" for i in range(activations.shape[1])]
     
@@ -162,6 +167,13 @@ def plot_neuroscope(
         f"tokens={str_tokens}, "
         f"activations={activations.shape}"
     )
+    if verbose:
+        print(
+            "Calling text_neuron_activations with "
+            f"tokens={len(str_tokens)} and acts={activations.shape}"
+            f"first_dimension_labels={first_dimension_labels}, "
+            f"first_dimension_default={default_layer},"
+        )
     return text_neuron_activations(
         tokens=str_tokens, 
         activations=activations,
