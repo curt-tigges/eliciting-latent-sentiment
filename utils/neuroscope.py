@@ -105,6 +105,7 @@ def plot_neuroscope(
     special_dir: Float[Tensor, "d_model"] = None,
     verbose: bool = False,
     default_layer: Union[Literal["all"], int] = 1,
+    show_selectors: bool = True,
 ):
     """
     Wrapper around CircuitVis's `text_neuron_activations`.
@@ -182,6 +183,7 @@ def plot_neuroscope(
         second_dimension_name="Model",
         second_dimension_labels=[model.cfg.model_name],
         first_dimension_default=default_layer,
+        show_selectors=show_selectors
     )
 
 
