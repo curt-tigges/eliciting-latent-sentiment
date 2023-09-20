@@ -376,6 +376,7 @@ def plot_pca_svd_2d(
 ):
     train_label = train_label.replace("simple_", "").replace("_layer0", "")
     test_label = test_label.replace("simple_", "").replace("_layer0", "")
+    method_label = method.value.upper()
 
     if "ADJ" in train_label:
         train_str_labels = [label.split("_")[0] for label in train_str_labels]
@@ -396,13 +397,16 @@ def plot_pca_svd_2d(
             x=train_pcs[:, 0],
             y=train_pcs[:, 1],
             text=train_str_labels,
+            textposition="bottom center",
             mode="markers+text",
             marker=dict(
                 color=train_true_labels.to(dtype=torch.int32),
                 colorscale="RdBu",
                 opacity=0.8,
+                maxdisplayed=10,
+                size=8,
             ),
-            name=f"{method.value} IS ({train_label})",
+            name=f"{method_label} IS ({train_label})",
         )
     )
 
@@ -412,14 +416,17 @@ def plot_pca_svd_2d(
             x=test_pcs[:, 0],
             y=test_pcs[:, 1],
             text=test_str_labels,
-            mode="markers",
+            textposition="bottom center",
+            mode="markers+text",
             marker=dict(
                 color=test_true_labels.to(dtype=torch.int32),
                 colorscale="RdBu",
                 opacity=0.8,
                 symbol="square",
+                size=8,
+                maxdisplayed=5,
             ),
-            name=f"{method.value} OOS ({test_label})",
+            name=f"{method_label} OOS ({test_label})",
         )
     )
 
@@ -433,14 +440,20 @@ def plot_pca_svd_2d(
             name="Centroids",
         )
     )
+    oos_label = "sample" if "ADJ" in train_label and "ADJ" in test_label else "distribution"
     fig.update_layout(
         title=(
-            f"{method.value} in and out of sample "
+            f"{method_label} in and out of {oos_label} "
             f"({model})"
         ),
         xaxis_title="PC1",
         yaxis_title="PC2",
         title_x=0.5,
+        legend=dict(
+            x=0,  # Adjust this value as needed
+            y=-0.2,  # Adjust this value to position the legend below the plot
+            orientation="h",  # Set the orientation to horizontal
+        ),
     )
     save_html(
         fig, f"{method.value}_{train_label}_{test_label}", model
@@ -506,6 +519,7 @@ for model in ("gpt2-small", ):
         PromptType.SIMPLE_TRAIN, 'ADJ', 0,
         PromptType.SIMPLE_TEST, 'VRB', 0,
     )
+    fig.show()
     save_pdf(fig, "pca_train_adjectives_test_verbs_layer_0", model)
     save_html(fig, "pca_train_adjectives_test_verbs_layer_0", model)
 #%%
