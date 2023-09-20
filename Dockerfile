@@ -11,7 +11,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN pip install transformer-lens plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
 RUN pip install typeguard==2.13.3
 COPY CircuitsVis CircuitsVis
-RUN pip install -e CircuitsVis/python
+RUN pip install CircuitsVis/python
 
 RUN git config --global user.email "oskar.hollinsworth@gmail.com" && \
     git config --global user.name "skar0" && \
@@ -22,4 +22,11 @@ RUN curl -sL https://deb.nodesource.com/setup_14.x | bash - && \
     curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
     echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
     apt-get update && apt-get install -y yarn
+
+RUN pip install -U kaleido
+
+RUN apt install wget -y
+RUN wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/wkhtmltox_0.12.6-1.focal_amd64.deb
+RUN apt install -f ./wkhtmltox_0.12.6-1.focal_amd64.deb -y
+RUN pip install imgkit
 
