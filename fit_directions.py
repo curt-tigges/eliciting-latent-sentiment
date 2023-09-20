@@ -374,6 +374,18 @@ def plot_pca_svd_2d(
     train_label: str = 'train', 
     test_label: str = 'test',
 ):
+    train_label = train_label.replace("simple_", "").replace("_layer0", "")
+    test_label = test_label.replace("simple_", "").replace("_layer0", "")
+
+    if "ADJ" in train_label:
+        train_str_labels = [label.split("_")[0] for label in train_str_labels]
+    else:
+        train_str_labels = [label.split("_")[1] for label in train_str_labels]
+    if "ADJ" in test_label:
+        test_str_labels = [label.split("_")[0] for label in test_str_labels]
+    else:
+        test_str_labels = [label.split("_")[1] for label in test_str_labels]
+
     if isinstance(model, HookedTransformer):
         model = model.cfg.model_name
     fig = go.Figure()
@@ -384,13 +396,13 @@ def plot_pca_svd_2d(
             x=train_pcs[:, 0],
             y=train_pcs[:, 1],
             text=train_str_labels,
-            mode="markers",
+            mode="markers+text",
             marker=dict(
                 color=train_true_labels.to(dtype=torch.int32),
                 colorscale="RdBu",
                 opacity=0.8,
             ),
-            name=f"{method.value} in-sample ({train_label})",
+            name=f"{method.value} IS ({train_label})",
         )
     )
 
@@ -407,7 +419,7 @@ def plot_pca_svd_2d(
                 opacity=0.8,
                 symbol="square",
             ),
-            name=f"{method.value} out-of-sample ({test_label})",
+            name=f"{method.value} OOS ({test_label})",
         )
     )
 
@@ -428,6 +440,7 @@ def plot_pca_svd_2d(
         ),
         xaxis_title="PC1",
         yaxis_title="PC2",
+        title_x=0.5,
     )
     save_html(
         fig, f"{method.value}_{train_label}_{test_label}", model
