@@ -106,6 +106,10 @@ def clean_label(label: str) -> str:
     label = label.replace('.npy', '')
     label = label.replace('.html', '')
     label = label.replace('data/', '')
+    label = label.replace('.csv', '')
+    label = label.replace('.txt', '')
+    label = label.replace('.pkl', '')
+    label = label.replace('.pdf', '')
     assert "/" not in label, "Label must not contain slashes"
     return label
 
