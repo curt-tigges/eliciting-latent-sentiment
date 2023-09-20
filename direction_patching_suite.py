@@ -22,7 +22,7 @@ from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
 from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
-from utils.store import save_array, load_array, save_html, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN
+from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
@@ -340,7 +340,6 @@ def get_results_for_metric(
         results.columns,
         names=['prompt', 'position']
     )
-    results.sort_index(axis=1, level=0, inplace=True)
     export_results(results, metric_label, use_heads_label)
     return results
 #%%
@@ -358,20 +357,20 @@ def export_results(
     save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
 
-    s_df = results[~results.index.str.contains("treebank")].sort_index(axis=1, level=0)
+    s_df = results[~results.index.str.contains("treebank")].copy()
     matches = s_df.index.str.extract(DIRECTION_PATTERN)
-    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['direction', 'dataset', 'position', 'layer'])
+    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['method', 'dataset', 'position', 'layer'])
     s_df.index = multiindex
-    s_df = s_df.reset_index().groupby(['direction', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
+    s_df = s_df.reset_index().groupby(['method', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
     s_style = s_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
     to_csv(s_df, f"direction_patching_{metric_label}_simple", model)
     save_html(s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model)
     display(s_style)
     
-    t_df = results[results.index.str.contains("das_treebank") & ~results.index.str.contains("None")].sort_index(axis=1, level=0)
+    t_df = results[results.index.str.contains("das_treebank") & ~results.index.str.contains("None")].copy()
     t_df = t_df.loc[:, t_df.columns.get_level_values(0).str.contains("treebank")]
     matches = t_df.index.str.extract(DIRECTION_PATTERN)
-    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['direction', 'dataset', 'position', 'layer'])
+    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['method', 'dataset', 'position', 'layer'])
     t_df.index = multiindex
     t_df = t_df.loc[t_df.index.get_level_values(-1).astype(int) < t_df.index.get_level_values(-1).astype(int).max() - 1]
     t_df.sort_index(level=3)
@@ -379,6 +378,19 @@ def export_results(
     to_csv(t_df, f"direction_patching_{metric_label}_treebank", model)
     save_html(t_style, f"direction_patching_{metric_label}_{use_heads_label}_treebank", model)
     display(t_style)
+
+    p_df = results[~results.index.str.contains("treebank")].copy()
+    matches = p_df.index.str.extract(DIRECTION_PATTERN)
+    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['method', 'dataset', 'position', 'layer'])
+    p_df.index = multiindex
+    p_df = p_df[("treebank_test", "ALL")]
+    p_df = p_df.reset_index()
+    p_df.columns = p_df.columns.get_level_values(0)
+    fig = px.line(x="layer", y="treebank_test", color="method", data_frame=s_df)
+    fig.update_layout(title="Out-of-distribution directional patching performance by method and layer")
+    fig.show()
+    save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
+    save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
 # %%
 HEADS = {
     "EleutherAI/pythia-2.8b": [
