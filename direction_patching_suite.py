@@ -22,7 +22,7 @@ from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
 from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
-from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN
+from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN, is_file, get_csv, get_csv_path
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
@@ -306,9 +306,13 @@ def get_results_for_metric(
     disable_tqdm: bool = False,
     scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
     batch_size: int = 16,
+    use_cache: bool = True,
 ) -> Float[pd.DataFrame, "direction prompt"]:
     use_heads_label = "resid" if heads is None else "attn_result"
     metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
+    csv_path = f"direction_patching_{metric_label}_{use_heads_label}.csv"
+    if use_cache and is_file(csv_path, model):
+        return get_csv(csv_path, model, index_col=0, header=[0, 1])
     bar = tqdm(
         itertools.product(prompt_types, zip(direction_labels, directions)), 
         total=len(prompt_types) * len(direction_labels),
@@ -340,12 +344,18 @@ def get_results_for_metric(
         results.columns,
         names=['prompt', 'position']
     )
-    export_results(results, metric_label, use_heads_label)
+    to_csv(results, csv_path.replace(".csv", ""), model, index=True)
     return results
 #%%
 def export_results(
     results: pd.DataFrame, metric_label: str, use_heads_label: str
 ) -> None:
+    all_layers = pd.Series([extract_layer_from_string(label) for label in results.index])
+    das_treebank_layers = all_layers[results.index.str.contains("das_treebank")]
+    mask = ~results.index.str.contains("das") | all_layers.isin(das_treebank_layers)
+    mask.index = results.index
+    results = results.loc[mask]
+
     layers_style = (
         results
         .style
@@ -353,7 +363,6 @@ def export_results(
         .format("{:.1f}%")
         .set_caption(f"Direction patching ({metric_label}, {use_heads_label}) in {model.name}")
     )
-    to_csv(results, f"direction_patching_{metric_label}", model)
     save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
 
@@ -363,7 +372,7 @@ def export_results(
     s_df.index = multiindex
     s_df = s_df.reset_index().groupby(['method', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
     s_style = s_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
-    to_csv(s_df, f"direction_patching_{metric_label}_simple", model)
+    to_csv(s_df, f"direction_patching_{metric_label}_simple", model, index=True)
     save_html(s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model)
     display(s_style)
     
@@ -375,7 +384,7 @@ def export_results(
     t_df = t_df.loc[t_df.index.get_level_values(-1).astype(int) < t_df.index.get_level_values(-1).astype(int).max() - 1]
     t_df.sort_index(level=3)
     t_style = t_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
-    to_csv(t_df, f"direction_patching_{metric_label}_treebank", model)
+    to_csv(t_df, f"direction_patching_{metric_label}_treebank", model, index=True)
     save_html(t_style, f"direction_patching_{metric_label}_{use_heads_label}_treebank", model)
     display(t_style)
 
@@ -386,12 +395,14 @@ def export_results(
     p_df = p_df[("treebank_test", "ALL")]
     p_df = p_df.reset_index()
     p_df.columns = p_df.columns.get_level_values(0)
-    fig = px.line(x="layer", y="treebank_test", color="method", data_frame=s_df)
+    p_df.layer = p_df.layer.astype(int)
+    fig = px.line(x="layer", y="treebank_test", color="method", data_frame=p_df)
     fig.update_layout(title="Out-of-distribution directional patching performance by method and layer")
     fig.show()
     save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
     save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
 # %%
+USE_CACHE = True
 HEADS = {
     "EleutherAI/pythia-2.8b": [
         (17, 19), (22, 5), (14,4), (20, 10), (12, 2), (10, 26), 
@@ -409,7 +420,7 @@ PROMPT_TYPES = [
 ]
 METRICS = [
     logit_diff_denoising,
-    # logit_flip_metric,
+    logit_flip_denoising,
     # prob_diff_denoising,
 ]
 USE_HEADS = [False, ]
@@ -444,6 +455,10 @@ for model_name, metric, use_heads in model_metric_bar:
     DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
     results = get_results_for_metric(
         metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, device, heads, 
-        scaffold=SCAFFOLD, batch_size=batch_size
+        scaffold=SCAFFOLD, batch_size=batch_size,
+        use_cache=USE_CACHE,
     )
+    use_heads_label = "attn_result" if use_heads else "resid"
+    metric_label = metric.__name__.replace('_base', '').replace('_denoising', '')
+    export_results(results, metric_label, use_heads_label)
 # %%

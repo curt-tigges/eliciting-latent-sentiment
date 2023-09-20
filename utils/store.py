@@ -142,13 +142,14 @@ def update_csv(
     label: str, 
     model: Union[HookedTransformer, str], 
     key_cols: Iterable[str] = None,
+    index: bool = False,
 ):
     path = get_csv_path(label, model)
     curr = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
     curr = pd.concat([curr, data], axis=0)
     if key_cols is not None:
         curr = curr.drop_duplicates(subset=key_cols)
-    curr.to_csv(path, index=False)
+    curr.to_csv(path, index=index)
     return path
 
 
@@ -156,11 +157,13 @@ def get_csv(
     label: str,
     model: Union[HookedTransformer, str],
     key_cols: Iterable[str] = None,
+    index_col: int = 0,
+    header: Iterable[int] = 0,
 ) -> pd.DataFrame:
     path = get_csv_path(label, model)
     if not os.path.exists(path):
         return pd.DataFrame()
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, index_col=index_col, header=header)
     if key_cols is not None:
         df = df.drop_duplicates(subset=key_cols)
     return df
