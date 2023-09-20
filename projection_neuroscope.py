@@ -9,24 +9,25 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 import einops
 from jaxtyping import Float, Int, Bool
-from typing import Dict, Iterable, List, Tuple, Union
+from typing import Dict, Iterable, List, Tuple, Union, Literal
 from transformer_lens import HookedTransformer
 from transformer_lens.evals import make_owt_data_loader
 from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name, test_prompt
 from transformer_lens.hook_points import HookPoint
 from circuitsvis.activations import text_neuron_activations
 from tqdm.notebook import tqdm
-from IPython.display import display
+from IPython.display import display, HTML
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import pandas as pd
 import scipy.stats as stats
-from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv
+from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv, save_pdf, save_pickle
 from utils.neuroscope import (
     plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
-    harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window
+    harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window,
+    extract_activations_window
 )
 #%%
 pd.set_option('display.max_colwidth', 200)
@@ -36,10 +37,6 @@ device = "cuda"
 MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
-    center_unembed=True,
-    center_writing_weights=True,
-    fold_ln=True,
-    refactor_factored_attn_matrices=False,
     device=device,
 )
 model.name = MODEL_NAME
@@ -48,22 +45,23 @@ sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
-text = """
-Amidst a serene landscape, a group of volunteers worked together to rescue injured animals. Their dedication showcased the true value of compassion and empathy. However, as they tirelessly carried out their mission, they faced an pressing issue: the rapid decline of the local wildlife's natural habitat. Determined to subdue this crisis, they organized campaigns to raise awareness and funds. Their efforts reminded us that even in the face of adversity, unity and determination can make a significant impact.
-"""
-plot_neuroscope(text, model, centred=True, verbose=False, special_dir=sentiment_dir)
-#%%
 # ============================================================================ #
 # Harry Potter example
 
 #%%
-# harry_potter_neuroscope = plot_neuroscope(harry_potter_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+# hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
+# harry_potter_neuroscope = plot_neuroscope(
+#     hp_4_paras, model, centred=True, verbose=False, 
+#     special_dir=sentiment_dir, default_layer=5
+# )
 # save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
 # harry_potter_neuroscope
 #%%
 # ============================================================================ #
-
-# harry_potter_fr_neuroscope = plot_neuroscope(harry_potter_fr_start, model, centred=True, verbose=False, special_dir=sentiment_dir)
+# harry_potter_fr_neuroscope = plot_neuroscope(
+#     harry_potter_fr_start, model, centred=True, verbose=False, 
+#     special_dir=sentiment_dir, default_layer=5
+# )
 # save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
 # harry_potter_fr_neuroscope
 #%%
@@ -127,12 +125,14 @@ def run_steering_search(
     top_k: int = 10, temperature: float = 1.0, max_new_tokens: int = 20, do_sample: bool = True,
     seed: int = 0,
     prompt: str = "I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
-):
+) -> Tuple[str, Dict[int, List[str]]]:
     torch.manual_seed(seed)
-    out = ""
+    text = ""
+    coef_dict = dict()
     for coef, sample in tqdm(itertools.product(coefs, range(samples)), total=len(coefs) * samples):
         if sample == 0:
-            out += f"Coef: {coef}\n"
+            text += f"Coef: {coef}\n"
+        coef = int(coef)
         gen = steer_and_generate(
             coef,
             sentiment_dir,
@@ -143,12 +143,13 @@ def run_steering_search(
             temperature=temperature,
             top_k=top_k,
         )
-        out += gen.replace(prompt, "") + "\n"
-    return out.replace("<|endoftext|>", "")
+        text += gen.replace(prompt, "") + "\n"
+        coef_dict[coef] = coef_dict.get(coef, []) + [gen.replace(prompt, "")]
+    return text.replace("<|endoftext|>", ""), coef_dict
 #%%
-# steering_text = run_steering_search(
-#     coefs=[-20, -10,  0],
-#     samples=10,
+# steering_text, steering_dict = run_steering_search(
+#     coefs=torch.arange(-20, 1, dtype=torch.int32),
+#     samples=20,
 #     sentiment_dir=sentiment_dir,
 #     model=model,
 #     top_k=10,
@@ -158,8 +159,10 @@ def run_steering_search(
 #     seed=0,
 #     prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
 # )
-# #%%
-# plot_neuroscope(steering_text, centred=True)
+# save_text(steering_text, "steering_text", model)
+# save_pickle(steering_dict, "steering_dict", model)
+#%%
+# plot_neuroscope(steering_text, model, centred=True, special_dir=sentiment_dir)
 #%%
 # ============================================================================ #
 # Prefixes
@@ -188,66 +191,34 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
 # ============================================================================ #
 # Negations
 #%%
-# negating_positive_text = "Here are my honest thoughts. You're not a good person. I don't like you. I hope that you don't succeed."
-# plot_neuroscope(negating_positive_text, centred=True, verbose=False)
 #%%
-# negating_negative_text = "Here are my honest thoughts. You never fail. You're not bad at all. "
-# plot_neuroscope(negating_negative_text, centred=True, verbose=False)
-# #%%
-# plot_neuroscope(
-#     "Here are my honest thoughts. You never fail. You're not bad at all.", 
-#     centred=True, 
-#     verbose=False,
-# )
-# #%%
-# plot_neuroscope(
-#     "Here are my honest thoughts. Don't doubt yourself. You need not fear. You are not wrong. You are very much", 
-#     centred=True, 
-#     verbose=False,
-# )
-# #%%
-# plot_neuroscope(
-#     "Don't be sad. You should not feel ashamed. You are a truly", 
-#     centred=True, 
-#     verbose=False,
-# )
-#%%
-# test_prompt(
-#     "Here are my honest thoughts. You never fail. You're not bad at all. You will always", 
-#     "", 
-#     model
-# )
-# #%%
-# test_prompt(
-#     "Don't be sad. You have nothing to be ashamed of. You are a truly", 
-#     "", 
+# negation = plot_neuroscope(
+#     "You never fail. Don't doubt it. I am not uncertain.", 
 #     model,
-#     top_k=20,
+#     centred=False,
+#     default_layer="all", 
+#     special_dir=sentiment_dir,
+#     show_selectors=False,
 # )
-# #%%
-# test_prompt(
-#     "Here are my honest thoughts. You are not a good person. Your behaviour is not okay. You are very", 
-#     "", 
-#     model,
-#     top_k=20
-# )
+# save_html(negation, "negation", model)
+# negation
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
 #%%
-multi_token_negative_text = """
-Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
+# multi_token_negative_text = """
+# Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
 
-From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
+# From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
 
-Regrettably, the characters, ostensibly intended to be the vessels through which the audience navigates the tumultuous currents of historical transformation, emerge as little more than hollow archetypes, devoid of psychological nuance or relatable verisimilitude. Their interactions, laden with stilted dialogues and ponderous monologues, meander aimlessly in the midst of a ponderous expanse, rendering their ostensibly profound endeavors an exercise in vapid verbosity rather than poignant engagement.
+# Regrettably, the characters, ostensibly intended to be the vessels through which the audience navigates the tumultuous currents of historical transformation, emerge as little more than hollow archetypes, devoid of psychological nuance or relatable verisimilitude. Their interactions, laden with stilted dialogues and ponderous monologues, meander aimlessly in the midst of a ponderous expanse, rendering their ostensibly profound endeavors an exercise in vapid verbosity rather than poignant engagement.
 
-The directorial predilection for intellectual acrobatics is manifest in the labyrinthine structure of the narrative, wherein chronology becomes a malleable construct, flitting whimsically between past and present without discernible rhyme or reason. While this narrative elasticity might have been wielded as a potent tool of thematic resonance, it instead metastasizes into an obfuscating force that imparts a sense of disjointed incoherence upon the cinematic proceedings, leaving the viewer to grapple with a puzzling tapestry of events that resist cohesive assimilation.
+# The directorial predilection for intellectual acrobatics is manifest in the labyrinthine structure of the narrative, wherein chronology becomes a malleable construct, flitting whimsically between past and present without discernible rhyme or reason. While this narrative elasticity might have been wielded as a potent tool of thematic resonance, it instead metastasizes into an obfuscating force that imparts a sense of disjointed incoherence upon the cinematic proceedings, leaving the viewer to grapple with a puzzling tapestry of events that resist cohesive assimilation.
 
-Moreover, the fervent desire to imbue the proceedings with a veneer of intellectual profundity is acutely palpable within the film's verbiage-laden script. Dialogue, often comprising polysyllabic words of labyrinthine complexity, becomes an exercise in linguistic gymnastics that strays perilously close to the precipice of unintentional self-parody. This quixotic dalliance with ostentatious vocabulary serves only to erect an insurmountable barrier between the audience and the narrative, relegating the viewer to a state of befuddled detachment.
+# Moreover, the fervent desire to imbue the proceedings with a veneer of intellectual profundity is acutely palpable within the film's verbiage-laden script. Dialogue, often comprising polysyllabic words of labyrinthine complexity, becomes an exercise in linguistic gymnastics that strays perilously close to the precipice of unintentional self-parody. This quixotic dalliance with ostentatious vocabulary serves only to erect an insurmountable barrier between the audience and the narrative, relegating the viewer to a state of befuddled detachment.
 
-In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
-"""
+# In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
+# """
 # plot_neuroscope(multi_token_negative_text, centred=True, verbose=False, model=model, special_dir=sentiment_dir)
 #%%
 # ============================================================================ #
@@ -282,11 +253,13 @@ class ClearCache:
         torch.cuda.empty_cache()
 #%%
 if is_file("sentiment_activations.npy", model):
+    print("Loading activations from file")
     sentiment_activations = load_array("sentiment_activations", model)
     sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(
         sentiment_activations, device=device, dtype=torch.float32
     )
 else:
+    print("Computing activations")
     with ClearCache():
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(dataloader)
     save_array(sentiment_activations, "sentiment_activations", model)
@@ -334,42 +307,42 @@ def sample_by_bin(
     df['token'] = tokens
     df['text'] = texts
     return df.sample(frac=1, random_state=seed).reset_index(drop=True)
-#%%
-bin_samples = sample_by_bin(
-    sentiment_activations[:, :, 1], verbose=False
-)
-to_csv(bin_samples, "bin_samples", model)
-bin_samples
-#%%
-labelled_bin_samples = get_csv(
-    "labelled_bin_samples", model
-)
-labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
-assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
-labelled_bin_samples
-#%%
-sampled_activations = []
-for idx, row in labelled_bin_samples.iterrows():
-    sampled_activations.append(sentiment_activations[row.batch, row.position, 1].detach().cpu().numpy())
-labelled_bin_samples['activation'] = sampled_activations
-labelled_bin_samples
-#%%
-fig = px.histogram(
-    labelled_bin_samples,
-    x="activation",
-    color="sentiment",
-    nbins=200,
-    title="Histogram of sentiment activations by label",
-    barmode="overlay",
-    marginal="rug",
-    histnorm="probability density",
-    hover_data=["token", "text"]
-)
-fig.update_layout(
-    title_x=0.5,
-    showlegend=True,
-)
-fig.show()
+# #%%
+# bin_samples = sample_by_bin(
+#     sentiment_activations[:, :, 1], verbose=False
+# )
+# to_csv(bin_samples, "bin_samples", model)
+# bin_samples
+# #%%
+# labelled_bin_samples = get_csv(
+#     "labelled_bin_samples", model
+# )
+# labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
+# assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
+# labelled_bin_samples
+# #%%
+# sampled_activations = []
+# for idx, row in labelled_bin_samples.iterrows():
+#     sampled_activations.append(sentiment_activations[row.batch, row.position, 1].detach().cpu().numpy())
+# labelled_bin_samples['activation'] = sampled_activations
+# labelled_bin_samples
+# #%%
+# fig = px.histogram(
+#     labelled_bin_samples,
+#     x="activation",
+#     color="sentiment",
+#     nbins=200,
+#     title="Histogram of sentiment activations by label",
+#     barmode="overlay",
+#     marginal="rug",
+#     histnorm="probability density",
+#     hover_data=["token", "text"]
+# )
+# fig.update_layout(
+#     title_x=0.5,
+#     showlegend=True,
+# )
+# fig.show()
 
 #%%
 def plot_bin_proportions(df: pd.DataFrame, nbins=50):
@@ -382,6 +355,8 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
     data = []
     
     for x, bin_df in df.groupby('activation_cut'):
+        if bin_df.empty:
+            continue
         label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
         data.append([label_props.get(sentiment, 0) for sentiment in sentiments])
     
@@ -404,7 +379,7 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
         ))
     
     fig.update_layout(
-        title="Anthropic Graph 1: Proportion of Sentiment by Activation",
+        title="Proportion of Sentiment by Activation", # Anthropic Graph 1
         title_x=0.5,
         showlegend=True,
         xaxis_title="Activation",
@@ -413,9 +388,12 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
 
     return fig
 #%%
-plot_bin_proportions(labelled_bin_samples)
+# fig = plot_bin_proportions(labelled_bin_samples)
+# save_pdf(fig, "bin_proportions", model)
+# save_html(fig, "bin_proportions", model)
+# fig.show()
 #%%
-# plot_stacked_histogram(labelled_bin_samples)
+# fig = plot_stacked_histogram(labelled_bin_samples)
 #%%
 # ============================================================================ #
 # Anthropic Graph 2
@@ -447,7 +425,8 @@ def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
         ))
 
     fig.update_layout(
-        barmode="stack", title="Anthropic Graph 2: Stacked Histogram of Sentiment by Activation",
+        barmode="stack", 
+        title="Stacked Histogram of Sentiment by Activation", # Anthropic Graph 2
         title_x=0.5,
         showlegend=True,
         xaxis_title="Activation",
@@ -456,7 +435,9 @@ def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
 
     return fig
 #%%
-plot_weighted_histogram(labelled_bin_samples)
+# fig = plot_weighted_histogram(labelled_bin_samples)
+# save_pdf(fig, "weighted_histogram", model)
+# save_html(fig, "weighted_histogram", model)
 #%%
 # ============================================================================ #
 # Anthropic Graph 3
@@ -488,7 +469,8 @@ def plot_ev_histogram(df: pd.DataFrame, nbins: int = 100):
         ))
 
     fig.update_layout(
-        barmode="stack", title="Anthropic Graph 3: Stacked Histogram of EV contribution",
+        barmode="stack", 
+        title="Stacked Histogram of EV contribution", # Anthropic Graph 3
         title_x=0.5,
         showlegend=True,
         xaxis_title="Activation",
@@ -497,7 +479,86 @@ def plot_ev_histogram(df: pd.DataFrame, nbins: int = 100):
 
     return fig
 #%%
-plot_ev_histogram(labelled_bin_samples)
+# fig = plot_ev_histogram(labelled_bin_samples)
+# save_html(fig, "ev_histogram", model)
+# save_pdf(fig, "ev_histogram", model)
+#%%
+def plot_batch_pos(
+    all_activations: Float[Tensor, "row pos layer"], 
+    dataloader: torch.utils.data.DataLoader,
+    model: HookedTransformer,
+    batch_and_pos: Iterable[Tuple[int, int]],
+    window_size: int = 10, 
+    centred: bool = True, 
+    file_name: str = "sentiment_at_batch_pos",
+    show_selectors: bool = True,
+    verbose: bool = False,
+):
+    """
+    One-sided topk plotting.
+    Main entrypoint should be `plot_topk`.
+    """
+    device = all_activations.device
+    layers = all_activations.shape[-1]
+    zeros = torch.zeros((1, layers), device=device, dtype=torch.float32)
+    texts = [model.tokenizer.bos_token]
+    text_to_not_repeat = set()
+    acts = [zeros]
+    text_sep = "\n"
+    for batch, pos in batch_and_pos:
+        text_window: List[str] = extract_text_window(
+            batch, pos, dataloader=dataloader, model=model, window_size=window_size
+        )
+        activation_window: Float[Tensor, "pos layer"] = extract_activations_window(
+            all_activations, batch, pos, window_size=window_size, dataloader=dataloader
+        )
+        assert len(text_window) == activation_window.shape[0], (
+            f"Initially text window length {len(text_window)} does not match "
+            f"activation window length {activation_window.shape[0]}"
+        )
+        text_flat = "".join(text_window)
+        if text_flat in text_to_not_repeat:
+            continue
+        text_to_not_repeat.add(text_flat)
+        text_window.append(text_sep)
+        activation_window = torch.cat([activation_window, zeros], dim=0)
+        assert len(text_window) == activation_window.shape[0]
+        texts += text_window
+        acts.append(activation_window)
+    acts_cat = einops.repeat(torch.cat(acts, dim=0), "pos layer -> pos layer 1")
+    assert acts_cat.shape[0] == len(texts)
+    html = plot_neuroscope(
+        texts, 
+        model=model, 
+        centred=centred, 
+        activations=acts_cat, 
+        verbose=verbose,
+        show_selectors=show_selectors,
+    )
+    save_html(html, file_name, model)
+    return html
+#%%
+batch_pos_dict = dict(
+    neuroscope_proper_nouns=[(10959, 795), (4621, 772), (10161, 427), (1837, 394)],
+    neuroscope_adjectives=[(2861, 739), (5957, 800), (3889, 480), (1313, 528)],
+    neuroscope_adverbs=[(10095, 900), (7733, 740), (5479, 471), (2559, 426)],
+    neuroscope_nouns=[(2439, 800), (4428, 862), (1230, 281), (7327, 81)],
+    neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
+    neuroscope_medical=[(6690, 669), (3852, 819), (9791, 460), (7888, 326)],
+)
+for file_name, batch_pos in batch_pos_dict.items():
+    html = plot_batch_pos(
+        sentiment_activations, 
+        dataloader, 
+        model, 
+        batch_pos,
+        centred=True,
+        file_name=file_name,
+        window_size=2,
+        show_selectors=False,
+        verbose=False,
+    )
+    display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Top k max activating examples
@@ -532,9 +593,9 @@ def expand_exclusions(exclusions: Iterable[str]):
 #%%
 exclusions = [
     # proper nouns
-    # 'Flint', 'Fukushima', 'Obama', 'Assad', 'Gaza',
-    # 'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
-    # 'DoS', 'Medicaid', 'Kissinger',
+    'Flint', 'Fukushima', 'Obama', 'Assad', 'Gaza',
+    'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
+    'DoS', 'Medicaid', 'Kissinger',
     'ISIS', 'GOP',
     # the rest
     'adequate', 'truly', 'mis', 'dys', 'provides', 'offers', 'fully',  'migraine',  
@@ -653,10 +714,20 @@ exclusions = expand_exclusions(exclusions)
 #%%
 # plot_topk(
 #     sentiment_activations, dataloader, model,
-#     k=20, layer=1, window_size=20, centred=True,
-#     exclusions=exclusions,
+#     k=5, layer=1, window_size=10, centred=True,
+#     inclusions=[
+#         ' saving', ' curing', ' helping', ' aiding', 
+#         ' loving', ' hugging', ' kissing', ' smiling',
+#         ' laughing', ' playing', ' dancing', ' singing',
+#     ]
 # )
-# #%%
+#%%
+# plot_topk(
+#     sentiment_activations, dataloader, model,
+#     k=20, layer=1, window_size=20, centred=True,
+#     inclusions=exclusions
+# )
+#%%
 # plot_top_p(
 #     sentiment_activations, dataloader, model,
 #     p=.02,
@@ -784,10 +855,12 @@ def plot_top_mean_variance(
     ]
     fig = px.bar(data_frame=std_devs_top_and_bottom, x='token', y='std_dev', color='variation')
     fig.update_layout(title_text="Most extreme standard deviations", title_x=0.5)
+    save_html(fig, "most_extreme_std_devs", model)
+    save_pdf(fig, "most_extreme_std_devs", model)
     fig.show()
 
 # %%
-# plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
+plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
 # %%
 # plot_topk(sentiment_activations, k=10, layer=1, inclusions=[" Yorkshire"], window_size=20)
 #%%

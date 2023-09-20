@@ -174,6 +174,7 @@ def plot_neuroscope(
             f"tokens={len(str_tokens)} and acts={activations.shape}"
             f"first_dimension_labels={first_dimension_labels}, "
             f"first_dimension_default={default_layer},"
+            f"show_selectors={show_selectors}"
         )
     return text_neuron_activations(
         tokens=str_tokens, 
