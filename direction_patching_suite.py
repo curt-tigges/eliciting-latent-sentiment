@@ -22,7 +22,7 @@ from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
 from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
-from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN, is_file, get_csv, get_csv_path
+from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN, is_file, get_csv, get_csv_path, flatten_multiindex
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
@@ -357,7 +357,7 @@ def export_results(
     results = results.loc[mask]
 
     layers_style = (
-        results
+        flatten_multiindex(results)
         .style
         .background_gradient(cmap="Reds", axis=None, low=0, high=1)
         .format("{:.1f}%")
@@ -371,6 +371,8 @@ def export_results(
     multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['method', 'dataset', 'position', 'layer'])
     s_df.index = multiindex
     s_df = s_df.reset_index().groupby(['method', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
+    s_df = flatten_multiindex(s_df)
+    s_df = s_df[["simple_test_ADJ", "simple_test_VRB", "simple_test_ALL", "treebank_test_ALL"]]
     s_style = s_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
     to_csv(s_df, f"direction_patching_{metric_label}_simple", model, index=True)
     save_html(s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model)
@@ -383,6 +385,7 @@ def export_results(
     t_df.index = multiindex
     t_df = t_df.loc[t_df.index.get_level_values(-1).astype(int) < t_df.index.get_level_values(-1).astype(int).max() - 1]
     t_df.sort_index(level=3)
+    t_df = flatten_multiindex(t_df)
     t_style = t_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
     to_csv(t_df, f"direction_patching_{metric_label}_treebank", model, index=True)
     save_html(t_style, f"direction_patching_{metric_label}_{use_heads_label}_treebank", model)
