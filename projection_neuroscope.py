@@ -10,6 +10,7 @@ from datasets import load_dataset
 import einops
 from jaxtyping import Float, Int, Bool
 from typing import Dict, Iterable, List, Tuple, Union, Literal
+from typing import Dict, Iterable, List, Tuple, Union, Literal
 from transformer_lens import HookedTransformer
 from transformer_lens.evals import make_owt_data_loader
 from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name, test_prompt
@@ -18,6 +19,7 @@ from circuitsvis.activations import text_neuron_activations
 from circuitsvis.utils.render import RenderedHTML
 from tqdm.notebook import tqdm
 from IPython.display import display, HTML
+from IPython.display import display, HTML
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -25,8 +27,11 @@ import os
 import pandas as pd
 import scipy.stats as stats
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv, save_pdf, save_pickle
+from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv, save_pdf, save_pickle
 from utils.neuroscope import (
     plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
+    harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window,
+    extract_activations_window
     harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window,
     extract_activations_window
 )
@@ -45,9 +50,6 @@ model.name = MODEL_NAME
 sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
-#%%
-def render_local(html):
-    display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Harry Potter example
@@ -149,6 +151,8 @@ def run_steering_search(
     torch.manual_seed(seed)
     text = ""
     coef_dict = dict()
+    text = ""
+    coef_dict = dict()
     for coef, sample in tqdm(itertools.product(coefs, range(samples)), total=len(coefs) * samples):
         if sample == 0:
             text += f"Coef: {coef}\n"
@@ -235,29 +239,43 @@ save_html(negation_full, "negation_full", model)
 #%%
 # negation = plot_neuroscope(
 #     "You never fail. Don't doubt it. I am not uncertain.", 
+# negation = plot_neuroscope(
+#     "You never fail. Don't doubt it. I am not uncertain.", 
 #     model,
+#     centred=False,
+#     default_layer="all", 
+#     special_dir=sentiment_dir,
+#     show_selectors=False,
 #     centred=False,
 #     default_layer="all", 
 #     special_dir=sentiment_dir,
 #     show_selectors=False,
 # )
 # save_html(negation, "negation", model)
-# render_local(negation)
+# negation
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
 #%%
 # multi_token_negative_text = """
 # Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
+# multi_token_negative_text = """
+# Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
 
+# From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
 # From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
 
 # Regrettably, the characters, ostensibly intended to be the vessels through which the audience navigates the tumultuous currents of historical transformation, emerge as little more than hollow archetypes, devoid of psychological nuance or relatable verisimilitude. Their interactions, laden with stilted dialogues and ponderous monologues, meander aimlessly in the midst of a ponderous expanse, rendering their ostensibly profound endeavors an exercise in vapid verbosity rather than poignant engagement.
+# Regrettably, the characters, ostensibly intended to be the vessels through which the audience navigates the tumultuous currents of historical transformation, emerge as little more than hollow archetypes, devoid of psychological nuance or relatable verisimilitude. Their interactions, laden with stilted dialogues and ponderous monologues, meander aimlessly in the midst of a ponderous expanse, rendering their ostensibly profound endeavors an exercise in vapid verbosity rather than poignant engagement.
 
+# The directorial predilection for intellectual acrobatics is manifest in the labyrinthine structure of the narrative, wherein chronology becomes a malleable construct, flitting whimsically between past and present without discernible rhyme or reason. While this narrative elasticity might have been wielded as a potent tool of thematic resonance, it instead metastasizes into an obfuscating force that imparts a sense of disjointed incoherence upon the cinematic proceedings, leaving the viewer to grapple with a puzzling tapestry of events that resist cohesive assimilation.
 # The directorial predilection for intellectual acrobatics is manifest in the labyrinthine structure of the narrative, wherein chronology becomes a malleable construct, flitting whimsically between past and present without discernible rhyme or reason. While this narrative elasticity might have been wielded as a potent tool of thematic resonance, it instead metastasizes into an obfuscating force that imparts a sense of disjointed incoherence upon the cinematic proceedings, leaving the viewer to grapple with a puzzling tapestry of events that resist cohesive assimilation.
 
 # Moreover, the fervent desire to imbue the proceedings with a veneer of intellectual profundity is acutely palpable within the film's verbiage-laden script. Dialogue, often comprising polysyllabic words of labyrinthine complexity, becomes an exercise in linguistic gymnastics that strays perilously close to the precipice of unintentional self-parody. This quixotic dalliance with ostentatious vocabulary serves only to erect an insurmountable barrier between the audience and the narrative, relegating the viewer to a state of befuddled detachment.
+# Moreover, the fervent desire to imbue the proceedings with a veneer of intellectual profundity is acutely palpable within the film's verbiage-laden script. Dialogue, often comprising polysyllabic words of labyrinthine complexity, becomes an exercise in linguistic gymnastics that strays perilously close to the precipice of unintentional self-parody. This quixotic dalliance with ostentatious vocabulary serves only to erect an insurmountable barrier between the audience and the narrative, relegating the viewer to a state of befuddled detachment.
 
+# In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
+# """
 # In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
 # """
 # plot_neuroscope(multi_token_negative_text, centred=True, verbose=False, model=model, special_dir=sentiment_dir)
@@ -295,11 +313,13 @@ class ClearCache:
 #%%
 if is_file("sentiment_activations.npy", model):
     print("Loading activations from file")
+    print("Loading activations from file")
     sentiment_activations = load_array("sentiment_activations", model)
     sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(
         sentiment_activations, device=device, dtype=torch.float32
     )
 else:
+    print("Computing activations")
     print("Computing activations")
     with ClearCache():
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(dataloader)
@@ -398,6 +418,8 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
     for x, bin_df in df.groupby('activation_cut'):
         if bin_df.empty:
             continue
+        if bin_df.empty:
+            continue
         label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
         data.append([label_props.get(sentiment, 0) for sentiment in sentiments])
     
@@ -429,12 +451,12 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
 
     return fig
 #%%
-fig = plot_bin_proportions(labelled_bin_samples)
-save_pdf(fig, "bin_proportions", model)
-save_html(fig, "bin_proportions", model)
-save_pdf(fig, "bin_proportions", model)
-fig.show()
+# fig = plot_bin_proportions(labelled_bin_samples)
+# save_pdf(fig, "bin_proportions", model)
+# save_html(fig, "bin_proportions", model)
+# fig.show()
 #%%
+# fig = plot_stacked_histogram(labelled_bin_samples)
 # fig = plot_stacked_histogram(labelled_bin_samples)
 #%%
 # ============================================================================ #
@@ -469,6 +491,8 @@ def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
     fig.update_layout(
         barmode="stack", 
         title="Stacked Histogram of Sentiment by Activation", # Anthropic Graph 2
+        barmode="stack", 
+        title="Stacked Histogram of Sentiment by Activation", # Anthropic Graph 2
         title_x=0.5,
         showlegend=True,
         xaxis_title="Activation",
@@ -477,6 +501,9 @@ def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
 
     return fig
 #%%
+# fig = plot_weighted_histogram(labelled_bin_samples)
+# save_pdf(fig, "weighted_histogram", model)
+# save_html(fig, "weighted_histogram", model)
 # fig = plot_weighted_histogram(labelled_bin_samples)
 # save_pdf(fig, "weighted_histogram", model)
 # save_html(fig, "weighted_histogram", model)
@@ -511,6 +538,8 @@ def plot_ev_histogram(df: pd.DataFrame, nbins: int = 100):
         ))
 
     fig.update_layout(
+        barmode="stack", 
+        title="Stacked Histogram of EV contribution", # Anthropic Graph 3
         barmode="stack", 
         title="Stacked Histogram of EV contribution", # Anthropic Graph 3
         title_x=0.5,
@@ -618,7 +647,6 @@ for file_name, batch_pos in batch_pos_dict.items():
 #         verbose=False,
 #     )
 #     display(HTML(html.local_src))
->>>>>>> a82b82d (Misc changes for comma experiments)
 #%%
 # ============================================================================ #
 # Top k max activating examples
@@ -653,6 +681,9 @@ def expand_exclusions(exclusions: Iterable[str]):
 #%%
 exclusions = [
     # proper nouns
+    'Flint', 'Fukushima', 'Obama', 'Assad', 'Gaza',
+    'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
+    'DoS', 'Medicaid', 'Kissinger',
     'Flint', 'Fukushima', 'Obama', 'Assad', 'Gaza',
     'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
     'DoS', 'Medicaid', 'Kissinger',
@@ -784,9 +815,21 @@ exclusions = expand_exclusions(exclusions)
 #%%
 # plot_topk(
 #     sentiment_activations, dataloader, model,
+#     k=5, layer=1, window_size=10, centred=True,
+#     inclusions=[
+#         ' saving', ' curing', ' helping', ' aiding', 
+#         ' loving', ' hugging', ' kissing', ' smiling',
+#         ' laughing', ' playing', ' dancing', ' singing',
+#     ]
+# )
+#%%
+# plot_topk(
+#     sentiment_activations, dataloader, model,
 #     k=20, layer=1, window_size=20, centred=True,
 #     inclusions=exclusions
+#     inclusions=exclusions
 # )
+#%%
 #%%
 # plot_top_p(
 #     sentiment_activations, dataloader, model,
@@ -917,9 +960,12 @@ def plot_top_mean_variance(
     fig.update_layout(title_text="Most extreme standard deviations", title_x=0.5)
     save_html(fig, "most_extreme_std_devs", model)
     save_pdf(fig, "most_extreme_std_devs", model)
+    save_html(fig, "most_extreme_std_devs", model)
+    save_pdf(fig, "most_extreme_std_devs", model)
     fig.show()
 
 # %%
+plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
 plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
 # %%
 # plot_topk(sentiment_activations, k=10, layer=1, inclusions=[" Yorkshire"], window_size=20)
