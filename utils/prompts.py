@@ -1,12 +1,24 @@
+import random
 import yaml
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, ActivationCache
 import torch
 from torch import Tensor
+from torch.utils.data import DataLoader, TensorDataset
 from jaxtyping import Float, Int, Bool
-from typing import Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
+from typeguard import typechecked
 import einops
 from enum import Enum
 import re
+from tqdm.auto import tqdm
+from utils.store import load_pickle
+from utils.circuit_analysis import get_logit_diff, get_prob_diff
+
+
+class ReviewScaffold(Enum):
+    PLAIN = 'plain'
+    CLASSIFICATION = 'classification'
+    CONTINUATION = 'continuation'
 
 
 def extract_placeholders(text: str) -> List[str]:
@@ -121,8 +133,22 @@ class PromptType(Enum):
     PROPER_NOUNS = "proper_nouns"
     MEDICAL = "medical"
     MULTI_SUBJECT_1 = "multi_subject_1"
+    TREEBANK_TRAIN = "treebank_train"
+    TREEBANK_DEV = "treebank_dev"
+    TREEBANK_TEST = "treebank_test"
+    NONE = "none"
+
+    def is_treebank(self):
+        return self in [
+            PromptType.TREEBANK_TRAIN,
+            PromptType.TREEBANK_DEV,
+            PromptType.TREEBANK_TEST,
+            PromptType.NONE,
+        ]
 
     def get_format_string(self):
+        if self.is_treebank():
+            return None
         prompt_strings = {
             PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TRAIN: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
@@ -153,15 +179,20 @@ class PromptType(Enum):
         '''
         Example output: ['ADJ', 'VRB']
         '''
+        if self.is_treebank():
+            return []
         formatter = self.get_format_string()
         return extract_placeholders(formatter)
     
+    @typechecked
     def get_placeholder_positions(self, token_list: List[str]) -> Dict[str, List[int]]:
         '''
         Identifies placeholder positions in a list of string tokens.
         Handles whether the placeholder is a single token or multi-token.
         Example output: {'ADJ': [4, 5], 'VRB': [8]}
         '''
+        if self.is_treebank():
+            return {}
         format_string = self.get_format_string()
         format_idx = 0
         curr_sub_token = None
@@ -361,23 +392,47 @@ def get_prompts(
 
 
 class CleanCorruptedDataset(torch.utils.data.Dataset):
+    clean_tokens: Int[Tensor, "batch pos"]
+    corrupted_tokens: Int[Tensor, "batch pos"]
+    answer_tokens: Int[Tensor, "batch pair correct"]
 
+    @typechecked
     def __init__(
         self, 
-        clean_tokens: Float[Tensor, "batch pos"], 
-        corrupted_tokens: Float[Tensor, "batch pos"],
-        answer_tokens: Float[Tensor, "batch pair correct"],
+        clean_tokens: Int[Tensor, "batch pos"], 
+        corrupted_tokens: Int[Tensor, "batch pos"],
+        answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
     ):
+        assert len(clean_tokens) == len(corrupted_tokens)
+        assert len(clean_tokens) == len(answer_tokens)
         super().__init__()
+        if answer_tokens.ndim == 2:
+            answer_tokens = answer_tokens.unsqueeze(1)
         self.clean_tokens = clean_tokens
         self.corrupted_tokens = corrupted_tokens
         self.answer_tokens = answer_tokens
         self.all_prompts = all_prompts
-        assert self.clean_tokens.shape == self.corrupted_tokens.shape, (
-            f"Clean tokens shape {self.clean_tokens.shape} "
-            f"does not match corrupted tokens shape {self.corrupted_tokens.shape}"
+
+    def get_subset(self, indices: List[int]):
+        return CleanCorruptedDataset(
+            self.clean_tokens[indices],
+            self.corrupted_tokens[indices],
+            self.answer_tokens[indices],
+            [self.all_prompts[i] for i in indices],
         )
+    
+    def shuffle(self, seed: int = 0):
+        random.seed(seed)
+        indices = list(range(len(self)))
+        random.shuffle(indices)
+        return self.get_subset(indices)
+
+    def to(self, device: torch.device):
+        self.clean_tokens = self.clean_tokens.to(device)
+        self.corrupted_tokens = self.corrupted_tokens.to(device)
+        self.answer_tokens = self.answer_tokens.to(device)
+        return self
 
     def __len__(self):
         return self.clean_tokens.shape[0]
@@ -388,6 +443,153 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.corrupted_tokens[idx], 
             self.answer_tokens[idx],
         )
+    
+    def get_dataloader(self, batch_size: int) -> torch.utils.data.DataLoader:
+        assert batch_size is not None, "get_dataloader: must specify batch size"
+        token_answer_dataset = TensorDataset(
+            self.corrupted_tokens, 
+            self.clean_tokens, 
+            self.answer_tokens
+        )
+        token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
+        return token_answer_dataloader
+    
+    def run_with_cache(
+        self, 
+        model: HookedTransformer, 
+        names_filter: Callable, 
+        batch_size: int,
+        requires_grad: bool = True,
+        device: torch.device = None,
+        disable_tqdm: bool = None,
+        dtype: torch.dtype = torch.float32,
+    ):
+        """
+        Note that variable names here assume denoising, i.e. corrupted -> clean
+        """
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        was_grad_enabled = torch.is_grad_enabled()
+        torch.set_grad_enabled(False)
+        model = model.eval().requires_grad_(False)
+        assert batch_size is not None, "run_with_cache: must specify batch size"
+        if model.cfg.device != device:
+            model = model.to(device)
+        corrupted_dict = dict()
+        clean_dict = dict()
+        dataloader = self.get_dataloader(batch_size=batch_size)
+        corrupted_logit_diffs = []
+        clean_logit_diffs = []
+        corrupted_prob_diffs = []
+        clean_prob_diffs = []
+        buffer_initialized = False
+        total_samples = len(dataloader.dataset)
+        corrupted_dict = dict()
+        clean_dict = dict()
+        if disable_tqdm is None:
+            disable_tqdm = len(dataloader) == 1
+        bar = tqdm(dataloader, disable=disable_tqdm)
+        bar.set_description(
+            f"Running with cache: model={model.cfg.model_name}, "
+            f"batch_size={batch_size}"
+        )
+        for idx, (corrupted_tokens, clean_tokens, answer_tokens) in enumerate(bar):
+            corrupted_tokens = corrupted_tokens.to(device)
+            clean_tokens = clean_tokens.to(device)
+            answer_tokens = answer_tokens.to(device)
+            with torch.inference_mode():
+                # corrupted forward pass
+                corrupted_logits, corrupted_cache = model.run_with_cache(
+                    corrupted_tokens, names_filter=names_filter
+                )
+                corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
+                corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
+                corrupted_cache.to('cpu')
+
+                # clean forward pass
+                clean_logits, clean_cache = model.run_with_cache(
+                    clean_tokens, names_filter=names_filter
+                )
+                clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
+                clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
+                clean_cache.to('cpu')
+
+                # Initialise the buffer tensors if necessary
+                if not buffer_initialized:
+                    for k, v in corrupted_cache.items():
+                        corrupted_dict[k] = torch.zeros(
+                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                        )
+                        clean_dict[k] = torch.zeros(
+                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                        )
+                    buffer_initialized = True
+
+                # Fill the buffer tensors
+                start_idx = idx * batch_size
+                end_idx = start_idx + corrupted_tokens.size(0)
+                for k, v in corrupted_cache.items():
+                    corrupted_dict[k][start_idx:end_idx] = v
+                for k, v in clean_cache.items():
+                    clean_dict[k][start_idx:end_idx] = v
+        corrupted_logit_diff = sum(corrupted_logit_diffs) / len(corrupted_logit_diffs)
+        clean_logit_diff = sum(clean_logit_diffs) / len(clean_logit_diffs)
+        corrupted_prob_diff = sum(corrupted_prob_diffs) / len(corrupted_prob_diffs)
+        clean_prob_diff = sum(clean_prob_diffs) / len(clean_prob_diffs)
+        corrupted_cache = ActivationCache(
+            {k: v.detach().clone().requires_grad_(requires_grad) for k, v in corrupted_dict.items()}, 
+            model=model
+        )
+        clean_cache = ActivationCache(
+            {k: v.detach().clone().requires_grad_(requires_grad) for k, v in clean_dict.items()}, 
+            model=model
+        )
+        corrupted_cache.to('cpu')
+        clean_cache.to('cpu')
+        torch.set_grad_enabled(was_grad_enabled)
+        model = model.train().requires_grad_(requires_grad)
+
+        return CleanCorruptedCacheResults(
+            dataset=self,
+            corrupted_cache=corrupted_cache,
+            clean_cache=clean_cache,
+            corrupted_logit_diffs=corrupted_logit_diffs,
+            clean_logit_diffs=clean_logit_diffs,
+            corrupted_prob_diffs=corrupted_prob_diffs,
+            clean_prob_diffs=clean_prob_diffs,
+            corrupted_logit_diff=corrupted_logit_diff,
+            clean_logit_diff=clean_logit_diff,
+            corrupted_prob_diff=corrupted_prob_diff,
+            clean_prob_diff=clean_prob_diff,
+        )
+
+
+class CleanCorruptedCacheResults:
+
+    def __init__(
+        self, dataset: CleanCorruptedDataset,
+        corrupted_cache: ActivationCache,
+        clean_cache: ActivationCache,
+        corrupted_logit_diffs: List[float],
+        clean_logit_diffs: List[float],
+        corrupted_prob_diffs: List[float],
+        clean_prob_diffs: List[float],
+        corrupted_logit_diff: float,
+        clean_logit_diff: float,
+        corrupted_prob_diff: float,
+        clean_prob_diff: float,
+    ) -> None:
+        self.dataset = dataset
+        self.corrupted_cache = corrupted_cache
+        self.clean_cache = clean_cache
+        self.corrupted_logit_diffs = corrupted_logit_diffs
+        self.clean_logit_diffs = clean_logit_diffs
+        self.corrupted_prob_diffs = corrupted_prob_diffs
+        self.clean_prob_diffs = clean_prob_diffs
+        self.corrupted_logit_diff = corrupted_logit_diff
+        self.clean_logit_diff = clean_logit_diff
+        self.corrupted_prob_diff = corrupted_prob_diff
+        self.clean_prob_diff = clean_prob_diff
 
 
 def get_dataset(
@@ -396,8 +598,14 @@ def get_dataset(
     n_pairs: int = None,
     prompt_type: str = "simple",
     comparison: Tuple[str, str] = ("positive", "negative"),
+    scaffold: ReviewScaffold = None,
 ) -> CleanCorruptedDataset:
     prompt_type = PromptType(prompt_type)
+    if prompt_type in (
+        PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV
+    ):
+        assert scaffold is not None
+        return get_pickle_dataset(model, prompt_type, scaffold).to(device)
     prompts_dict, answers_dict = get_prompts(
         model, prompt_type
     )
@@ -449,6 +657,18 @@ def get_dataset(
         clean_tokens=clean_tokens, 
         corrupted_tokens=corrupted_tokens,
     )
+
+
+def get_pickle_dataset(
+    model: HookedTransformer,
+    prompt_type: PromptType,
+    scaffold: ReviewScaffold
+):
+    return load_pickle(
+        prompt_type.value + '_' + scaffold.value,
+        model
+    )
+
 
 def get_onesided_datasets(
     model: HookedTransformer, 

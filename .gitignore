@@ -14,3 +14,4 @@ neel-plotly
 data/
 circuits/
 api_key.txt
+venv/

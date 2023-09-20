@@ -1,5 +1,7 @@
 #%%
+import glob
 import itertools
+import os
 import einops
 import re
 from fancy_einsum import einsum
@@ -18,9 +20,9 @@ from functools import partial
 from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
-from utils.prompts import get_dataset, PromptType
-from utils.circuit_analysis import get_logit_diff, get_prob_diff, create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
-from utils.store import save_array, load_array, save_html, to_csv
+from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
+from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
+from utils.store import save_array, load_array, save_html, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
@@ -28,14 +30,20 @@ pio.renderers.default = "notebook"
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    # 'gpt2-small',
+    'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
-    'EleutherAI/pythia-160m',
-    'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-160m',
+    # 'EleutherAI/pythia-410m',
+    # 'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-2.8b',
+]
+DIRECTION_GLOBS = [
+    'kmeans_simple_train_ADJ*.npy',
+    'logistic_regression_simple_train_ADJ*.npy',
+    'das_simple_train_ADJ*.npy',
+    'das_treebank*.npy',
 ]
 #%%
 def get_model(name: str) -> HookedTransformer:
@@ -49,56 +57,6 @@ def get_model(name: str) -> HookedTransformer:
     model.name = name
     model.set_use_attn_result(True)
     return model
-#%% # Data loading
-def load_data(
-    prompt_type: str, model: HookedTransformer, verbose: bool = False,
-    names_filter = None,
-) -> dict:
-    model.reset_hooks()
-    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
-    all_prompts = clean_corrupt_data.all_prompts
-    clean_tokens = clean_corrupt_data.clean_tokens
-    corrupted_tokens = clean_corrupt_data.corrupted_tokens
-    answer_tokens = clean_corrupt_data.answer_tokens
-    if verbose:
-        print(all_prompts[:5])
-        print(clean_tokens.shape)
-    
-    # Run model with cache
-    # N.B. corrupt -> clean
-    clean_logits, clean_cache = model.run_with_cache(
-        clean_tokens, 
-        names_filter=names_filter,
-    )
-    clean_logit_diff = get_logit_diff(clean_logits, answer_tokens, per_prompt=False)
-    if verbose:
-        print('clean logit diff', clean_logit_diff)
-    clean_prob_diff = get_prob_diff(clean_logits, answer_tokens, per_prompt=False)
-    if verbose:
-        print('clean prob diff', clean_prob_diff)
-    corrupted_logits, corrupted_cache = model.run_with_cache(
-        corrupted_tokens
-    )
-    corrupted_logit_diff = get_logit_diff(corrupted_logits, answer_tokens, per_prompt=False)
-    if verbose:
-        print('corrupted logit diff', corrupted_logit_diff)
-    corrupted_prob_diff = get_prob_diff(corrupted_logits, answer_tokens, per_prompt=False)
-    if verbose:
-        print('corrupted prob diff', corrupted_prob_diff)
-    return {
-        "all_prompts": all_prompts,
-        "answer_tokens": answer_tokens,
-        "clean_tokens": clean_tokens,
-        "corrupted_tokens": corrupted_tokens,
-        "clean_logits": clean_logits,
-        "clean_cache": clean_cache,
-        "clean_logit_diff": clean_logit_diff,
-        "clean_prob_diff": clean_prob_diff,
-        "corrupted_logits": corrupted_logits,
-        "corrupted_cache": corrupted_cache,
-        "corrupted_logit_diff": corrupted_logit_diff,
-        "corrupted_prob_diff": corrupted_prob_diff,
-    }
 #%%
 def display_cosine_sims(
     direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
@@ -127,44 +85,35 @@ def display_cosine_sims(
     display(styled)
     save_html(styled, "cosine_similarities", model)
 
-#%%
-def extract_layer_from_string(s: str) -> int:
-    # Find numbers that directly follow the text "layer"
-    match = re.search(r'(?<=layer)\d+', s)
-    if match:
-        number = match.group()
-        return int(number)
-    else:
-        return None
-
-#%%
-def zero_pad_layer_string(s: str) -> str:
-    # Find numbers that directly follow the text "layer"
-    number = extract_layer_from_string(s)
-    if number is not None:
-        # Replace the original number with the zero-padded version
-        s = s.replace(f'layer{number}', f'layer{number:02d}')
-    return s
-
 #%% # Direction loading
 def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List[np.ndarray], List[str]]:
-    n_layers = model.cfg.n_layers + 1
-    direction_labels = (
-        # [f'kmeans_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        # [f'pca2_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        # [f'svd_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'mean_diff_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'logistic_regression_simple_train_ADJ_layer{l}' for l in range(n_layers)] +
-        [f'das_simple_train_ADJ_layer{l}' for l in range(n_layers)]
-    )
+    model_name = get_model_name(model)
+    
+    direction_paths = [
+        path
+        for glob_str in DIRECTION_GLOBS
+        for path in glob.glob(os.path.join('data', model_name, glob_str))
+        if "None" not in path and "_all_" not in path
+    ]
+    direction_labels = [os.path.split(path)[-1] for path in direction_paths]
+    del direction_paths
     directions = [
         load_array(label, model) for label in direction_labels
     ]
     for i, direction in enumerate(directions):
-        if direction.ndim == 2:
+        if direction.ndim == 2 and direction.shape[1] == 1:
+            direction = direction.squeeze(1)
+        elif direction.ndim == 2 and direction.shape[0] == 1:
             direction = direction.squeeze(0)
+        assert direction.ndim == 1, f"Direction {direction_labels[i]} has shape {direction.shape}"
         directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
     direction_labels = [zero_pad_layer_string(label) for label in direction_labels]
+    sorted_indices = sorted(
+        range(len(direction_labels)), key=lambda i: direction_labels[i]
+    )
+    direction_labels = [direction_labels[i] for i in sorted_indices]
+    directions = [directions[i] for i in sorted_indices]
+
     if display:
         display_cosine_sims(direction_labels, directions)
     return directions, direction_labels
@@ -172,14 +121,60 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
 # ============================================================================ #
 # Directional activation patching
 #%%
+def batched_act_patch(
+    model: HookedTransformer,
+    orig_input: Union[str, List[str], Int[Tensor, "batch seq_len"]],
+    patching_nodes: Union[IterNode, Node, List[Node]],
+    patching_metric: Callable,
+    answer_tokens: Int[Tensor, "batch pair correct"],
+    new_cache: ActivationCache,
+    batch_size: int,
+    apply_metric_to_cache: bool = False,
+    verbose: bool = False,
+    leave: bool = True,
+    disable: bool = False,
+) -> Float[Tensor, ""]:
+    was_grad_enabled = torch.is_grad_enabled()
+    torch.set_grad_enabled(False)
+    device = model.cfg.device
+    result = 0
+    for batch_idx, start_idx in enumerate(range(0, len(orig_input), batch_size)):
+        end_idx = min(start_idx + batch_size, len(orig_input))
+        batch_orig_input = orig_input[start_idx:end_idx].to(device=device)
+        batch_new_cache = ActivationCache({
+            k: v[start_idx:end_idx].to(device) for k, v in new_cache.items()
+        }, model=model)
+        batch_answer_tokens = answer_tokens[start_idx:end_idx].to(device)
+        batch_metric = partial(
+            patching_metric,
+            answer_tokens=batch_answer_tokens,
+        )
+        batch_result = act_patch(
+            model=model,
+            orig_input=batch_orig_input,
+            new_cache=batch_new_cache,
+            patching_nodes=patching_nodes,
+            patching_metric=batch_metric,
+            apply_metric_to_cache=apply_metric_to_cache,
+            verbose=verbose,
+            leave=leave,
+            disable=disable,
+        )
+        result += batch_result
+    torch.set_grad_enabled(was_grad_enabled)
+    return result / (batch_idx + 1)
+
+
 def run_position_patching(
     model: HookedTransformer,
     orig_input: Float[Tensor, "batch seq"],
     new_cache: ActivationCache,
     patching_metric: Callable,
+    answer_tokens: Int[Tensor, "batch pair correct"],
     seq_pos: Union[None, int],
-    direction_label: str
-) -> Tuple[Float[Tensor, ""], go.Figure]:
+    direction_label: str,
+    batch_size: int,
+) -> float:
     """
     Runs patching experiment for a given position and layer.
     seq_pos=None means all positions.
@@ -188,24 +183,28 @@ def run_position_patching(
     layer = extract_layer_from_string(direction_label)
     act_name, hook_layer = get_resid_name(layer, model)
     node_name = act_name.split('hook_')[-1]
-    return act_patch(
+    return batched_act_patch(
         model=model,
         orig_input=orig_input,
         new_cache=new_cache,
+        batch_size=batch_size,
         patching_nodes=Node(node_name, layer=hook_layer, seq_pos=seq_pos),
         patching_metric=patching_metric,
-        verbose=False,
+        answer_tokens=answer_tokens,
+        verbose=True,
         disable=True,
-    ) * 100
+    ).item() * 100
 #%%
 def run_head_patching(
     model: HookedTransformer,
     orig_input: Float[Tensor, "batch seq"],
     new_cache: ActivationCache,
     patching_metric: Callable,
+    answer_tokens: Int[Tensor, "batch pair correct"],
     seq_pos: Union[None, int],
     heads: List[Tuple[int]],
-) -> Tuple[Float[Tensor, ""], go.Figure]:
+    batch_size: int,
+) -> float:
     """
     Runs patching experiment for given heads and position.
     seq_pos=None means all positions.
@@ -214,15 +213,17 @@ def run_head_patching(
     nodes = [
         Node('result', layer, head, seq_pos=seq_pos) for layer, head in heads
     ]
-    return act_patch(
+    return batched_act_patch(
         model=model,
         orig_input=orig_input,
         new_cache=new_cache,
+        batch_size=batch_size,
         patching_nodes=nodes,
         patching_metric=patching_metric,
-        verbose=False,
+        answer_tokens=answer_tokens,
+        verbose=True,
         disable=True,
-    ) * 100
+    ).item() * 100
 #%%
 def get_results_for_direction_and_position(
     patching_metric_base: Callable, 
@@ -231,42 +232,68 @@ def get_results_for_direction_and_position(
     direction_label: str, 
     direction: Float[Tensor, "d_model"],
     model: HookedTransformer,
+    device: torch.device = None,
+    batch_size: int = 16,
     heads: List[Tuple[int]] = None,
+    scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
 ) -> float:
     if heads is None:
-        names_filter = lambda name: 'resid' in name
+        layer = extract_layer_from_string(direction_label)
+        resid_name = get_resid_name(layer, model)[0]
+        names_filter = lambda name: name == resid_name
     else:
         names_filter = lambda name: 'result' in name
-    data_dict = load_data(prompt_type, model, names_filter=names_filter)
-    example_prompt = model.to_str_tokens(data_dict["all_prompts"][0])
+    model.reset_hooks()
+    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type, scaffold=scaffold)
+    patching_dataset: CleanCorruptedCacheResults = clean_corrupt_data.run_with_cache(
+        model, 
+        names_filter=names_filter,
+        batch_size=batch_size,
+        device=device,
+        disable_tqdm=True,
+    )
+    example_prompt = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     if position == 'ALL':
         seq_pos = None
     else:
         seq_pos = prompt_type.get_placeholder_positions(example_prompt)[position][-1]
     if "logit" in patching_metric_base.__name__:
-        clean_diff = data_dict["clean_logit_diff"]
-        corrupt_diff = data_dict["corrupted_logit_diff"]
+        clean_diff = patching_dataset.clean_logit_diff
+        corrupt_diff = patching_dataset.corrupted_logit_diff
     else:
-        clean_diff = data_dict["clean_prob_diff"]
-        corrupt_diff = data_dict["corrupted_prob_diff"]
+        clean_diff = patching_dataset.clean_prob_diff
+        corrupt_diff = patching_dataset.corrupted_prob_diff
     patching_metric = partial(
         patching_metric_base, 
-        answer_tokens=data_dict["answer_tokens"],
-        corrupted_value=corrupt_diff,
+        flipped_value=corrupt_diff,
         clean_value=clean_diff,
         return_tensor=True,
     )
 
     direction = direction / direction.norm()
     new_cache = create_cache_for_dir_patching(
-        data_dict["clean_cache"], data_dict["corrupted_cache"], direction, model
+        patching_dataset.clean_cache, patching_dataset.corrupted_cache, direction, model
     )
     if heads is None:
         return run_position_patching(
-            model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, direction_label
+            model=model, 
+            orig_input=clean_corrupt_data.corrupted_tokens, 
+            new_cache=new_cache, 
+            batch_size=batch_size,
+            patching_metric=patching_metric, 
+            answer_tokens=clean_corrupt_data.answer_tokens,
+            seq_pos=seq_pos, 
+            direction_label=direction_label,
         )
     return run_head_patching(
-        model, data_dict["corrupted_tokens"], new_cache, patching_metric, seq_pos, heads
+        model=model, 
+        orig_tokens=clean_corrupt_data.corrupted_tokens, 
+        new_cache=new_cache, 
+        batch_size=batch_size,
+        patching_metric=patching_metric, 
+        answer_tokens=clean_corrupt_data.answer_tokens,
+        seq_pos=seq_pos, 
+        heads=heads,
     )
 
 #%%
@@ -274,8 +301,11 @@ def get_results_for_metric(
     patching_metric_base: Callable, prompt_types: Iterable[PromptType], 
     direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
     model: HookedTransformer,
+    device: torch.device = None,
     heads: List[Tuple[int]] = None,
     disable_tqdm: bool = False,
+    scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
+    batch_size: int = 16,
 ) -> Float[pd.DataFrame, "direction prompt"]:
     use_heads_label = "resid" if heads is None else "attn_result"
     metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
@@ -286,19 +316,37 @@ def get_results_for_metric(
     )
     results = pd.DataFrame(index=direction_labels, dtype=float)
     for prompt_type, (direction_label, direction) in bar:
-        bar.set_description(f"{prompt_type.value} {direction_label}")
+        bar.set_description(f"{prompt_type.value} {direction_label} batch size {batch_size}")
         placeholders = prompt_type.get_placeholders() + ['ALL']
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
             result = get_results_for_direction_and_position(
-                patching_metric_base, prompt_type, position, direction_label, direction, model, heads
+                patching_metric_base=patching_metric_base, 
+                prompt_type=prompt_type,
+                position=position,
+                direction_label=direction_label,
+                direction=direction,
+                model=model,
+                device=device,
+                heads=heads,
+                scaffold=scaffold,
+                batch_size=batch_size,
             )
             # Ensure the column exists
             if (prompt_type.value, position) not in results.columns:
                 results[column] = np.nan
             results.loc[direction_label, column] = result
-    results.columns = pd.MultiIndex.from_tuples(results.columns, names=['prompt', 'position'])
-    to_csv(results, f"direction_patching_{metric_label}", model)
+    results.columns = pd.MultiIndex.from_tuples(
+        results.columns,
+        names=['prompt', 'position']
+    )
+    results.sort_index(axis=1, level=0, inplace=True)
+    export_results(results, metric_label, use_heads_label)
+    return results
+#%%
+def export_results(
+    results: pd.DataFrame, metric_label: str, use_heads_label: str
+) -> None:
     layers_style = (
         results
         .style
@@ -306,9 +354,31 @@ def get_results_for_metric(
         .format("{:.1f}%")
         .set_caption(f"Direction patching ({metric_label}, {use_heads_label}) in {model.name}")
     )
+    to_csv(results, f"direction_patching_{metric_label}", model)
     save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
-    return results
+
+    s_df = results[~results.index.str.contains("treebank")].sort_index(axis=1, level=0)
+    matches = s_df.index.str.extract(DIRECTION_PATTERN)
+    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['direction', 'dataset', 'position', 'layer'])
+    s_df.index = multiindex
+    s_df = s_df.reset_index().groupby(['direction', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
+    s_style = s_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
+    to_csv(s_df, f"direction_patching_{metric_label}_simple", model)
+    save_html(s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model)
+    display(s_style)
+    
+    t_df = results[results.index.str.contains("das_treebank") & ~results.index.str.contains("None")].sort_index(axis=1, level=0)
+    t_df = t_df.loc[:, t_df.columns.get_level_values(0).str.contains("treebank")]
+    matches = t_df.index.str.extract(DIRECTION_PATTERN)
+    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['direction', 'dataset', 'position', 'layer'])
+    t_df.index = multiindex
+    t_df = t_df.loc[t_df.index.get_level_values(-1).astype(int) < t_df.index.get_level_values(-1).astype(int).max() - 1]
+    t_df.sort_index(level=3)
+    t_style = t_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
+    to_csv(t_df, f"direction_patching_{metric_label}_treebank", model)
+    save_html(t_style, f"direction_patching_{metric_label}_{use_heads_label}_treebank", model)
+    display(t_style)
 # %%
 HEADS = {
     "EleutherAI/pythia-2.8b": [
@@ -317,11 +387,12 @@ HEADS = {
     ]
 }
 PROMPT_TYPES = [
-    PromptType.SIMPLE_TRAIN,
+    PromptType.TREEBANK_TEST,
+    # PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
     # PromptType.COMPLETION,
     # PromptType.SIMPLE_ADVERB,
-    PromptType.SIMPLE_MOOD,
+    # PromptType.SIMPLE_MOOD,
     # PromptType.SIMPLE_FRENCH,
 ]
 METRICS = [
@@ -329,12 +400,25 @@ METRICS = [
     # logit_flip_metric,
     # prob_diff_denoising,
 ]
-USE_HEADS = [True, ]
+USE_HEADS = [False, ]
+SCAFFOLD = ReviewScaffold.CONTINUATION
 model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
 )
+BATCH_SIZES = {
+    "gpt2-small": 512,
+    "gpt2-medium": 512,
+    "gpt2-large": 256,
+    "gpt2-xl": 256,
+    "EleutherAI/pythia-160m": 512,
+    "EleutherAI/pythia-410m": 512,
+    "EleutherAI/pythia-1.4b": 256,
+    "EleutherAI/pythia-2.8b": 256,
+}
 model = None
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 for model_name, metric, use_heads in model_metric_bar:
+    batch_size = BATCH_SIZES[model_name]
     if use_heads and model_name not in HEADS:
         continue
     elif use_heads:
@@ -342,11 +426,12 @@ for model_name, metric, use_heads in model_metric_bar:
     else:
         heads = None
     patch_label = "attn_result" if use_heads else "resid" 
-    model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label}")
+    model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label} batch size {batch_size}")
     if model is None or model.name != model_name:
         model = get_model(model_name)
     DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
     results = get_results_for_metric(
-        metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, heads
+        metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, device, heads, 
+        scaffold=SCAFFOLD, batch_size=batch_size
     )
 # %%

@@ -1,11 +1,12 @@
 import unittest
 import torch
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.hook_points import HookPoint
 from utils.das import RotateLayer, InverseRotateLayer, hook_fn_base, act_patch_simple, TrainingConfig, train_das_subspace
 from utils.prompts import PromptType
 
-class TestFunctions(unittest.TestCase):
+
+class TestDASFunctions(unittest.TestCase):
 
     def test_rotate_layer(self):
         torch.manual_seed(42)
@@ -46,6 +47,7 @@ class TestFunctions(unittest.TestCase):
 
     def test_training_config(self):
         config_dict = {
+            "batch_size": 1,
             "seed": 42,
             "lr": 0.001,
             "weight_decay": 0.0,
@@ -64,13 +66,13 @@ class TestFunctions(unittest.TestCase):
         self.assertTrue(torch.is_grad_enabled())
 
     def test_train_das_direction(self):
-        device = 'cpu'
+        device = torch.device('cpu')
         model = HookedTransformer.from_pretrained(
             'attn-only-1l',
             device=device,
         ).train()
         model.name = 'test'
-        direction = train_das_subspace(
+        direction, save_path = train_das_subspace(
             model, device,
             PromptType.SIMPLE, 'ADJ', 0,
             PromptType.SIMPLE, 'ADJ', 0,
@@ -78,6 +80,8 @@ class TestFunctions(unittest.TestCase):
             epochs=1,
         )
         self.assertTrue(isinstance(direction, torch.Tensor))
+        self.assertTrue(isinstance(save_path, str))
+
 
 if __name__ == "__main__":
     unittest.main()

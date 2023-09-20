@@ -1,5 +1,5 @@
 from jaxtyping import Float, Int, Bool
-from typing import Dict, Iterable, List, Tuple, Union
+from typing import Dict, Iterable, List, Literal, Tuple, Union
 import numpy as np
 import torch
 from torch import Tensor
@@ -31,39 +31,20 @@ harry_potter_start = """
 
     But on the edge of town, drills were driven out of his mind by something else. As he sat in the usual morning traffic jam, he couldn’t help noticing that there seemed to be a lot of strangely dressed people about. People in cloaks. Mr. Dursley couldn’t bear people who dressed in funny clothes — the getups you saw on young people! He supposed this was some stupid new fashion. He drummed his fingers on the steering wheel and his eyes fell on a huddle of these weirdos standing quite close by. They were whispering excitedly together. Mr. Dursley was enraged to see that a couple of them weren’t young at all; why, that man had to be older than he was, and wearing an emerald-green cloak! The nerve of him! But then it struck Mr. Dursley that this was probably some silly stunt — these people were obviously collecting for something . . . yes, that would be it. The traffic moved on and a few minutes later, Mr. Dursley arrived in the Grunnings parking lot, his mind back on drills.
 
-    Mr. Dursley always sat with his back to the window in his office on the ninth floor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at ﬁve diﬀerent people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
+    Mr. Dursley always sat with his back to the window in his office on the ninth floor. If he hadn’t, height have found it harder to concentrate on drills that morning. He didn’t see the owls swooping past in broad daylight, though people down in the street did; they pointed and gazed open-mouthed as owl after owl sped overhead. Most of them had never seen an owl even at nighttime. Mr. Dursley, however, had a perfectly normal, owl-free morning. He yelled at five different people. He made several important telephone calls and shouted a bit more. He was in a very good mood until lunchtime, when he thought he’d stretch his legs and walk across the road to buy himself a bun from the bakery.
 
     He’d forgotten all about the people in cloaks until he passed a group of them next to the baker’s. He eyed them angrily as he passed. He didn’t know why, but they made him uneasy. This bunch were whispering excitedly, too, and he couldn’t see a single collecting tin. It was on his way back past them, clutching a large doughnut in a bag, that he caught a few words of what they were saying.
 """
 
 # Harry Potter in French
 harry_potter_fr_start = """
-Mr et Mrs Dursley, qui habitaient au 4, Privet Drive, avaient toujours affirmé avec la plus grande
-fierté qu'ils étaient parfaitement normaux, merci pour eux. Jamais quiconque n'aurait imaginé qu'ils
-puissent se trouver impliqués dans quoi que ce soit d'étrange ou de mystérieux. Ils n'avaient pas de
-temps à perdre avec des sornettes.
-Mr Dursley dirigeait la Grunnings, une entreprise qui fabriquait des perceuses. C'était un homme
-grand et massif, qui n'avait pratiquement pas de cou, mais possédait en revanche une moustache de
-belle taille. Mrs Dursley, quant à elle, était mince et blonde et disposait d'un cou deux fois plus long
-que la moyenne, ce qui lui était fort utile pour espionner ses voisins en regardant par-dessus les
-clôtures des jardins. Les Dursley avaient un petit garçon prénommé Dudley et c'était à leurs yeux le
-plus bel enfant du monde.
-Les Dursley avaient tout ce qu'ils voulaient. La seule chose indésirable qu'ils possédaient, c'était un
-secret dont ils craignaient plus que tout qu'on le découvre un jour. Si jamais quiconque venait à
-entendre parler des Potter, ils étaient convaincus qu'ils ne s'en remettraient pas. Mrs Potter était la
-soeur de Mrs Dursley, mais toutes deux ne s'étaient plus revues depuis des années. En fait, Mrs
-Dursley faisait comme si elle était fille unique, car sa soeur et son bon à rien de mari étaient aussi
-éloignés que possible de tout ce qui faisait un Dursley. Les Dursley tremblaient d'épouvante à la
-pensée de ce que diraient les voisins si par malheur les Potter se montraient dans leur rue. Ils savaient
-que les Potter, eux aussi, avaient un petit garçon, mais ils ne l'avaient jamais vu. Son existence
-constituait une raison supplémentaire de tenir les Potter à distance: il n'était pas question que le petit
-Dudley se mette à fréquenter un enfant comme celui-là.
-Lorsque Mr et Mrs Dursley s'éveillèrent, au matin du mardi où commence cette histoire, il faisait gris
-et triste et rien dans le ciel nuageux ne laissait prévoir que des choses étranges et mystérieuses allaient
-bientôt se produire dans tout le pays. Mr Dursley fredonnait un air en nouant sa cravate la plus sinistre
-pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potins du quartier en
-s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses
-poumons.
+Mr et Mrs Dursley, qui habitaient au 4, Privet Drive, avaient toujours affirmé avec la plus grande fierté qu'ils étaient parfaitement normaux, merci pour eux. Jamais quiconque n'aurait imaginé qu'ils puissent se trouver impliqués dans quoi que ce soit d'étrange ou de mystérieux. Ils n'avaient pas de temps à perdre avec des sornettes.
+
+Mr Dursley dirigeait la Grunnings, une entreprise qui fabriquait des perceuses. C'était un homme grand et massif, qui n'avait pratiquement pas de cou, mais possédait en revanche une moustache de belle taille. Mrs Dursley, quant à elle, était mince et blonde et disposait d'un cou deux fois plus long que la moyenne, ce qui lui était fort utile pour espionner ses voisins en regardant par-dessus les clôtures des jardins. Les Dursley avaient un petit garçon prénommé Dudley et c'était à leurs yeux le plus bel enfant du monde.
+
+Les Dursley avaient tout ce qu'ils voulaient. La seule chose indésirable qu'ils possédaient, c'était un secret dont ils craignaient plus que tout qu'on le découvre un jour. Si jamais quiconque venait à entendre parler des Potter, ils étaient convaincus qu'ils ne s'en remettraient pas. Mrs Potter était la soeur de Mrs Dursley, mais toutes deux ne s'étaient plus revues depuis des années. En fait, Mrs Dursley faisait comme si elle était fille unique, car sa soeur et son bon à rien de mari étaient aussi éloignés que possible de tout ce qui faisait un Dursley. Les Dursley tremblaient d'épouvante à la pensée de ce que diraient les voisins si par malheur les Potter se montraient dans leur rue. Ils savaient que les Potter, eux aussi, avaient un petit garçon, mais ils ne l'avaient jamais vu. Son existence constituait une raison supplémentaire de tenir les Potter à distance: il n'était pas question que le petit Dudley se mette à fréquenter un enfant comme celui-là.
+
+Lorsque Mr et Mrs Dursley s'éveillèrent, au matin du mardi où commence cette histoire, il faisait gris et triste et rien dans le ciel nuageux ne laissait prévoir que des choses étranges et mystérieuses allaient bientôt se produire dans tout le pays. Mr Dursley fredonnait un air en nouant sa cravate la plus sinistre pour aller travailler et Mrs Dursley racontait d'un ton badin les derniers potins du quartier en s'efforçant d'installer sur sa chaise de bébé le jeune Dudley qui braillait de toute la force de ses poumons.
 """
 
 
@@ -122,30 +103,29 @@ def plot_neuroscope(
     centred: bool, 
     activations: Float[Tensor, "pos layer 1"] = None,
     special_dir: Float[Tensor, "d_model"] = None,
-    verbose=False,
+    verbose: bool = False,
+    default_layer: Union[Literal["all"], int] = 1,
+    show_selectors: bool = True,
 ):
     """
     Wrapper around CircuitVis's `text_neuron_activations`.
     Performs centring if `centred` is True.
     Computes activations based on projecting onto a resid stream direction if not provided.
     If you don't need centring or projection, use `text_neuron_activations` directly.
+    The keyword "all" for default_layer is used to show all layers at once.
     """
     assert activations is not None or special_dir is not None
-    tokens: Int[Tensor, "batch pos"] = model.to_tokens(text)
-    if isinstance(text, str):
-        str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
-    else:
-        str_tokens = text
+    tokens: Int[Tensor, "1 pos"] = model.to_tokens(text)
     if verbose:
         print(f"Tokens shape: {tokens.shape}")
     if activations is None:
         if verbose:
             print("Computing activations")
-        activations: Float[Tensor, "batch pos layer"] = get_projections_for_text(
+        activations: Float[Tensor, "1 pos layer"] = get_projections_for_text(
             tokens, special_dir=special_dir, model=model
         )
         activations: Float[Tensor, "pos layer 1"] = einops.rearrange(
-            activations, "batch pos layer -> pos layer batch"
+            activations, "1 pos layer -> pos layer 1"
         )
         if verbose:
             print(f"Activations shape: {activations.shape}")
@@ -160,19 +140,50 @@ def plot_neuroscope(
     assert (
         activations.ndim == 3
     ), f"activations must be of shape [tokens x layers x neurons], found {activations.shape}"
+    
+    if isinstance(text, str):
+        str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
+    else:
+        str_tokens = text
+
+    if default_layer == "all":
+        n_layers = activations.shape[1]
+        orig_len = len(str_tokens)
+        str_tokens = (str_tokens + ["\n"]) * n_layers
+        activations = torch.cat([activations, torch.zeros_like(activations[:1])], dim=0)
+        activations = einops.rearrange(
+            activations, "pos layer 1 -> (layer pos) 1 1"
+        )
+        first_dimension_labels = ["all"]
+        default_layer = 0
+        assert len(str_tokens) == (orig_len + 1) * n_layers
+        assert len(activations) == (orig_len + 1) * n_layers
+    else:
+        first_dimension_labels = [f"{i}_pre" for i in range(activations.shape[1])]
+    
+    # Check shapes before calling text_neuron_activations()
     assert len(str_tokens) == activations.shape[0], (
         "tokens and activations must have the same length, found "
         f"tokens={len(str_tokens)} and acts={activations.shape[0]}, "
         f"tokens={str_tokens}, "
         f"activations={activations.shape}"
-
     )
+    if verbose:
+        print(
+            "Calling text_neuron_activations with "
+            f"tokens={len(str_tokens)} and acts={activations.shape}"
+            f"first_dimension_labels={first_dimension_labels}, "
+            f"first_dimension_default={default_layer},"
+        )
     return text_neuron_activations(
         tokens=str_tokens, 
         activations=activations,
-        first_dimension_name="Layer (resid_pre)",
+        first_dimension_name="Layer",
+        first_dimension_labels=first_dimension_labels,
         second_dimension_name="Model",
         second_dimension_labels=[model.cfg.model_name],
+        first_dimension_default=default_layer,
+        show_selectors=show_selectors
     )
 
 
@@ -274,6 +285,8 @@ def _plot_topk(
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(exclusions, dataloader, model, all_activations)
         masked_activations = activations.where(~mask, other=ignore_value)
     elif inclusions is not None:
+        for incl in inclusions:
+            model.to_single_token(incl)
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(inclusions, dataloader, model, all_activations)
         assert mask.sum() >= k, (
             f"Only {mask.sum()} positions match the inclusions, but {k} are required"

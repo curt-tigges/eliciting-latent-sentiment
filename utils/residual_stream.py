@@ -1,11 +1,14 @@
-from typing import List, Tuple
+from typing import Callable, List, Tuple, Union
+import einops
 from jaxtyping import Int, Float, Bool
 from typeguard import typechecked
 import torch
 from torch import Tensor
-from transformer_lens import HookedTransformer
+from torch.utils.data import DataLoader, TensorDataset
+from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.utils import get_act_name
-from utils.prompts import get_dataset, PromptType
+from tqdm.auto import tqdm
+from utils.prompts import ReviewScaffold, get_dataset, PromptType
 
 
 def get_resid_name(layer: int, model: HookedTransformer) -> Tuple[str, int]:
@@ -53,33 +56,132 @@ class ResidualStreamDataset:
     def __eq__(self, other: object) -> bool:
         return set(self.prompt_strings) == set(other.prompt_strings)
     
+    def get_dataloader(self, batch_size: int) -> torch.utils.data.DataLoader:
+        assert batch_size is not None, "get_dataloader: must specify batch size"
+        token_answer_dataset = TensorDataset(
+            self.prompt_tokens, 
+        )
+        token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
+        return token_answer_dataloader
+    
+    def run_with_cache(
+        self, 
+        names_filter: Callable, 
+        batch_size: int,
+        requires_grad: bool = True,
+        device: torch.device = None,
+        disable_tqdm: bool = None,
+        dtype: torch.dtype = torch.float32,
+    ):
+        """
+        Note that variable names here assume denoising, i.e. corrupted -> clean
+        """
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        was_grad_enabled = torch.is_grad_enabled()
+        torch.set_grad_enabled(False)
+        model = self.model.eval().requires_grad_(False)
+        assert batch_size is not None, "run_with_cache: must specify batch size"
+        if model.cfg.device != device:
+            model = model.to(device)
+        act_dict = dict()
+        dataloader = self.get_dataloader(batch_size=batch_size)
+        buffer_initialized = False
+        total_samples = len(dataloader.dataset)
+        if disable_tqdm is None:
+            disable_tqdm = len(dataloader) > 1
+        bar = tqdm(dataloader, disable=disable_tqdm)
+        bar.set_description(
+            f"Running with cache: model={model.cfg.model_name}, "
+            f"batch_size={batch_size}"
+        )
+        for idx, (prompt_tokens, ) in enumerate(bar):
+            prompt_tokens = prompt_tokens.to(device)
+            with torch.inference_mode():
+                # forward pass
+                _, fwd_cache = model.run_with_cache(
+                    prompt_tokens, names_filter=names_filter, return_type=None
+                )
+                fwd_cache.to('cpu')
+
+                # Initialise the buffer tensors if necessary
+                if not buffer_initialized:
+                    for k, v in fwd_cache.items():
+                        act_dict[k] = torch.zeros(
+                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                        )
+                    buffer_initialized = True
+
+                # Fill the buffer tensors
+                start_idx = idx * batch_size
+                end_idx = start_idx + prompt_tokens.size(0)
+                for k, v in fwd_cache.items():
+                    act_dict[k][start_idx:end_idx] = v
+        act_cache = ActivationCache(
+            {k: v.detach().clone().requires_grad_(requires_grad) for k, v in act_dict.items()}, 
+            model=model
+        )
+        act_cache.to('cpu')
+        torch.set_grad_enabled(was_grad_enabled)
+        model = model.train().requires_grad_(requires_grad)
+
+        return _, act_cache
+    
     @typechecked
-    def embed(self, position_type: str, layer: int) -> Float[Tensor, "batch d_model"]:
+    def embed(
+        self, position_type: Union[str, None], layer: int, 
+        batch_size: int = 64, seed: int = 0,
+    ) -> Float[Tensor, "batch d_model"]:
         """
         Returns a dataset of embeddings at the specified position and layer.
         Useful for training classifiers on the residual stream.
         """
+        torch.manual_seed(seed)
         assert 0 <= layer <= self.model.cfg.n_layers
-        assert position_type in self.placeholder_dict.keys(), (
+        assert position_type is None or position_type in self.placeholder_dict.keys(), (
             f"Position type {position_type} not found in {self.placeholder_dict.keys()} "
             f"for prompt type {self.prompt_type}"
         )
-        embed_position = self.placeholder_dict[position_type][-1]
         hook, _ = get_resid_name(layer, self.model)
-        _, cache = self.model.run_with_cache(
-            self.prompt_tokens, return_type=None, names_filter = lambda name: hook == name
+        _, cache = self.run_with_cache(
+            names_filter = lambda name: hook == name, batch_size=batch_size
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook]
-        return out[:, embed_position, :].cpu().detach()
+        if position_type is None:
+            # Step 1: Identify non-zero positions in the tensor
+            non_pad_mask: Bool[Tensor, "batch pos"] = self.prompt_tokens != self.model.tokenizer.pad_token_id
+
+            # Step 2: Check if values at these positions are not constant across batches
+            non_constant_mask: Bool[Tensor, "pos"] = (
+                self.prompt_tokens != self.prompt_tokens[0]
+            ).any(dim=0)
+            valid_positions: Bool[Tensor, "batch pos"] = non_pad_mask & non_constant_mask
+
+            # Step 3: Randomly sample from these positions for each batch
+            embed_position: Int[Tensor, "batch"] = torch.multinomial(
+                valid_positions.float(), 1
+            ).squeeze().to(device=out.device)
+            return out[torch.arange(len(out)), embed_position, :].detach().cpu()
+        else:
+            embed_position = self.placeholder_dict[position_type][-1]
+            return out[:, embed_position, :].detach().cpu()
     
     @classmethod
     def get_dataset(
         cls,
         model: HookedTransformer,
         device: torch.device,
-        prompt_type: str = "simple_train"
+        prompt_type: PromptType = PromptType.SIMPLE_TRAIN,
+        scaffold: ReviewScaffold = None,
     ) -> 'ResidualStreamDataset':
-        clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type)
+        """
+        N.B. labels assume that first batch corresponds to 1
+        """
+        if prompt_type == PromptType.NONE:
+            return None
+        clean_corrupt_data = get_dataset(
+            model, device, prompt_type=prompt_type, scaffold=scaffold
+        )
         clean_labels = clean_corrupt_data.answer_tokens[:, 0, 0] == clean_corrupt_data.answer_tokens[0, 0, 0]
         
         assert len(clean_corrupt_data.all_prompts) == len(clean_corrupt_data.answer_tokens)

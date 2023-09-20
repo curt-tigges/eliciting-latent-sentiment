@@ -20,7 +20,7 @@ from transformer_lens import HookedTransformer, HookedTransformerConfig, Factore
 import transformer_lens.patching as patching
 
 from torch import Tensor
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 from jaxtyping import Float, Int, Bool
 from typing import List, Optional, Callable, Tuple, Dict, Literal, Set
 from rich import print as rprint

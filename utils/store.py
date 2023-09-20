@@ -11,6 +11,34 @@ from pandas.io.formats.style import Styler
 import re
 import pickle
 from datasets import dataset_dict
+import imgkit
+
+
+DIRECTION_PATTERN = (
+    r'^(kmeans|pca|das|logistic_regression|mean_diff)_'
+    r'(simple_train|treebank_train)_'
+    r'(ADJ|ALL)_'
+    r'layer(\d*)'
+    r'\.npy$'
+)
+
+
+def extract_layer_from_string(s: str) -> int:
+    # Find numbers that directly follow the text "layer"
+    match = re.search(r'(?<=layer)\d+', s)
+    if match:
+        number = match.group()
+        return int(number)
+    else:
+        return None
+
+def zero_pad_layer_string(s: str) -> str:
+    # Find numbers that directly follow the text "layer"
+    number = extract_layer_from_string(s)
+    if number is not None:
+        # Replace the original number with the zero-padded version
+        s = s.replace(f'layer{number}', f'layer{number:02d}')
+    return s
 
 
 def add_styling(html):
@@ -192,7 +220,9 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
 def save_html(
     html_data: Union[go.Figure, RenderedHTML, Styler],
     label: str, 
-    model: Union[HookedTransformer, str]
+    model: Union[HookedTransformer, str],
+    local: bool = True,
+    static: bool = False,
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -203,13 +233,17 @@ def save_html(
     if isinstance(html_data, go.Figure):
         html_data.write_html(path)
     elif isinstance(html_data, RenderedHTML):
+        html_str = html_data.local_src if local else html_data.cdn_src
         with open(path, 'w') as f:
-            f.write(str(html_data))
+            f.write(html_str)
     elif isinstance(html_data, Styler):
         html = html_data.to_html()
         html = add_styling(html)
         with open(path, 'w') as f:
             f.write(html)
+    if static:
+        static_path = os.path.join(model_path, label + '.png')
+        imgkit.from_file(path, static_path)
     return path
 
 
@@ -284,4 +318,35 @@ def save_dataset_dict(
         os.mkdir(model_path)
     path = os.path.join(model_path, label + '.pkl')
     dataset_dict.save_to_disk(path)
+    return path
+
+
+def save_image(
+    figure: go.Figure,
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.png')
+    figure.write_image(path)
+    return path
+
+
+def save_pdf(
+    figure: go.Figure,
+    label: str,
+    model: Union[HookedTransformer, str],
+):
+    model: str = get_model_name(model)
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.pdf')
+    figure.write_image(path, format='pdf')
+    figure.write_image(path, format='pdf')
     return path

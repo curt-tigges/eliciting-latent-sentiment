@@ -1,6 +1,7 @@
 from enum import Enum
 from functools import partial
 from typing import Iterable, List, Tuple
+import einops
 from jaxtyping import Int, Float
 from torch import Tensor
 import numpy as np
@@ -78,8 +79,12 @@ def _fit(
     n_components: int = None,
     method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
-    train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(train_pos, train_layer)
-    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(test_pos, test_layer)
+    train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
+        train_pos, train_layer
+    )
+    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
+        test_pos, test_layer
+    )
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
@@ -151,10 +156,13 @@ def _fit(
             vh_train[0, :] / np.linalg.norm(vh_train[0, :])
         ) * np.sign(s_train[0])
     elif method == ClassificationMethod.MEAN_DIFF:
-        train_pos_embeddings = train_embeddings[train_data.binary_labels == 1, :]
-        train_neg_embeddings = train_embeddings[train_data.binary_labels == 0, :]
+        is_pos = train_data.binary_labels == 1 
+        is_neg = train_data.binary_labels == 0
+        train_pos_embeddings = train_embeddings[is_pos, :]
+        train_neg_embeddings = train_embeddings[is_neg, :]
         line: Float[np.ndarray, "d_model"]  = (
-            train_pos_embeddings.mean(axis=0) - train_neg_embeddings.mean(axis=0)
+            train_pos_embeddings.mean(axis=0) - 
+            train_neg_embeddings.mean(axis=0)
         )
     # get accuracy
     _, _, insample_accuracy = get_accuracy(
@@ -219,17 +227,25 @@ def _fit_logistic_regression(
     max_iter: int = 1000,
     tol: float = 1e-4,  
 ):
-    train_embeddings = train_data.embed(train_pos, train_layer)
-    test_embeddings = test_data.embed(test_pos, test_layer)
+    train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
+        train_pos, train_layer
+    )
+    train_labels = train_data.binary_labels
     lr = LogisticRegression(
         random_state=random_state,
         solver=solver,
         max_iter=max_iter,
         tol=tol,
     )
-    lr.fit(train_embeddings, train_data.binary_labels)
-    total = len(test_data.binary_labels)
-    accuracy = lr.score(test_embeddings, test_data.binary_labels)
+    lr.fit(train_embeddings, train_labels)
+    if test_data is None:
+        return lr.coef_[0, :], None, None, None
+    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
+        test_pos, test_layer
+    )
+    test_labels = test_data.binary_labels
+    total = len(test_labels)
+    accuracy = lr.score(test_embeddings, test_labels)
     correct = int(accuracy * total)
     line = lr.coef_[0, :]
     return line, correct, total, accuracy
@@ -276,7 +292,9 @@ def train_classifying_direction(
             )
             return
     # write line to file
-    save_array(train_line, f"{method.value}_{train_data.prompt_type.value}_{train_pos}_layer{train_layer}", model)
+    train_pos_str = train_pos if train_pos is not None else "ALL"
+    array_path = f"{method.value}_{train_data.prompt_type.value}_{train_pos_str}_layer{train_layer}"
+    save_array(train_line, array_path, model)
 
     cosine_sim = safe_cosine_sim(
         train_line, 
@@ -303,3 +321,4 @@ def train_classifying_direction(
             'method', 'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
         )
     )
+    return array_path
