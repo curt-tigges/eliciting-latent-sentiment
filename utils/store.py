@@ -170,9 +170,10 @@ def to_csv(
     data: Union[pd.DataFrame, pd.Series],
     label: str,
     model: Union[HookedTransformer, str],
+    index: bool = False,
 ):
     path = get_csv_path(label, model)
-    data.to_csv(path, index=False)
+    data.to_csv(path, index=index)
     return path
 
 
