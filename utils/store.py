@@ -23,6 +23,19 @@ DIRECTION_PATTERN = (
 )
 
 
+def flatten_multiindex(in_df):
+    df = in_df.copy()
+    # Flatten columns
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
+    
+    # Flatten index if it's a multiindex
+    if isinstance(df.index, pd.MultiIndex):
+        df.index = ['_'.join(map(str, idx)).strip() for idx in df.index.values]
+    
+    return df
+
+
 def extract_layer_from_string(s: str) -> int:
     # Find numbers that directly follow the text "layer"
     match = re.search(r'(?<=layer)\d+', s)
