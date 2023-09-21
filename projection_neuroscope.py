@@ -32,8 +32,6 @@ from utils.neuroscope import (
     plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
     harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window,
     extract_activations_window
-    harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window,
-    extract_activations_window
 )
 #%%
 pd.set_option('display.max_colwidth', 200)
@@ -51,6 +49,9 @@ sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
+def render_local(html):
+    display(HTML(html.local_src))
+#%%
 # ============================================================================ #
 # Harry Potter example
 
@@ -58,7 +59,7 @@ sentiment_dir /= sentiment_dir.norm()
 # hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
 # harry_potter_neuroscope = plot_neuroscope(
 #     hp_4_paras, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=7,
+#     special_dir=sentiment_dir, default_layer=5,
 #     show_selectors=False,
 # )
 # save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
@@ -67,7 +68,7 @@ sentiment_dir /= sentiment_dir.norm()
 # ============================================================================ #
 # harry_potter_fr_neuroscope = plot_neuroscope(
 #     harry_potter_fr_start, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=7, 
+#     special_dir=sentiment_dir, default_layer=5, 
 #     show_selectors=False,
 # )
 # save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
@@ -171,20 +172,20 @@ def run_steering_search(
         coef_dict[coef] = coef_dict.get(coef, []) + [gen.replace(prompt, "")]
     return text.replace("<|endoftext|>", ""), coef_dict
 #%%
-# steering_text, steering_dict = run_steering_search(
-#     coefs=torch.arange(-20, 1, dtype=torch.int32),
-#     samples=20,
-#     sentiment_dir=sentiment_dir,
-#     model=model,
-#     top_k=10,
-#     temperature=1.0,
-#     max_new_tokens=30,
-#     do_sample=True,
-#     seed=0,
-#     prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
-# )
-# save_text(steering_text, "steering_text", model)
-# save_pickle(steering_dict, "steering_dict", model)
+steering_text, steering_dict = run_steering_search(
+    coefs=torch.arange(-20, 1, dtype=torch.int32),
+    samples=20,
+    sentiment_dir=sentiment_dir,
+    model=model,
+    top_k=10,
+    temperature=1.0,
+    max_new_tokens=30,
+    do_sample=True,
+    seed=0,
+    prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
+)
+save_text(steering_text, "steering_text", model)
+save_pickle(steering_dict, "steering_dict", model)
 #%%
 # plot_neuroscope(steering_text, model, centred=True, special_dir=sentiment_dir)
 #%%
@@ -252,7 +253,7 @@ save_html(negation_full, "negation_full", model)
 #     show_selectors=False,
 # )
 # save_html(negation, "negation", model)
-# negation
+# render_local(negation)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
@@ -451,10 +452,11 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
 
     return fig
 #%%
-# fig = plot_bin_proportions(labelled_bin_samples)
-# save_pdf(fig, "bin_proportions", model)
-# save_html(fig, "bin_proportions", model)
-# fig.show()
+fig = plot_bin_proportions(labelled_bin_samples)
+save_pdf(fig, "bin_proportions", model)
+save_html(fig, "bin_proportions", model)
+save_pdf(fig, "bin_proportions", model)
+fig.show()
 #%%
 # fig = plot_stacked_histogram(labelled_bin_samples)
 # fig = plot_stacked_histogram(labelled_bin_samples)
@@ -634,19 +636,6 @@ for file_name, batch_pos in batch_pos_dict.items():
     )
     render_local(html)
     display(HTML(html.local_src))
-# for file_name, batch_pos in batch_pos_dict.items():
-#     html = plot_batch_pos(
-#         sentiment_activations, 
-#         dataloader, 
-#         model, 
-#         batch_pos,
-#         centred=True,
-#         file_name=file_name,
-#         window_size=2,
-#         show_selectors=False,
-#         verbose=False,
-#     )
-#     display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Top k max activating examples
