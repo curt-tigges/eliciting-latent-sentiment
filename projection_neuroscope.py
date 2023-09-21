@@ -15,6 +15,7 @@ from transformer_lens.evals import make_owt_data_loader
 from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name, test_prompt
 from transformer_lens.hook_points import HookPoint
 from circuitsvis.activations import text_neuron_activations
+from circuitsvis.utils.render import RenderedHTML
 from tqdm.notebook import tqdm
 from IPython.display import display, HTML
 import plotly.express as px
@@ -45,6 +46,9 @@ sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
 sentiment_dir /= sentiment_dir.norm()
 #%%
+def render_local(html):
+    display(HTML(html.local_src))
+#%%
 # ============================================================================ #
 # Harry Potter example
 
@@ -52,18 +56,20 @@ sentiment_dir /= sentiment_dir.norm()
 # hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
 # harry_potter_neuroscope = plot_neuroscope(
 #     hp_4_paras, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5
+#     special_dir=sentiment_dir, default_layer=5,
+#     show_selectors=False,
 # )
 # save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-# harry_potter_neuroscope
+# render_local(harry_potter_neuroscope)
 #%%
 # ============================================================================ #
 # harry_potter_fr_neuroscope = plot_neuroscope(
 #     harry_potter_fr_start, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5
+#     special_dir=sentiment_dir, default_layer=5, 
+#     show_selectors=False,
 # )
 # save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-# harry_potter_fr_neuroscope
+# render_local(harry_potter_fr_neuroscope)
 #%%
 # Mandarin example
 # mandarin_text = """
@@ -147,20 +153,20 @@ def run_steering_search(
         coef_dict[coef] = coef_dict.get(coef, []) + [gen.replace(prompt, "")]
     return text.replace("<|endoftext|>", ""), coef_dict
 #%%
-# steering_text, steering_dict = run_steering_search(
-#     coefs=torch.arange(-20, 1, dtype=torch.int32),
-#     samples=20,
-#     sentiment_dir=sentiment_dir,
-#     model=model,
-#     top_k=10,
-#     temperature=1.0,
-#     max_new_tokens=30,
-#     do_sample=True,
-#     seed=0,
-#     prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
-# )
-# save_text(steering_text, "steering_text", model)
-# save_pickle(steering_dict, "steering_dict", model)
+steering_text, steering_dict = run_steering_search(
+    coefs=torch.arange(-20, 1, dtype=torch.int32),
+    samples=20,
+    sentiment_dir=sentiment_dir,
+    model=model,
+    top_k=10,
+    temperature=1.0,
+    max_new_tokens=30,
+    do_sample=True,
+    seed=0,
+    prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
+)
+save_text(steering_text, "steering_text", model)
+save_pickle(steering_dict, "steering_dict", model)
 #%%
 # plot_neuroscope(steering_text, model, centred=True, special_dir=sentiment_dir)
 #%%
@@ -201,7 +207,7 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
 #     show_selectors=False,
 # )
 # save_html(negation, "negation", model)
-# negation
+# render_local(negation)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
@@ -308,24 +314,24 @@ def sample_by_bin(
     df['text'] = texts
     return df.sample(frac=1, random_state=seed).reset_index(drop=True)
 # #%%
-# bin_samples = sample_by_bin(
-#     sentiment_activations[:, :, 1], verbose=False
-# )
-# to_csv(bin_samples, "bin_samples", model)
-# bin_samples
-# #%%
-# labelled_bin_samples = get_csv(
-#     "labelled_bin_samples", model
-# )
-# labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
-# assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
-# labelled_bin_samples
-# #%%
-# sampled_activations = []
-# for idx, row in labelled_bin_samples.iterrows():
-#     sampled_activations.append(sentiment_activations[row.batch, row.position, 1].detach().cpu().numpy())
-# labelled_bin_samples['activation'] = sampled_activations
-# labelled_bin_samples
+bin_samples = sample_by_bin(
+    sentiment_activations[:, :, 1], verbose=False
+)
+to_csv(bin_samples, "bin_samples", model)
+bin_samples
+#%%
+labelled_bin_samples = get_csv(
+    "labelled_bin_samples", model
+)
+labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
+assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
+labelled_bin_samples
+#%%
+sampled_activations = []
+for idx, row in labelled_bin_samples.iterrows():
+    sampled_activations.append(sentiment_activations[row.batch, row.position, 1].detach().cpu().numpy())
+labelled_bin_samples['activation'] = sampled_activations
+labelled_bin_samples
 # #%%
 # fig = px.histogram(
 #     labelled_bin_samples,
@@ -346,7 +352,7 @@ def sample_by_bin(
 
 #%%
 def plot_bin_proportions(df: pd.DataFrame, nbins=50):
-    sentiments = df['sentiment'].unique()
+    sentiments = sorted(df['sentiment'].unique())
     df = df.sort_values(by='activation').reset_index(drop=True)
     df['activation_cut'] = pd.cut(df.activation, bins=nbins)
     df.activation_cut = df.activation_cut.apply(lambda x: 0.5 * (x.left + x.right))
@@ -388,10 +394,11 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
 
     return fig
 #%%
-# fig = plot_bin_proportions(labelled_bin_samples)
-# save_pdf(fig, "bin_proportions", model)
-# save_html(fig, "bin_proportions", model)
-# fig.show()
+fig = plot_bin_proportions(labelled_bin_samples)
+save_pdf(fig, "bin_proportions", model)
+save_html(fig, "bin_proportions", model)
+save_pdf(fig, "bin_proportions", model)
+fig.show()
 #%%
 # fig = plot_stacked_histogram(labelled_bin_samples)
 #%%
@@ -546,19 +553,19 @@ batch_pos_dict = dict(
     neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
     neuroscope_medical=[(6690, 669), (3852, 819), (9791, 460), (7888, 326)],
 )
-for file_name, batch_pos in batch_pos_dict.items():
-    html = plot_batch_pos(
-        sentiment_activations, 
-        dataloader, 
-        model, 
-        batch_pos,
-        centred=True,
-        file_name=file_name,
-        window_size=2,
-        show_selectors=False,
-        verbose=False,
-    )
-    display(HTML(html.local_src))
+# for file_name, batch_pos in batch_pos_dict.items():
+#     html = plot_batch_pos(
+#         sentiment_activations, 
+#         dataloader, 
+#         model, 
+#         batch_pos,
+#         centred=True,
+#         file_name=file_name,
+#         window_size=2,
+#         show_selectors=False,
+#         verbose=False,
+#     )
+#     display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Top k max activating examples

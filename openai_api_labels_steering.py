@@ -1,47 +1,50 @@
 #%%
 import pandas as pd
 import openai
-from utils.store import load_pickle, to_csv, save_html, save_pdf, get_csv
+from utils.store import load_pickle, to_csv, save_html, save_pdf, get_csv, is_file
 import plotly.graph_objects as go
 import plotly.express as px
 #%%
 pd.set_option('display.max_colwidth', 200)
 MODEL = 'gpt2-small'
-FILE_NAME = 'steering_dict'
 #%%
 with open("api_key.txt", "r") as f:
     openai.api_key = f.read()
 #%%
-steering_dict = load_pickle(FILE_NAME, MODEL)
-# steering_dict = {k.item(): v for k, v in steering_dict.items()}
+steering_dict = load_pickle('steering_dict', MODEL)
 # %%
-prefix = "Your job is to classify the sentiment of a snippet of a movie review into Positive/Somewhat positive/Neutral/Somewhat negative/Negative."
-sentiment_data = []
-assert len(steering_dict) < 1_000
-idx = 0
-for coef, outputs in steering_dict.items():
-    for sample, review in enumerate(outputs):
-        chat_completion = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{
-                "role": "user",
-                "content": f"{prefix} Review: '{review}'. Sentiment: "
-            }]
-        )
-        sentiment_data.append((
-            coef,
-            sample,
-            review,
-            chat_completion.choices[0].message.content
-        ))
-        idx += 1
-    if idx > 1_000:
-        break
-# %%
-out_df = pd.DataFrame(
-    sentiment_data, columns=['coef', 'sample', 'review', 'sentiment']
-)
-to_csv(out_df, 'labelled_steering', MODEL)
+def generate():
+    prefix = "Your job is to classify the sentiment of a snippet of a movie review into Positive/Somewhat positive/Neutral/Somewhat negative/Negative."
+    sentiment_data = []
+    assert len(steering_dict) < 1_000
+    idx = 0
+    for coef, outputs in steering_dict.items():
+        for sample, review in enumerate(outputs):
+            chat_completion = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[{
+                    "role": "user",
+                    "content": f"{prefix} Review: '{review}'. Sentiment: "
+                }]
+            )
+            sentiment_data.append((
+                coef,
+                sample,
+                review,
+                chat_completion.choices[0].message.content
+            ))
+            idx += 1
+        if idx > 1_000:
+            break
+    out_df = pd.DataFrame(
+        sentiment_data, columns=['coef', 'sample', 'review', 'sentiment']
+    )
+    to_csv(out_df, 'labelled_steering', MODEL)
+    return out_df
+#%%
+if not is_file('labelled_steering.csv', MODEL):
+    gen_df = generate()
+    assert is_file('labelled_steering.csv', MODEL)
 #%%
 out_df = get_csv('labelled_steering', MODEL)
 out_df
@@ -50,7 +53,7 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
     df.sentiment = df.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
     assert df.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
 
-    sentiments = df['sentiment'].unique()
+    sentiments = sorted(df['sentiment'].unique())
     df = df.sort_values(by='coef').reset_index(drop=True)
     df['coef_cut'] = pd.cut(df.coef, bins=nbins)
     df.coef_cut = df.coef_cut.apply(lambda x: 0.5 * (x.left + x.right))
@@ -93,8 +96,8 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
     return fig
 # %%
 fig = plot_bin_proportions(out_df)
-save_html(fig, 'steering_bin_proportions', MODEL)
 save_pdf(fig, 'steering_bin_proportions', MODEL)
+save_html(fig, 'steering_bin_proportions', MODEL)
 save_pdf(fig, 'steering_bin_proportions', MODEL)
 fig.show()
 # %%
