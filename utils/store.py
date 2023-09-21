@@ -23,6 +23,19 @@ DIRECTION_PATTERN = (
 )
 
 
+def flatten_multiindex(in_df):
+    df = in_df.copy()
+    # Flatten columns
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
+    
+    # Flatten index if it's a multiindex
+    if isinstance(df.index, pd.MultiIndex):
+        df.index = ['_'.join(map(str, idx)).strip() for idx in df.index.values]
+    
+    return df
+
+
 def extract_layer_from_string(s: str) -> int:
     # Find numbers that directly follow the text "layer"
     match = re.search(r'(?<=layer)\d+', s)
@@ -106,6 +119,10 @@ def clean_label(label: str) -> str:
     label = label.replace('.npy', '')
     label = label.replace('.html', '')
     label = label.replace('data/', '')
+    label = label.replace('.csv', '')
+    label = label.replace('.txt', '')
+    label = label.replace('.pkl', '')
+    label = label.replace('.pdf', '')
     assert "/" not in label, "Label must not contain slashes"
     return label
 
@@ -138,13 +155,14 @@ def update_csv(
     label: str, 
     model: Union[HookedTransformer, str], 
     key_cols: Iterable[str] = None,
+    index: bool = False,
 ):
     path = get_csv_path(label, model)
     curr = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
     curr = pd.concat([curr, data], axis=0)
     if key_cols is not None:
         curr = curr.drop_duplicates(subset=key_cols)
-    curr.to_csv(path, index=False)
+    curr.to_csv(path, index=index)
     return path
 
 
@@ -152,11 +170,13 @@ def get_csv(
     label: str,
     model: Union[HookedTransformer, str],
     key_cols: Iterable[str] = None,
+    index_col: int = 0,
+    header: Iterable[int] = 0,
 ) -> pd.DataFrame:
     path = get_csv_path(label, model)
     if not os.path.exists(path):
         return pd.DataFrame()
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, index_col=index_col, header=header)
     if key_cols is not None:
         df = df.drop_duplicates(subset=key_cols)
     return df
@@ -166,9 +186,10 @@ def to_csv(
     data: Union[pd.DataFrame, pd.Series],
     label: str,
     model: Union[HookedTransformer, str],
+    index: bool = False,
 ):
     path = get_csv_path(label, model)
-    data.to_csv(path, index=False)
+    data.to_csv(path, index=index)
     return path
 
 

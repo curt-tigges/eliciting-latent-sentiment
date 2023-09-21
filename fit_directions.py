@@ -30,7 +30,7 @@ from transformer_lens.hook_points import (
     HookPoint,
 )  # Hooking utilities
 import wandb
-from utils.store import save_array, save_html, update_csv, get_csv, eval_csv, is_file, load_pickle
+from utils.store import save_array, save_html, update_csv, get_csv, eval_csv, is_file, load_pickle, save_pdf
 from utils.prompts import PromptType
 from utils.residual_stream import ResidualStreamDataset
 from utils.classification import train_classifying_direction, ClassificationMethod
@@ -48,20 +48,19 @@ MODELS = [
     # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-2.8b',
 ]
 METHODS = [
     # ClassificationMethod.KMEANS,
     # ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
     # ClassificationMethod.MEAN_DIFF,
-    # ClassificationMethod.LOGISTIC_REGRESSION,
-    FittingMethod.DAS,
+    ClassificationMethod.LOGISTIC_REGRESSION,
+    # FittingMethod.DAS,
 ]
-PROMPT_TYPES = [
+TRAIN_TYPES = [
     # PromptType.SIMPLE_TRAIN,
-    # PromptType.SIMPLE_TEST,
     # PromptType.CLASSIFICATION_4,
     # PromptType.SIMPLE_ADVERB,
     # PromptType.SIMPLE_MOOD,
@@ -69,6 +68,11 @@ PROMPT_TYPES = [
     # PromptType.PROPER_NOUNS,
     # PromptType.MEDICAL,
     PromptType.TREEBANK_TRAIN,
+]
+TEST_TYPES = [
+    PromptType.SIMPLE_TEST,
+    # PromptType.SIMPLE_ADVERB,
+    # PromptType.NONE,
 ]
 SCAFFOLD = ReviewScaffold.CONTINUATION
 LAYERS = [
@@ -83,7 +87,7 @@ BATCH_SIZES = {
     'EleutherAI/pythia-160m': 128,
     'EleutherAI/pythia-410m': 64,
     'EleutherAI/pythia-1.4b': 32,
-    'EleutherAI/pythia-2.8b': 16,
+    'EleutherAI/pythia-2.8b': 4,
 }
 #%%
 def get_model(name: str):
@@ -155,14 +159,13 @@ def get_model(name: str):
 #%%
 # ============================================================================ #
 # Training loop
-
+SKIP_IF_EXISTS = False
 BAR = tqdm(
-    itertools.product(MODELS, PROMPT_TYPES, METHODS),
-    total=len(PROMPT_TYPES) * len(MODELS) * len(METHODS),
+    itertools.product(MODELS, TRAIN_TYPES, TEST_TYPES, METHODS),
+    total=len(TRAIN_TYPES) * len(TEST_TYPES) * len(MODELS) * len(METHODS),
 )
 model = None
-for model_name, train_type, method in BAR:
-    test_type = PromptType.NONE
+for model_name, train_type, test_type,  method in BAR:
     BAR.set_description(
         f"model:{model_name},"
         f"trainset:{train_type.value},"
@@ -175,8 +178,12 @@ for model_name, train_type, method in BAR:
     if 'test' in train_type.value:
         # Don't train on test sets
         continue
-    train_placeholders = train_type.get_placeholders() + ["ALL"]
-    test_placeholders = test_type.get_placeholders() + ["ALL"]
+    train_placeholders = train_type.get_placeholders()
+    test_placeholders = test_type.get_placeholders()
+    if len(train_placeholders) == 0:
+        train_placeholders = ["ALL"]
+    if len(test_placeholders) == 0:
+        test_placeholders = ["ALL"]
     layers = [eval(layer.format(n=model.cfg.n_layers)) for layer in LAYERS]
     placeholders_layers = list(itertools.product(
         train_placeholders, 
@@ -200,7 +207,7 @@ for model_name, train_type, method in BAR:
             # Don't train on verbs as sample size is too small
             continue
         save_path = f"{method.value}_{train_type.value}_{train_pos}_layer{train_layer}.npy"
-        if is_file(save_path, model):
+        if SKIP_IF_EXISTS and is_file(save_path, model):
             print(f"Skipping because file already exists: {save_path}")
             continue
         if train_pos == 'ALL':
@@ -249,28 +256,67 @@ for model_name, train_type, method in BAR:
 def hide_nan(val):
     return '' if pd.isna(val) else f"{val:.1%}"
 #%%
-def plot_accuracy_similarity(df, label: str, model: HookedTransformer):
+def plot_accuracy_similarity(
+    df, label: str, model: HookedTransformer,
+    train_sets: Iterable[PromptType] = None,
+    train_positions: Iterable[str] = None,
+    test_sets: Iterable[PromptType] = None,
+):
+    if train_sets is None:
+        train_sets = [PromptType.SIMPLE_TRAIN.value]
+    if train_positions is None:
+        train_positions = ['ADJ']
+    if test_sets is None:
+        test_sets = [
+            PromptType.SIMPLE_TRAIN.value, 
+            PromptType.SIMPLE_TEST.value, 
+            PromptType.SIMPLE_ADVERB.value
+        ]
     df = df.loc[
-        df.train_set.isin(['simple_train']) & 
-        df.train_pos.isin(['ADJ']) &
-        df.test_set.isin(['simple_train', 'simple_test', 'simple_adverb'])
+        df.train_set.isin(train_sets) & 
+        df.train_pos.isin(train_positions) &
+        df.test_set.isin(test_sets)
     ]
+    df.train_set = pd.Categorical(
+        df.train_set, categories=train_sets, ordered=True
+    )
+    df.train_pos = pd.Categorical(
+        df.train_pos, categories=train_positions, ordered=True
+    )
+    df.test_set = pd.Categorical(
+        df.test_set, categories=test_sets, ordered=True
+    )
     if df.empty:
         print(f"No data to plot for {label}")
         return
-    accuracy_styler = df.pivot(
-        index=["train_set", "train_pos", "train_layer", ],
-        columns=["test_set", "test_pos"],
-        values="accuracy",
-    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} accuracy ({model})")
-    save_html(accuracy_styler, f"{label}_accuracy", model)
+    accuracy_styler = (
+        df.pivot(
+            index=["train_set", "train_pos", "train_layer"],
+            columns=["test_set", "test_pos"],
+            values="accuracy",
+        )
+        .sort_index(axis=0)
+        .sort_index(axis=1)
+        .style
+        .background_gradient(cmap="Reds")
+        .format(hide_nan)
+        .set_caption(f"{label} accuracy ({model})")
+    )
+    save_html(accuracy_styler, f"{label}_accuracy", model, static=True)
     display(accuracy_styler)
-    similarity_styler = df.pivot(
-        index=["train_set",  "train_pos", "train_layer",],
-        columns=["test_set", "test_pos"],
-        values="similarity",
-    ).sort_index(axis=0).sort_index(axis=1).style.background_gradient(cmap="Reds").format(hide_nan).set_caption(f"{label} cosine similarities ({model})")
-    save_html(similarity_styler, f"{label}_similarity", model)
+    similarity_styler = (
+        df.pivot(
+            index=["train_set",  "train_pos", "train_layer",],
+            columns=["test_set", "test_pos"],
+            values="similarity",
+        )
+        .sort_index(axis=0)
+        .sort_index(axis=1)
+        .style.background_gradient(cmap="Reds")
+        .format(hide_nan)
+        .set_caption(f"{label} cosine similarities ({model})")
+    )
+    save_html(similarity_styler, f"{label}_similarity", model, static=True)
     display(similarity_styler)
 #%%
 for model in MODELS:
@@ -280,6 +326,9 @@ for model in MODELS:
             fitting_stats.loc[fitting_stats.method.eq(method.value)],
             method.value,
             model,
+            train_sets=["simple_train", "treebank_train"],
+            train_positions=["ADJ", "ALL"],
+            test_sets=["simple_test", "simple_adverb", "treebank_test"],
         )
 #%%
 # ============================================================================ #
@@ -325,38 +374,63 @@ def plot_pca_svd_2d(
     train_label: str = 'train', 
     test_label: str = 'test',
 ):
+    train_label = train_label.replace("simple_", "").replace("_layer0", "")
+    test_label = test_label.replace("simple_", "").replace("_layer0", "")
+    method_label = method.value.upper()
+
+    if "ADJ" in train_label:
+        train_str_labels = [label.split("_")[0] for label in train_str_labels]
+    else:
+        train_str_labels = [label.split("_")[1] for label in train_str_labels]
+    if "ADJ" in test_label:
+        test_str_labels = [label.split("_")[0] for label in test_str_labels]
+    else:
+        test_str_labels = [label.split("_")[1] for label in test_str_labels]
+
     if isinstance(model, HookedTransformer):
         model = model.cfg.model_name
     fig = go.Figure()
+
+    # in-sample dots
     fig.add_trace(
         go.Scatter(
             x=train_pcs[:, 0],
             y=train_pcs[:, 1],
             text=train_str_labels,
-            mode="markers",
+            textposition="bottom center",
+            mode="markers+text",
             marker=dict(
                 color=train_true_labels.to(dtype=torch.int32),
                 colorscale="RdBu",
                 opacity=0.8,
+                maxdisplayed=10,
+                size=8,
             ),
-            name=f"{method.value} in-sample ({train_label})",
+            name=f"{method_label} IS ({train_label})",
         )
     )
+
+    # out-of-sample squares
     fig.add_trace(
         go.Scatter(
             x=test_pcs[:, 0],
             y=test_pcs[:, 1],
             text=test_str_labels,
-            mode="markers",
+            textposition="bottom center",
+            mode="markers+text",
             marker=dict(
                 color=test_true_labels.to(dtype=torch.int32),
                 colorscale="RdBu",
                 opacity=0.8,
                 symbol="square",
+                size=8,
+                maxdisplayed=5,
             ),
-            name=f"{method.value} out-of-sample ({test_label})",
+            name=f"{method_label} OOS ({test_label})",
         )
     )
+
+    # centroids (Xs)
     fig.add_trace(
         go.Scatter(
             x=pca_centroids[:, 0],
@@ -366,15 +440,25 @@ def plot_pca_svd_2d(
             name="Centroids",
         )
     )
+    oos_label = "sample" if "ADJ" in train_label and "ADJ" in test_label else "distribution"
     fig.update_layout(
         title=(
-            f"{method.value} in and out of sample "
+            f"{method_label} in and out of {oos_label} "
             f"({model})"
         ),
         xaxis_title="PC1",
         yaxis_title="PC2",
+        title_x=0.5,
+        legend=dict(
+            x=0,  # Adjust this value as needed
+            y=-0.2,  # Adjust this value to position the legend below the plot
+            orientation="h",  # Set the orientation to horizontal
+        ),
     )
     save_html(
+        fig, f"{method.value}_{train_label}_{test_label}", model
+    )
+    save_pdf(
         fig, f"{method.value}_{train_label}_{test_label}", model
     )
     return fig
@@ -417,13 +501,25 @@ def plot_components_from_cache(
     )
     return fig
 #%%
-for model in MODELS:
-    for method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
-        fig = plot_components_from_cache(
-            model,
-            ClassificationMethod.PCA,
-            PromptType.SIMPLE_TRAIN, 'ADJ', 0,
-            PromptType.SIMPLE_TEST, 'ADJ', 0,
-        )
-        fig.show()
+for model in ("gpt2-small", ):
+    fig = plot_components_from_cache(
+        model,
+        ClassificationMethod.PCA,
+        PromptType.SIMPLE_TRAIN, 'ADJ', 0,
+        PromptType.SIMPLE_TEST, 'ADJ', 0,
+    )
+    fig.show()
+    save_pdf(fig, "pca_train_test_adjectives_layer_0", model)
+    save_html(fig, "pca_train_test_adjectives_layer_0", model)
+#%%
+for model in ("gpt2-small", ):
+    fig = plot_components_from_cache(
+        model,
+        ClassificationMethod.PCA,
+        PromptType.SIMPLE_TRAIN, 'ADJ', 0,
+        PromptType.SIMPLE_TEST, 'VRB', 0,
+    )
+    fig.show()
+    save_pdf(fig, "pca_train_adjectives_test_verbs_layer_0", model)
+    save_html(fig, "pca_train_adjectives_test_verbs_layer_0", model)
 #%%
