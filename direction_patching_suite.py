@@ -30,14 +30,14 @@ pio.renderers.default = "notebook"
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    'gpt2-small',
+    # 'gpt2-small',
     # 'gpt2-medium',
-    # 'gpt2-large',
-    # 'gpt2-xl',
+    'gpt2-large',
+    'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
-    # 'EleutherAI/pythia-1.4b',
-    # 'EleutherAI/pythia-2.8b',
+    'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
     'kmeans_simple_train_ADJ*.npy',
@@ -393,15 +393,21 @@ def export_results(
 
     p_df = results[~results.index.str.contains("treebank")].copy()
     matches = p_df.index.str.extract(DIRECTION_PATTERN)
-    multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['method', 'dataset', 'position', 'layer'])
+    multiindex = pd.MultiIndex.from_arrays(
+        matches.values.T, names=['method', 'dataset', 'position', 'layer']
+    )
     p_df.index = multiindex
     p_df = p_df[("treebank_test", "ALL")]
     p_df = p_df.reset_index()
     p_df.columns = p_df.columns.get_level_values(0)
     p_df.layer = p_df.layer.astype(int)
     fig = px.line(x="layer", y="treebank_test", color="method", data_frame=p_df)
-    fig.update_layout(title="Out-of-distribution directional patching performance by method and layer")
+    fig.update_layout(
+        title="Out-of-distribution directional patching performance by method and layer"
+    )
     fig.show()
+    p_df = flatten_multiindex(p_df)
+    to_csv(p_df, f"direction_patching_{metric_label}_layers", model, index=True) # FIXME: add {heads_label}
     save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
     save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
 # %%
@@ -423,7 +429,7 @@ PROMPT_TYPES = [
 ]
 METRICS = [
     logit_diff_denoising,
-    logit_flip_denoising,
+    # logit_flip_denoising,
     # prob_diff_denoising,
 ]
 USE_HEADS = [False, ]
@@ -464,4 +470,38 @@ for model_name, metric, use_heads in model_metric_bar:
     use_heads_label = "attn_result" if use_heads else "resid"
     metric_label = metric.__name__.replace('_base', '').replace('_denoising', '')
     export_results(results, metric_label, use_heads_label)
+#%%
+def concat_layer_data(models: Iterable[str], metric_label: str, use_heads_label: str):
+    layer_data = []
+    for model in models:
+        model_df = get_csv(
+            f"direction_patching_{metric_label}_layers", model, index_col=0
+        ) # FIXME: add {heads_label}
+        model_df['model'] = model
+        model_df['max_layer'] = model_df.layer.max()
+        layer_data.append(model_df)
+    layer_df = pd.concat(layer_data)
+    layer_df
+    fig = px.line(
+        x="layer", y="treebank_test", color="method", facet_col="model", data_frame=layer_df
+    )
+    fig.update_layout(
+        title="Out-of-distribution directional patching performance by method and layer",
+        width=400 * len(models),
+        title_x=0.5,
+    )
+    for axis in fig.layout:
+        if "xaxis" in axis:
+            fig.layout[axis].matches = None
+    save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
+    save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
+    save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
+    fig.show()
 # %%
+concat_layer_data(
+    MODELS, "logit_diff_denoising", "resid"
+)
+#%%
+concat_layer_data(
+    MODELS, "logit_flip_denoising", "resid"
+)
