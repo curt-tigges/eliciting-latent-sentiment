@@ -30,20 +30,20 @@ pio.renderers.default = "notebook"
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    # 'gpt2-small',
+    'gpt2-small',
     # 'gpt2-medium',
-    'gpt2-large',
-    'gpt2-xl',
+    # 'gpt2-large',
+    # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
     'kmeans_simple_train_ADJ*.npy',
     'logistic_regression_simple_train_ADJ*.npy',
     'das_simple_train_ADJ*.npy',
-    'das_treebank*.npy',
+    # 'das_treebank*.npy',
 ]
 #%%
 def get_model(name: str) -> HookedTransformer:
@@ -287,7 +287,7 @@ def get_results_for_direction_and_position(
         )
     return run_head_patching(
         model=model, 
-        orig_tokens=clean_corrupt_data.corrupted_tokens, 
+        orig_input=clean_corrupt_data.corrupted_tokens, 
         new_cache=new_cache, 
         batch_size=batch_size,
         patching_metric=patching_metric, 
@@ -352,9 +352,10 @@ def export_results(
 ) -> None:
     all_layers = pd.Series([extract_layer_from_string(label) for label in results.index])
     das_treebank_layers = all_layers[results.index.str.contains("das_treebank")]
-    mask = ~results.index.str.contains("das") | all_layers.isin(das_treebank_layers)
-    mask.index = results.index
-    results = results.loc[mask]
+    if len(das_treebank_layers) > 0:
+        mask = ~results.index.str.contains("das") | all_layers.isin(das_treebank_layers)
+        mask.index = results.index
+        results = results.loc[mask]
 
     layers_style = (
         flatten_multiindex(results)
@@ -366,6 +367,9 @@ def export_results(
     save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
 
+    if not results.index.str.contains("treebank").any():
+        return
+
     s_df = results[~results.index.str.contains("treebank")].copy()
     matches = s_df.index.str.extract(DIRECTION_PATTERN)
     multiindex = pd.MultiIndex.from_arrays(matches.values.T, names=['method', 'dataset', 'position', 'layer'])
@@ -373,6 +377,8 @@ def export_results(
     s_df = s_df.reset_index().groupby(['method', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
     s_df = flatten_multiindex(s_df)
     s_df = s_df[["simple_test_ADJ", "simple_test_VRB", "simple_test_ALL", "treebank_test_ALL"]]
+    s_df.columns = s_df.columns.str.replace("test_", "").str.replace("treebank_ALL", "treebank")
+    s_df.index = s_df.index.str.replace("simple_train_ADJ", "")
     s_style = s_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
     to_csv(s_df, f"direction_patching_{metric_label}_simple", model, index=True)
     save_html(s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model)
@@ -386,6 +392,9 @@ def export_results(
     t_df = t_df.loc[t_df.index.get_level_values(-1).astype(int) < t_df.index.get_level_values(-1).astype(int).max() - 1]
     t_df.sort_index(level=3)
     t_df = flatten_multiindex(t_df)
+    t_df.index = t_df.index.str.replace("das_treebank_train_ALL_0", "")
+    t_df.columns = ["logit_diff"]
+    t_df = t_df.T
     t_style = t_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
     to_csv(t_df, f"direction_patching_{metric_label}_treebank", model, index=True)
     save_html(t_style, f"direction_patching_{metric_label}_{use_heads_label}_treebank", model)
@@ -407,19 +416,34 @@ def export_results(
     )
     fig.show()
     p_df = flatten_multiindex(p_df)
-    to_csv(p_df, f"direction_patching_{metric_label}_layers", model, index=True) # FIXME: add {heads_label}
+    if use_heads_label == "resid":
+        to_csv(p_df, f"direction_patching_{metric_label}_layers", model, index=True) # FIXME: add {heads_label}
     save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
     save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
 # %%
-USE_CACHE = True
+USE_CACHE = False
 HEADS = {
+    "gpt2-small": [
+        (0, 4),
+        (7, 1),
+        (9, 2),
+        (10, 1),
+        (10, 4),
+        (11, 9),
+        (8, 5),
+        (9, 2),
+        (9, 10),
+        (6, 4),
+        (7, 1),
+        (7, 5),
+    ],
     "EleutherAI/pythia-2.8b": [
         (17, 19), (22, 5), (14,4), (20, 10), (12, 2), (10, 26), 
         (12, 4), (12, 17), (14, 2), (13, 20), (9, 29), (11, 16) 
     ]
 }
 PROMPT_TYPES = [
-    PromptType.TREEBANK_TEST,
+    # PromptType.TREEBANK_TEST,
     # PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
     # PromptType.COMPLETION,
@@ -429,10 +453,10 @@ PROMPT_TYPES = [
 ]
 METRICS = [
     logit_diff_denoising,
-    # logit_flip_denoising,
+    logit_flip_denoising,
     # prob_diff_denoising,
 ]
-USE_HEADS = [False, ]
+USE_HEADS = [True, ]
 SCAFFOLD = ReviewScaffold.CONTINUATION
 model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
