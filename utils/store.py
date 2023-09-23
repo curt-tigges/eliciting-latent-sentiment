@@ -60,7 +60,7 @@ def add_styling(
     height: int = 200,
     padding_x: int = 8,
     padding_y: int = 12,
-    font_size: int=24,
+    font_size: int = 24,
     border: int = 1,
     min_width: int = 50,
 ):

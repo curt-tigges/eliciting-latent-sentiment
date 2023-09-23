@@ -106,6 +106,7 @@ def plot_neuroscope(
     verbose: bool = False,
     default_layer: Union[Literal["all"], int] = 1,
     show_selectors: bool = True,
+    prepend_bos: bool = True,
 ):
     """
     Wrapper around CircuitVis's `text_neuron_activations`.
@@ -115,7 +116,7 @@ def plot_neuroscope(
     The keyword "all" for default_layer is used to show all layers at once.
     """
     assert activations is not None or special_dir is not None
-    tokens: Int[Tensor, "1 pos"] = model.to_tokens(text)
+    tokens: Int[Tensor, "1 pos"] = model.to_tokens(text, prepend_bos=prepend_bos)
     if verbose:
         print(f"Tokens shape: {tokens.shape}")
     if activations is None:
