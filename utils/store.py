@@ -273,6 +273,8 @@ def save_html(
         html = add_styling(html, **styling_kwargs)
         with open(path, 'w') as f:
             f.write(html)
+    else:
+        raise ValueError(f"Invalid type: {type(html_data)}")
     if static:
         static_path = os.path.join(model_path, label + '.png')
         imgkit.from_file(path, static_path)
