@@ -30,13 +30,13 @@ pio.renderers.default = "notebook"
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    'gpt2-small',
+    # 'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
-    # 'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-1.4b',
     # 'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
@@ -97,6 +97,12 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
     ]
     direction_labels = [os.path.split(path)[-1] for path in direction_paths]
     del direction_paths
+    if "2.8b" in model.cfg.model_name:
+        layers_to_keep = [0, 1, 7, 14, 16, 18, 24, 31, 32]
+        direction_labels = [
+            label for label in direction_labels 
+            if any([f"layer{l}" in label for l in layers_to_keep])
+        ]
     directions = [
         load_array(label, model) for label in direction_labels
     ]
@@ -367,7 +373,7 @@ def export_results(
     save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
 
-    if not results.index.str.contains("treebank").any():
+    if not results.columns.get_level_values(0).str.contains("treebank").any():
         return
 
     s_df = results[~results.index.str.contains("treebank")].copy()
@@ -378,10 +384,19 @@ def export_results(
     s_df = flatten_multiindex(s_df)
     s_df = s_df[["simple_test_ADJ", "simple_test_VRB", "simple_test_ALL", "treebank_test_ALL"]]
     s_df.columns = s_df.columns.str.replace("test_", "").str.replace("treebank_ALL", "treebank")
-    s_df.index = s_df.index.str.replace("simple_train_ADJ", "")
-    s_style = s_df.style.background_gradient(cmap="Reds").format("{:.1f}%")
+    s_df.index = s_df.index.str.replace("_simple_train_ADJ", "")
+    s_style = (
+        s_df
+        .style
+        .background_gradient(cmap="Reds")
+        .format("{:.1f}%")
+        .set_caption(f"Direction patching ({metric_label}, {use_heads_label}) in {model.name}")
+    )
     to_csv(s_df, f"direction_patching_{metric_label}_simple", model, index=True)
-    save_html(s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model)
+    save_html(
+        s_style, f"direction_patching_{metric_label}_{use_heads_label}_simple", model,
+        font_size=40,
+        )
     display(s_style)
     
     t_df = results[results.index.str.contains("das_treebank") & ~results.index.str.contains("None")].copy()
@@ -421,7 +436,7 @@ def export_results(
     save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
     save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
 # %%
-USE_CACHE = False
+USE_CACHE = True
 HEADS = {
     "gpt2-small": [
         (0, 4),
@@ -443,7 +458,7 @@ HEADS = {
     ]
 }
 PROMPT_TYPES = [
-    # PromptType.TREEBANK_TEST,
+    PromptType.TREEBANK_TEST,
     # PromptType.SIMPLE_TRAIN,
     PromptType.SIMPLE_TEST,
     # PromptType.COMPLETION,
@@ -456,7 +471,7 @@ METRICS = [
     logit_flip_denoising,
     # prob_diff_denoising,
 ]
-USE_HEADS = [True, ]
+USE_HEADS = [False, ]
 SCAFFOLD = ReviewScaffold.CONTINUATION
 model_metric_bar = tqdm(
     itertools.product(MODELS, METRICS, USE_HEADS), total=len(MODELS) * len(METRICS) * len(USE_HEADS)
@@ -483,7 +498,7 @@ for model_name, metric, use_heads in model_metric_bar:
         heads = None
     patch_label = "attn_result" if use_heads else "resid" 
     model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label} batch size {batch_size}")
-    if model is None or model.name != model_name:
+    if model is None or model_name not in model.name:
         model = get_model(model_name)
     DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
     results = get_results_for_metric(
@@ -501,17 +516,43 @@ def concat_layer_data(models: Iterable[str], metric_label: str, use_heads_label:
         model_df = get_csv(
             f"direction_patching_{metric_label}_layers", model, index_col=0
         ) # FIXME: add {heads_label}
+        if 'layer' not in model_df.columns:
+            print(model, metric_label, use_heads_label, model_df, f"direction_patching_{metric_label}_layers")
         model_df['model'] = model
         model_df['max_layer'] = model_df.layer.max()
         layer_data.append(model_df)
     layer_df = pd.concat(layer_data)
-    layer_df
+    layer_df['model_family'] = np.where(
+        layer_df.model.str.contains("pythia"),
+        "pythia",
+        "gpt2",
+    )
+    layer_df['model_size'] = layer_df.model.replace({
+        "gpt2-small": "small/140m",
+        "gpt2-medium": "medium/410m",
+        "gpt2-large": "large/1.4b",
+        "gpt2-xl": "xl/2.8b",
+        "EleutherAI/pythia-160m": "small/140m",
+        "EleutherAI/pythia-410m": "medium/410m",
+        "EleutherAI/pythia-1.4b": "large/1.4b",
+        "EleutherAI/pythia-2.8b": "xl/2.8b",
+    })
     fig = px.line(
-        x="layer", y="treebank_test", color="method", facet_col="model", data_frame=layer_df
+        x="layer", 
+        y="treebank_test", 
+        color="method", 
+        facet_col="model_size", 
+        facet_row="model_family", 
+        facet_col_wrap=4, 
+        data_frame=layer_df,
+        labels={
+            "treebank_test": "Directional patching performance (%)",
+        }
     )
     fig.update_layout(
         title="Out-of-distribution directional patching performance by method and layer",
-        width=400 * len(models),
+        width=1600,
+        height=800,
         title_x=0.5,
     )
     for axis in fig.layout:
@@ -523,9 +564,9 @@ def concat_layer_data(models: Iterable[str], metric_label: str, use_heads_label:
     fig.show()
 # %%
 concat_layer_data(
-    MODELS, "logit_diff_denoising", "resid"
+    MODELS, "logit_diff", "resid"
 )
 #%%
 concat_layer_data(
-    MODELS, "logit_flip_denoising", "resid"
+    MODELS, "logit_flip", "resid"
 )
