@@ -16,11 +16,6 @@ import ipywidgets as widgets
 from IPython.display import display
 from transformer_lens import ActivationCache, HookedTransformer
 
-if torch.cuda.is_available():
-    device = int(os.environ.get("LOCAL_RANK", 0))
-else:
-    device = "cpu"
-
 
 # =============== VISUALIZATION UTILS ===============
 def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
@@ -453,16 +448,43 @@ def get_knockout_perf_drop(model, heads_to_ablate, clean_tokens, metric):
 
     return ablated_logit_diff
 
+@typechecked
+def project_to_subspace(
+    vectors: Float[Tensor, "... d_model"],
+    subspace: Float[Tensor, "d_model d_subspace"],
+) -> Float[Tensor, "... d_model"]:
+    assert vectors.shape[-1] == subspace.shape[0]
+    basis_projections = einops.einsum(
+        vectors, 
+        subspace, 
+        '... d_model, d_model d_subspace -> ... d_subspace'
+    )
+    summed_projections = einops.einsum(
+        basis_projections,
+        subspace,
+        "... d_subspace, d_model d_subspace -> ... d_model"
+    )
+    return summed_projections
+
 
 def create_cache_for_dir_patching(
     clean_cache: ActivationCache, 
     corrupted_cache: ActivationCache, 
-    sentiment_dir: Float[Tensor, "d_model"],
+    sentiment_dir: Float[Tensor, "d_model *d_das"],
     model: HookedTransformer,
+    device: torch.device = None,
 ) -> ActivationCache:
     '''
     We patch the sentiment direction from corrupt to clean
     '''
+    if device is None:
+        device = sentiment_dir.device
+    if sentiment_dir.ndim == 1:
+        sentiment_dir = sentiment_dir.unsqueeze(1)
+    assert sentiment_dir.ndim == 2
+    sentiment_dir: Float[Tensor, "d_model d_das"] = (
+        sentiment_dir / sentiment_dir.norm(dim=0, keepdim=True)
+    )
     cache_dict = dict()
     for act_name, clean_value in clean_cache.items():
         is_result = act_name.endswith('result')
@@ -472,54 +494,23 @@ def create_cache_for_dir_patching(
             act_name.endswith('attn_out') or
             act_name.endswith('mlp_out')
         )
-        if is_resid:
+        if is_resid or is_result:
             clean_value = clean_value.to(device)
             corrupt_value = corrupted_cache[act_name].to(device)
-            corrupt_proj = einops.einsum(
-                corrupt_value, sentiment_dir, 'b s d, d -> b s'
+
+            corrupt_proj: Float[Tensor, "... d_model"] = project_to_subspace(
+                corrupt_value,
+                sentiment_dir,
             )
-            clean_proj = einops.einsum(
-                clean_value, sentiment_dir, 'b s d, d -> b s'
+            clean_proj: Float[Tensor, "... d_model"] = project_to_subspace(
+                clean_value,
+                sentiment_dir,
             )
-            sentiment_dir_broadcast = einops.repeat(
-                sentiment_dir, 'd -> b s d', 
-                b=corrupt_value.shape[0], 
-                s=corrupt_value.shape[1], 
-            )
-            proj_diff = einops.repeat(
-                clean_proj - corrupt_proj, 
-                'b s -> b s d', 
-                d=corrupt_value.shape[-1]
-            )
-            sentiment_adjustment = proj_diff * sentiment_dir_broadcast
             cache_dict[act_name] = (
-                corrupt_value + sentiment_adjustment
-            )
-        elif is_result:
-            clean_value = clean_value.to(device)
-            corrupt_value = corrupted_cache[act_name].to(device)
-            corrupt_proj = einops.einsum(
-                corrupt_value, sentiment_dir, 'b s h d, d -> b s h'
-            )
-            clean_proj = einops.einsum(
-                clean_value, sentiment_dir, 'b s h d, d -> b s h'
-            )
-            sentiment_dir_broadcast = einops.repeat(
-                sentiment_dir, 'd -> b s h d', 
-                b=corrupt_value.shape[0], 
-                s=corrupt_value.shape[1], 
-                h=corrupt_value.shape[2]
-            )
-            proj_diff = einops.repeat(
-                clean_proj - corrupt_proj, 
-                'b s h -> b s h d', 
-                d=corrupt_value.shape[3]
-            )
-            sentiment_adjustment = proj_diff * sentiment_dir_broadcast
-            cache_dict[act_name] = (
-                corrupt_value + sentiment_adjustment
+                corrupt_value + (clean_proj - corrupt_proj) 
             )
         else:
-            cache_dict[act_name] = clean_value
+            # Only patch the residual stream
+            cache_dict[act_name] = corrupted_cache[act_name].to(device)
 
     return ActivationCache(cache_dict, model)

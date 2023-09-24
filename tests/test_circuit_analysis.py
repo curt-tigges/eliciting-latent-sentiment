@@ -26,15 +26,15 @@ from typing import List, Optional, Callable, Tuple, Dict, Literal, Set
 from rich import print as rprint
 
 from typing import List, Union
-from utils.circuit_analysis import get_logit_diff, residual_stack_to_logit_diff, cache_to_logit_diff
+from utils.circuit_analysis import get_logit_diff, residual_stack_to_logit_diff, cache_to_logit_diff, project_to_subspace, create_cache_for_dir_patching
 import unittest
 
 
-class TestTransformerLens(unittest.TestCase):
+class TestCircuitAnalysis(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        cls.device = torch.device("cpu")
         MODEL_NAME = "gpt2-small"
         cls.model = HookedTransformer.from_pretrained(
             MODEL_NAME,
@@ -42,6 +42,7 @@ class TestTransformerLens(unittest.TestCase):
             center_writing_weights=True,
             fold_ln=True,
             refactor_factored_attn_matrices=False,
+            device=cls.device,
         )
         cls.model.name = MODEL_NAME
 
@@ -108,6 +109,66 @@ class TestTransformerLens(unittest.TestCase):
             clean_accumulated_residual, self.clean_cache, self.answer_tokens, self.model, biased=True
         )
         self.assertEqual(clean_logit_lens_logit_diffs.shape, (self.model.cfg.n_layers + 1, ))
+
+    def test_project_to_fullspace(self):
+        # Test example
+        vectors = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        subspace = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+        result = project_to_subspace(vectors, subspace)
+        self.assertTrue(torch.allclose(result, vectors, atol=1e-5))
+
+    def test_project_to_line(self):
+        # Test example
+        vectors = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        subspace = torch.tensor([[1.0, 0.0]]).T
+        result = project_to_subspace(vectors, subspace)
+        expected_result = torch.tensor([[1.0, 0.0], [3.0, 0.0]])
+        self.assertTrue(torch.allclose(result, expected_result, atol=1e-5))
+
+    def test_project_to_subspace(self):
+        # Test example
+        vectors = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        subspace = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]).T
+        result = project_to_subspace(vectors, subspace)
+        expected_result = torch.tensor([[1.0, 2.0, 0.0], [4.0, 5.0, 0.0]])
+        self.assertTrue(torch.allclose(result, expected_result, atol=1e-5))
+
+    def test_create_cache_for_dir_patching(self):
+        # Mock data
+        clean_data = {
+            'result': torch.tensor([1.0, 2.0]),
+            'resid_pre': torch.tensor([2.0, 3.0]),
+            'other': torch.tensor([4.0, 5.0])
+        }
+        corrupted_data = {
+            'result': torch.tensor([0.5, 1.5]),
+            'resid_pre': torch.tensor([1.5, 2.5]),
+            'other': torch.tensor([3.5, 4.5])
+        }
+        sentiment_dir = torch.tensor([1.0, 0.0])
+
+        # Create caches
+        clean_cache = ActivationCache(clean_data, self.model)
+        corrupted_cache = ActivationCache(corrupted_data, self.model)
+        
+        result_cache = create_cache_for_dir_patching(
+            clean_cache, corrupted_cache, sentiment_dir, self.model
+        )
+        
+        # Check if the patched values are correct and others remain unchanged
+        self.assertTrue(torch.allclose(
+            result_cache['result'], torch.tensor([1.0, 1.5]), 
+            atol=1e-5
+        ))
+        self.assertTrue(torch.allclose(
+            result_cache['resid_pre'], torch.tensor([2.0, 2.5]), 
+            atol=1e-5
+        ))
+        self.assertTrue(torch.allclose(
+            result_cache['other'], torch.tensor([3.5, 4.5]), 
+            atol=1e-5
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
