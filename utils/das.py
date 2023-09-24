@@ -28,14 +28,14 @@ class GradientMethod(FittingMethod):
     DAS3D = 'das3d'
 
     def get_dimension(self):
-        if self == FittingMethod.DAS:
+        if self == GradientMethod.DAS:
             return 1
-        elif self == FittingMethod.DAS2D:
+        elif self == GradientMethod.DAS2D:
             return 2
-        elif self == FittingMethod.DAS3D:
+        elif self == GradientMethod.DAS3D:
             return 3
         else:
-            raise ValueError("Invalid FittingMethod")
+            raise ValueError("Invalid GradientMethod")
 
 
 class InverseRotateLayer(torch.nn.Module):
