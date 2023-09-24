@@ -1,4 +1,5 @@
 import random
+import numpy as np
 import yaml
 from transformer_lens import HookedTransformer, ActivationCache
 import torch
@@ -590,8 +591,8 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diff = clean_logit_diff
         self.corrupted_prob_diff = corrupted_prob_diff
         self.clean_prob_diff = clean_prob_diff
-        self.clean_accuracy = (clean_logit_diffs > 0).sum() / len(clean_logit_diffs)
-        self.corrupted_accuracy = (corrupted_logit_diffs > 0).sum() / len(corrupted_logit_diffs)
+        self.clean_accuracy = (np.array(clean_logit_diffs) > 0).sum() / len(clean_logit_diffs)
+        self.corrupted_accuracy = (np.array(corrupted_logit_diffs) > 0).sum() / len(corrupted_logit_diffs)
 
     def __str__(self) -> str:
         return (
