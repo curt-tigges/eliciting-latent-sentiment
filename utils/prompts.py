@@ -591,18 +591,22 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diff = clean_logit_diff
         self.corrupted_prob_diff = corrupted_prob_diff
         self.clean_prob_diff = clean_prob_diff
-        self.clean_accuracy = (np.array(clean_logit_diffs) > 0).sum() / len(clean_logit_diffs)
-        self.corrupted_accuracy = (np.array(corrupted_logit_diffs) > 0).sum() / len(corrupted_logit_diffs)
+        self.clean_accuracy = (
+            np.array(clean_logit_diffs, dtype=np.float32) > 0
+        ).sum() / len(clean_logit_diffs)
+        self.corrupted_accuracy = (
+            np.array(corrupted_logit_diffs, dtype=torch.float32) > 0
+        ).sum() / len(corrupted_logit_diffs)
 
     def __str__(self) -> str:
         return (
             f"CleanCorruptedCacheResults(\n"
-            f"  corrupted_logit_diff={self.corrupted_logit_diff},\n"
-            f"  clean_logit_diff={self.clean_logit_diff},\n"
-            f"  corrupted_prob_diff={self.corrupted_prob_diff},\n"
-            f"  clean_prob_diff={self.clean_prob_diff},\n"
-            f"  clean_accuracy={self.clean_accuracy},\n"
-            f"  corrupted_accuracy={self.corrupted_accuracy},\n"
+            f"  corrupted_logit_diff={self.corrupted_logit_diff:.2f},\n"
+            f"  clean_logit_diff={self.clean_logit_diff:.2f},\n"
+            f"  corrupted_prob_diff={self.corrupted_prob_diff:.2f},\n"
+            f"  clean_prob_diff={self.clean_prob_diff:.2f},\n"
+            f"  clean_accuracy={self.clean_accuracy:.1%},\n"
+            f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n"
             f")"
         )
 
