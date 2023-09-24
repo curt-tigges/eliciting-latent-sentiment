@@ -54,7 +54,16 @@ def zero_pad_layer_string(s: str) -> str:
     return s
 
 
-def add_styling(html):
+def add_styling(
+    html: str,
+    width: int = 300,
+    height: int = 200,
+    padding_x: int = 8,
+    padding_y: int = 12,
+    font_size: int = 24,
+    border: int = 1,
+    min_width: int = 50,
+):
     # Extract the table ID from the HTML using regex
     table_id_match = re.search(r'<table id="([^"]+)">', html)
     if not table_id_match:
@@ -67,17 +76,18 @@ def add_styling(html):
     /* General styles */
     #{table_id} {{
         border-collapse: collapse;
-        width: 300px; /* Specify the width you want */
-        height: 200px; /* Specify the height you want */
+        width: {width}px; /* Specify the width you want */
+        height: {height}px; /* Specify the height you want */
         overflow: auto;
         position: relative;
+        font-size: {font_size}px;
     }}
 
     #{table_id} th, #{table_id} td {{
-        padding: 8px 12px;
-        border: 1px solid #d4d4d4;
+        padding: {padding_x}px {padding_y}px;
+        border: {border}px solid #d4d4d4;
         text-align: center;
-        min-width: 50px;
+        min-width: {min_width}px;
         box-sizing: border-box;
         position: relative;
     }}
@@ -170,7 +180,7 @@ def get_csv(
     label: str,
     model: Union[HookedTransformer, str],
     key_cols: Iterable[str] = None,
-    index_col: int = 0,
+    index_col: int = None,
     header: Iterable[int] = 0,
 ) -> pd.DataFrame:
     path = get_csv_path(label, model)
@@ -244,6 +254,7 @@ def save_html(
     model: Union[HookedTransformer, str],
     local: bool = True,
     static: bool = False,
+    **styling_kwargs,
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
@@ -259,9 +270,11 @@ def save_html(
             f.write(html_str)
     elif isinstance(html_data, Styler):
         html = html_data.to_html()
-        html = add_styling(html)
+        html = add_styling(html, **styling_kwargs)
         with open(path, 'w') as f:
             f.write(html)
+    else:
+        raise ValueError(f"Invalid type: {type(html_data)}")
     if static:
         static_path = os.path.join(model_path, label + '.png')
         imgkit.from_file(path, static_path)

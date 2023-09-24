@@ -40,34 +40,35 @@ from utils.treebank import ReviewScaffold
 #%%
 # ============================================================================ #
 # model loading
+SKIP_IF_EXISTS = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODELS = [
-    # 'gpt2-small',
-    # 'gpt2-medium',
-    # 'gpt2-large',
-    # 'gpt2-xl',
+    'gpt2-small',
+    'gpt2-medium',
+    'gpt2-large',
+    'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
     # 'EleutherAI/pythia-1.4b',
     # 'EleutherAI/pythia-2.8b',
 ]
 METHODS = [
-    # ClassificationMethod.KMEANS,
+    ClassificationMethod.KMEANS,
     # ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
     # ClassificationMethod.MEAN_DIFF,
-    ClassificationMethod.LOGISTIC_REGRESSION,
+    # ClassificationMethod.LOGISTIC_REGRESSION,
     # FittingMethod.DAS,
 ]
 TRAIN_TYPES = [
-    # PromptType.SIMPLE_TRAIN,
+    PromptType.SIMPLE_TRAIN,
     # PromptType.CLASSIFICATION_4,
     # PromptType.SIMPLE_ADVERB,
     # PromptType.SIMPLE_MOOD,
     # PromptType.SIMPLE_FRENCH,
     # PromptType.PROPER_NOUNS,
     # PromptType.MEDICAL,
-    PromptType.TREEBANK_TRAIN,
+    # PromptType.TREEBANK_TRAIN,
 ]
 TEST_TYPES = [
     PromptType.SIMPLE_TEST,
@@ -121,20 +122,20 @@ def get_model(name: str):
 #     sweep_func = partial(
 #         train_das_subspace,
 #         model=sweep_model, device=device,
-#         train_type=PromptType.TREEBANK_TRAIN, train_pos=None, train_layer=sweep_layer,
-#         test_type=PromptType.TREEBANK_DEV, test_pos=None, test_layer=sweep_layer,
+#         train_type=PromptType.SIMPLE_TRAIN, train_pos="ADJ", train_layer=sweep_layer,
+#         test_type=PromptType.SIMPLE_MOOD, test_pos=None, test_layer=sweep_layer,
 #         wandb_enabled=True,
 #         downcast=False,
-#         scaffold=ReviewScaffold.CONTINUATION,
+#         # scaffold=ReviewScaffold.CONTINUATION,
 #         data_requires_grad=False,
-# #     )
+#     )
 #     sweep_config = {
 #         "name": f"DAS subspace dimension ({sweep_model.cfg.model_name})",
 #         "method": "grid",
 #         "metric": {"name": "loss", "goal": "minimize"},
 #         "parameters": {
 #             "lr": {"values": [1e-3]},
-#             "epochs": {"values": [1]},
+#             "epochs": {"values": [64]},
 #             "weight_decay": {"values": [0.0]},
 #             "betas": {"values": [[0.9, 0.999]]},
 #             "d_das": {"values": [1, 2, 4, 8, 16]},
@@ -143,6 +144,7 @@ def get_model(name: str):
 #     }
 #     sweep_id = wandb.sweep(sweep_config, project=train_das_subspace.__name__)
 #     wandb.agent(sweep_id, function=sweep_func)
+#     break
 #%%
 # model = get_model('gpt2-small')
 # das_dirs, das_path = train_das_subspace(
@@ -159,7 +161,6 @@ def get_model(name: str):
 #%%
 # ============================================================================ #
 # Training loop
-SKIP_IF_EXISTS = False
 BAR = tqdm(
     itertools.product(MODELS, TRAIN_TYPES, TEST_TYPES, METHODS),
     total=len(TRAIN_TYPES) * len(TEST_TYPES) * len(MODELS) * len(METHODS),
@@ -205,6 +206,7 @@ for model_name, train_type, test_type,  method in BAR:
         )
         if train_pos == 'VRB':
             # Don't train on verbs as sample size is too small
+            print("Skipping because train_pos is VRB")
             continue
         save_path = f"{method.value}_{train_type.value}_{train_pos}_layer{train_layer}.npy"
         if SKIP_IF_EXISTS and is_file(save_path, model):
@@ -218,8 +220,9 @@ for model_name, train_type, test_type,  method in BAR:
             train_test_discrepancy = test_type != PromptType.NONE and (
                 train_type != test_type or
                 train_layer != test_layer
-            )
+            ) and "treebank" in train_type.value
             if train_test_discrepancy:
+                print("Skipping due to train/test discrepancy")
                 continue
             print("Calling train_das_subspace...")
             _, das_path = train_das_subspace(
@@ -276,7 +279,7 @@ def plot_accuracy_similarity(
         df.train_set.isin(train_sets) & 
         df.train_pos.isin(train_positions) &
         df.test_set.isin(test_sets)
-    ]
+    ].copy()
     df.train_set = pd.Categorical(
         df.train_set, categories=train_sets, ordered=True
     )
@@ -302,7 +305,9 @@ def plot_accuracy_similarity(
         .format(hide_nan)
         .set_caption(f"{label} accuracy ({model})")
     )
-    save_html(accuracy_styler, f"{label}_accuracy", model, static=True)
+    save_html(
+        accuracy_styler, f"{label}_accuracy", model, static=True
+    )
     display(accuracy_styler)
     similarity_styler = (
         df.pivot(
@@ -323,7 +328,7 @@ for model in MODELS:
     fitting_stats = get_csv("direction_fitting_stats", model)
     for method in METHODS:
         plot_accuracy_similarity(
-            fitting_stats.loc[fitting_stats.method.eq(method.value)],
+            fitting_stats.loc[fitting_stats.method.eq(method.value)].copy(),
             method.value,
             model,
             train_sets=["simple_train", "treebank_train"],
@@ -373,6 +378,9 @@ def plot_pca_svd_2d(
     pca_centroids: Float[Tensor, "centroid d_model"],
     train_label: str = 'train', 
     test_label: str = 'test',
+    colorscale=[[0, 'darkred'], [1, 'darkblue']],
+    opacity=0.8,
+    marker_size=12,
 ):
     train_label = train_label.replace("simple_", "").replace("_layer0", "")
     test_label = test_label.replace("simple_", "").replace("_layer0", "")
@@ -398,13 +406,14 @@ def plot_pca_svd_2d(
             y=train_pcs[:, 1],
             text=train_str_labels,
             textposition="bottom center",
+            textfont=dict(size=16),
             mode="markers+text",
             marker=dict(
                 color=train_true_labels.to(dtype=torch.int32),
-                colorscale="RdBu",
-                opacity=0.8,
+                colorscale=colorscale,
+                opacity=opacity,
                 maxdisplayed=10,
-                size=8,
+                size=marker_size,
             ),
             name=f"{method_label} IS ({train_label})",
         )
@@ -417,13 +426,14 @@ def plot_pca_svd_2d(
             y=test_pcs[:, 1],
             text=test_str_labels,
             textposition="bottom center",
+            textfont=dict(size=16),
             mode="markers+text",
             marker=dict(
                 color=test_true_labels.to(dtype=torch.int32),
-                colorscale="RdBu",
-                opacity=0.8,
+                colorscale=colorscale,
+                opacity=opacity,
                 symbol="square",
-                size=8,
+                size=marker_size,
                 maxdisplayed=5,
             ),
             name=f"{method_label} OOS ({test_label})",
@@ -442,10 +452,10 @@ def plot_pca_svd_2d(
     )
     oos_label = "sample" if "ADJ" in train_label and "ADJ" in test_label else "distribution"
     fig.update_layout(
-        title=(
-            f"{method_label} in and out of {oos_label} "
-            f"({model})"
-        ),
+        title={
+            'text': f"{method_label} in and out of {oos_label} ({model})",
+            'font': {'size': 24}  # Adjust the size as needed
+        },
         xaxis_title="PC1",
         yaxis_title="PC2",
         title_x=0.5,
@@ -453,6 +463,15 @@ def plot_pca_svd_2d(
             x=0,  # Adjust this value as needed
             y=-0.2,  # Adjust this value to position the legend below the plot
             orientation="h",  # Set the orientation to horizontal
+            font=dict(size=16)  # Adjust the size as needed
+        ),
+        xaxis=dict(
+            title_font=dict(size=18),  # Adjust the size as needed
+            tickfont=dict(size=16)     # Adjust the size as needed
+        ),
+        yaxis=dict(
+            title_font=dict(size=18),  # Adjust the size as needed
+            tickfont=dict(size=16)     # Adjust the size as needed
         ),
     )
     save_html(
@@ -470,7 +489,8 @@ def plot_components_from_cache(
     train_set: PromptType, train_pos: str, train_layer: int,
     test_set: PromptType, test_pos: str, test_layer: int,
 ):
-    plot_df = get_csv("pca_svd_plot", model)
+    plot_df = get_csv("pca_svd_plot", model, index_col=None)
+    assert not plot_df.empty, "PCA data completely missing"
     plot_df = plot_df.loc[
         (plot_df.method == method.value) &
         (plot_df.train_set == train_set.value) &
@@ -480,6 +500,16 @@ def plot_components_from_cache(
         (plot_df.test_pos == test_pos) &
         (plot_df.test_layer == test_layer)
     ]
+    assert not plot_df.empty, (
+        f"Missing PCA data for query: "
+        f"method={method.value}, "
+        f"train_set={train_set.value}, "
+        f"train_pos={train_pos}, "
+        f"train_layer={train_layer}, "
+        f"test_set={test_set.value}, "
+        f"test_pos={test_pos}, "
+        f"test_layer={test_layer}"
+    )
     assert len(plot_df) == 1, f"Found {len(plot_df)} rows for query"
     plot_df = plot_df.iloc[0]
     train_pcs: Float[Tensor, "batch d_model"] = tensor_from_str(plot_df.train_pcs)
@@ -511,6 +541,7 @@ for model in ("gpt2-small", ):
     fig.show()
     save_pdf(fig, "pca_train_test_adjectives_layer_0", model)
     save_html(fig, "pca_train_test_adjectives_layer_0", model)
+    save_pdf(fig, "pca_train_test_adjectives_layer_0", model)
 #%%
 for model in ("gpt2-small", ):
     fig = plot_components_from_cache(
@@ -522,4 +553,5 @@ for model in ("gpt2-small", ):
     fig.show()
     save_pdf(fig, "pca_train_adjectives_test_verbs_layer_0", model)
     save_html(fig, "pca_train_adjectives_test_verbs_layer_0", model)
+    save_pdf(fig, "pca_train_test_adjectives_layer_0", model)
 #%%
