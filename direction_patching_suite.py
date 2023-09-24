@@ -30,19 +30,23 @@ pio.renderers.default = "notebook"
 #%% # Model loading
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    # 'gpt2-small',
+    'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-1.4b',
     # 'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
+    'mean_diff_simple_train_ADJ*.npy',
+    'pca_simple_train_ADJ*.npy',
     'kmeans_simple_train_ADJ*.npy',
     'logistic_regression_simple_train_ADJ*.npy',
     'das_simple_train_ADJ*.npy',
+    'das2d_simple_train_ADJ*.npy',
+    'das3d_simple_train_ADJ*.npy',
     # 'das_treebank*.npy',
 ]
 #%%
@@ -436,7 +440,7 @@ def export_results(
     save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
     save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_plot", model)
 # %%
-USE_CACHE = True
+USE_CACHE = False
 HEADS = {
     "gpt2-small": [
         (0, 4),

@@ -1,5 +1,4 @@
 #%%
-import yaml
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.cluster import KMeans
@@ -16,27 +15,22 @@ from typing import Iterable, List, Tuple, Union, Optional, Dict
 from jaxtyping import Float, Int
 from torch import Tensor
 from functools import partial
-import copy
 from enum import Enum
-import os
 import itertools
 from IPython.display import display, HTML
 from transformers import AutoModelForCausalLM
 from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.utils import test_prompt
 import transformer_lens.evals as evals
-from transformer_lens.hook_points import (
-    HookedRootModule,
-    HookPoint,
-)  # Hooking utilities
 import wandb
 from utils.store import save_array, save_html, update_csv, get_csv, eval_csv, is_file, load_pickle, save_pdf
 from utils.prompts import PromptType
 from utils.residual_stream import ResidualStreamDataset
 from utils.classification import train_classifying_direction, ClassificationMethod
-from utils.das import FittingMethod, train_das_subspace
+from utils.das import GradientMethod, train_das_subspace
 from utils.classifier import HookedClassifier
 from utils.treebank import ReviewScaffold
+from utils.methods import FittingMethod
 #%%
 # ============================================================================ #
 # model loading
@@ -44,21 +38,23 @@ SKIP_IF_EXISTS = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODELS = [
     'gpt2-small',
-    'gpt2-medium',
-    'gpt2-large',
-    'gpt2-xl',
+    # 'gpt2-medium',
+    # 'gpt2-large',
+    # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
     # 'EleutherAI/pythia-1.4b',
     # 'EleutherAI/pythia-2.8b',
 ]
 METHODS = [
-    ClassificationMethod.KMEANS,
+    # ClassificationMethod.KMEANS,
     # ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
     # ClassificationMethod.MEAN_DIFF,
     # ClassificationMethod.LOGISTIC_REGRESSION,
-    # FittingMethod.DAS,
+    GradientMethod.DAS,
+    GradientMethod.DAS2D,
+    GradientMethod.DAS3D,
 ]
 TRAIN_TYPES = [
     PromptType.SIMPLE_TRAIN,
@@ -161,12 +157,13 @@ def get_model(name: str):
 #%%
 # ============================================================================ #
 # Training loop
+MAX_LAYERS = 12
 BAR = tqdm(
     itertools.product(MODELS, TRAIN_TYPES, TEST_TYPES, METHODS),
     total=len(TRAIN_TYPES) * len(TEST_TYPES) * len(MODELS) * len(METHODS),
 )
 model = None
-for model_name, train_type, test_type,  method in BAR:
+for model_name, train_type, test_type, method in BAR:
     BAR.set_description(
         f"model:{model_name},"
         f"trainset:{train_type.value},"
@@ -185,7 +182,10 @@ for model_name, train_type, test_type,  method in BAR:
         train_placeholders = ["ALL"]
     if len(test_placeholders) == 0:
         test_placeholders = ["ALL"]
-    layers = [eval(layer.format(n=model.cfg.n_layers)) for layer in LAYERS]
+    if model.cfg.n_layers > MAX_LAYERS:
+        layers = [eval(layer.format(n=model.cfg.n_layers)) for layer in LAYERS]
+    else:
+        layers = list(range(model.cfg.n_layers + 1))
     placeholders_layers = list(itertools.product(
         train_placeholders, 
         test_placeholders,
@@ -216,7 +216,7 @@ for model_name, train_type, test_type,  method in BAR:
             train_pos = None
         if test_pos == "ALL":
             test_pos = None
-        if method == FittingMethod.DAS:
+        if isinstance(method, GradientMethod):
             train_test_discrepancy = test_type != PromptType.NONE and (
                 train_type != test_type or
                 train_layer != test_layer
@@ -233,6 +233,7 @@ for model_name, train_type, test_type,  method in BAR:
                 wandb_enabled=False,
                 epochs = 1 if "treebank" in train_type.value else 64,
                 batch_size=BATCH_SIZES[model_name],
+                d_das=method.get_dimension(),
             )
             print(f"Saving DAS direction to {das_path}")
             torch.cuda.empty_cache()
