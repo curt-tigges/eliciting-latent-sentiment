@@ -595,7 +595,7 @@ class CleanCorruptedCacheResults:
             np.array(clean_logit_diffs, dtype=np.float32) > 0
         ).sum() / len(clean_logit_diffs)
         self.corrupted_accuracy = (
-            np.array(corrupted_logit_diffs, dtype=torch.float32) > 0
+            np.array(corrupted_logit_diffs, dtype=np.float32) > 0
         ).sum() / len(corrupted_logit_diffs)
 
     def __str__(self) -> str:
