@@ -622,8 +622,13 @@ class CleanCorruptedCacheResults:
         self.corrupted_accuracy = get_accuracy_from_logit_diffs(self.corrupted_logit_diffs)
     
     def center_logit_diffs(self):
-        self.corrupted_logit_diffs, self.corrupted_logit_bias = center_logit_diffs(self.corrupted_logit_diffs)
-        self.clean_logit_diffs, self.clean_logit_bias = center_logit_diffs(self.clean_logit_diffs)
+        answer_tokens = self.dataset.answer_tokens
+        self.corrupted_logit_diffs, self.corrupted_logit_bias = center_logit_diffs(
+            self.corrupted_logit_diffs, answer_tokens
+        )
+        self.clean_logit_diffs, self.clean_logit_bias = center_logit_diffs(
+            self.clean_logit_diffs, answer_tokens
+        )
 
 
 def get_dataset(
