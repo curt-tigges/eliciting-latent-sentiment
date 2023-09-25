@@ -1,5 +1,4 @@
 from contextlib import nullcontext
-from enum import Enum
 from functools import partial
 import warnings
 import einops
@@ -20,10 +19,23 @@ from utils.prompts import PromptType, get_dataset
 from utils.residual_stream import get_resid_name
 from utils.store import save_array
 from utils.treebank import ReviewScaffold
+from utils.methods import FittingMethod
 
 
-class FittingMethod(Enum):
+class GradientMethod(FittingMethod):
     DAS = 'das'
+    DAS2D = 'das2d'
+    DAS3D = 'das3d'
+
+    def get_dimension(self):
+        if self == GradientMethod.DAS:
+            return 1
+        elif self == GradientMethod.DAS2D:
+            return 2
+        elif self == GradientMethod.DAS3D:
+            return 3
+        else:
+            raise ValueError("Invalid GradientMethod")
 
 
 class InverseRotateLayer(torch.nn.Module):
@@ -452,7 +464,7 @@ def train_das_subspace(
     batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
     downcast: bool = False, scaffold: ReviewScaffold = None,
     data_requires_grad: bool = False, verbose: bool = False,
-    **config_arg,
+    d_das: int = 1, **config_arg,
 ) -> Tuple[Float[Tensor, "batch d_model"], str]:
     """
     Entrypoint to be used in directional patching experiments
@@ -482,6 +494,7 @@ def train_das_subspace(
         eval_layer=test_layer,
         eval_position=test_position,
         batch_size=batch_size,
+        d_das=d_das,
     )
     config.update(config_arg)
     directions = fit_rotation(
@@ -497,11 +510,11 @@ def train_das_subspace(
         **config,
     )
     train_pos = train_pos if train_pos is not None else 'ALL'
-    save_path = f'das_{train_type.value}_{train_pos}_layer{train_layer}'
-    if directions.shape[1] == 1:
-        save_array(
-            directions.detach().cpu().squeeze(1).numpy(), 
-            save_path, 
-            model,
-        )
+    d_das_str = f'{d_das}d' if d_das > 1 else ''
+    save_path = f'das{d_das_str}_{train_type.value}_{train_pos}_layer{train_layer}'
+    save_array(
+        directions.detach().cpu().squeeze(1).numpy(), 
+        save_path, 
+        model,
+    )
     return directions, save_path

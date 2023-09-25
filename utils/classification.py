@@ -1,4 +1,3 @@
-from enum import Enum
 from functools import partial
 from typing import Iterable, List, Tuple
 import einops
@@ -13,9 +12,10 @@ from sklearn.linear_model import LogisticRegression
 import warnings
 from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
+from utils.methods import FittingMethod
 
 
-class ClassificationMethod(Enum):
+class ClassificationMethod(FittingMethod):
     KMEANS = "kmeans"
     LOGISTIC_REGRESSION = "logistic_regression"
     PCA = "pca"
