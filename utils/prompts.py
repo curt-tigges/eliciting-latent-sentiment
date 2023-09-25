@@ -594,19 +594,12 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diffs = clean_logit_diffs
         self.corrupted_prob_diffs = corrupted_prob_diffs
         self.clean_prob_diffs = clean_prob_diffs
-
         if center:
             self.center_logit_diffs()
         else:
             self.corrupted_logit_bias = 0
             self.clean_logit_bias = 0
-
-        self.corrupted_logit_diff = torch.mean(corrupted_logit_diffs)
-        self.clean_logit_diff = torch.mean(clean_logit_diffs)
-        self.corrupted_prob_diff = torch.mean(corrupted_prob_diffs)
-        self.clean_prob_diff = torch.mean(clean_prob_diffs)
-        self.clean_accuracy = (clean_logit_diffs > 0).to(dtype=torch.float32).mean()
-        self.corrupted_accuracy = (corrupted_logit_diffs > 0).to(dtype=torch.float32).mean()
+        self.set_accuracy()
 
     def __str__(self) -> str:
         return (
@@ -619,6 +612,14 @@ class CleanCorruptedCacheResults:
             f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n"
             f")"
         )
+    
+    def set_accuracy(self):
+        self.corrupted_logit_diff = torch.mean(self.corrupted_logit_diffs)
+        self.clean_logit_diff = torch.mean(self.clean_logit_diffs)
+        self.corrupted_prob_diff = torch.mean(self.corrupted_prob_diffs)
+        self.clean_prob_diff = torch.mean(self.clean_prob_diffs)
+        self.clean_accuracy = (self.clean_logit_diffs > 0).to(dtype=torch.float32).mean()
+        self.corrupted_accuracy = (self.corrupted_logit_diffs > 0).to(dtype=torch.float32).mean()
     
     def _center_logit_diffs(self, logit_diffs: Float[Tensor, "batch"]):
         is_positive = (
