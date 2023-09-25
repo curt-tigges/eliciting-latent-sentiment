@@ -147,6 +147,40 @@ def hist_p(tensor, renderer=None, **kwargs):
     fig.show(renderer)
 
 
+# %%
+
+import plotly.io as pio
+def imshow_p(tensor, renderer=None, save_path=None, **kwargs):
+    kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
+    kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
+    facet_labels = kwargs_pre.pop("facet_labels", None)
+    border = kwargs_pre.pop("border", False)
+    if "color_continuous_scale" not in kwargs_pre:
+        kwargs_pre["color_continuous_scale"] = "RdBu"
+    if "margin" in kwargs_post and isinstance(kwargs_post["margin"], int):
+        kwargs_post["margin"] = dict.fromkeys(list("tblr"), kwargs_post["margin"])
+    fig = px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, **kwargs_pre)
+    if facet_labels:
+        for i, label in enumerate(facet_labels):
+            fig.layout.annotations[i]['text'] = label
+    if border:
+        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
+        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
+    # things like `xaxis_tickmode` should be applied to all subplots. This is super janky lol but I'm under time pressure
+    for setting in ["tickangle"]:
+      if f"xaxis_{setting}" in kwargs_post:
+          i = 2
+          while f"xaxis{i}" in fig["layout"]:
+            kwargs_post[f"xaxis{i}_{setting}"] = kwargs_post[f"xaxis_{setting}"]
+            i += 1
+    fig.update_layout(**kwargs_post)
+    fig.show(renderer=renderer)
+
+    # Save the figure as a PDF if save_path is provided
+    if save_path:
+        pio.write_image(fig, save_path)
+
+
 # %% id="0c0JbzPpI0-D"
 def imshow(tensor, renderer=None, xaxis="", yaxis="", **kwargs):
     px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, color_continuous_scale="RdBu", labels={"x":xaxis, "y":yaxis}, **kwargs).show(renderer)
@@ -180,6 +214,10 @@ model = HookedTransformer.from_pretrained(
     fold_ln=True,
     refactor_factored_attn_matrices=True,
 )
+model.set_use_hook_mlp_in(True)
+
+# %%
+model.set_use_hook_mlp_in(True)
 
 # %% [markdown]
 # ### Initial Examination
@@ -202,6 +240,9 @@ utils.test_prompt(example_prompt, example_answer, model, prepend_bos=True, top_k
 # %%
 #pos_answers = [" Positive", " amazing", " good"]
 #neg_answers = [" Negative", " terrible", " bad"]
+
+TASK = "simple_sentiment"
+
 clean_corrupt_data = get_dataset(
     model, device, 1, comparison=("positive", "negative")
 )
@@ -211,9 +252,6 @@ corrupted_tokens = clean_corrupt_data.corrupted_tokens
 answer_tokens = clean_corrupt_data.answer_tokens
 # %%
 len(all_prompts), answer_tokens.shape, clean_tokens.shape, corrupted_tokens.shape
-
-# %%
-answer_tokens
 
 # %%
 for i in range(len(all_prompts)):
@@ -262,8 +300,6 @@ def logit_diff_noising(
 
 # %% [markdown] id="TfiWnZtelFMV"
 # ### Direct Logit Attribution
-
-# %%
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="bt_jzrazlMAK" outputId="39683745-1153-4a0f-bdbf-5f3be977abe3"
 answer_residual_directions = model.tokens_to_residual_directions(answer_tokens)
@@ -391,59 +427,28 @@ results = act_patch(
     model=model,
     orig_input=corrupted_tokens,
     new_cache=clean_cache,
-    patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
+    patching_nodes=IterNode(["resid_pre"], seq_pos="each"),
+    #patching_nodes=IterNode(["resid_pre", "attn_out", "mlp_out"], seq_pos="each"),
     patching_metric=logit_diff_denoising,
     verbose=True,
 )
 
 # %%
-import plotly.io as pio
-def imshow_p(tensor, renderer=None, save_path=None, **kwargs):
-    kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
-    kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
-    facet_labels = kwargs_pre.pop("facet_labels", None)
-    border = kwargs_pre.pop("border", False)
-    if "color_continuous_scale" not in kwargs_pre:
-        kwargs_pre["color_continuous_scale"] = "RdBu"
-    if "margin" in kwargs_post and isinstance(kwargs_post["margin"], int):
-        kwargs_post["margin"] = dict.fromkeys(list("tblr"), kwargs_post["margin"])
-    fig = px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, **kwargs_pre)
-    if facet_labels:
-        for i, label in enumerate(facet_labels):
-            fig.layout.annotations[i]['text'] = label
-    if border:
-        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
-        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
-    # things like `xaxis_tickmode` should be applied to all subplots. This is super janky lol but I'm under time pressure
-    for setting in ["tickangle"]:
-      if f"xaxis_{setting}" in kwargs_post:
-          i = 2
-          while f"xaxis{i}" in fig["layout"]:
-            kwargs_post[f"xaxis{i}_{setting}"] = kwargs_post[f"xaxis_{setting}"]
-            i += 1
-    fig.update_layout(**kwargs_post)
-    fig.show(renderer=renderer)
-
-    # Save the figure as a PDF if save_path is provided
-    if save_path:
-        pio.write_image(fig, save_path)
-
-
-# %%
-assert results.keys() == {"resid_pre", "attn_out", "mlp_out"}
+from utils.visualization import imshow_p
+assert results.keys() == {"resid_pre"}#, "attn_out", "mlp_out"}
 labels = [f"{tok} {i}" for i, tok in enumerate(model.to_str_tokens(clean_tokens[0]))]
 imshow_p(
     torch.stack([r.T for r in results.values()]) * 100, # we transpose so layer is on the y-axis
-    save_path="patching_at_resid_stream_and_layer_outputs.pdf",
+    save_path=f"data/images/{model.cfg.model_name}-{TASK}-act_patching_at_resid_stream.pdf",
     facet_col=0,
-    facet_labels=["resid_pre", "attn_out", "mlp_out"],
-    title="Patching at resid stream & layer outputs (corrupted -> clean)",
+    facet_labels=["resid_pre"],#, "attn_out", "mlp_out"],
+    title="Patching at resid stream (corrupted -> clean)",
     labels={"x": "Sequence position", "y": "Layer", "color": "Logit diff variation"},
     x=labels,
     xaxis_tickangle=45,
     coloraxis=dict(colorbar_ticksuffix = "%"),
     border=True,
-    width=1300,
+    width=600,
     zmin=-50,
     zmax=50,
     margin={"r": 100, "l": 100}
@@ -472,6 +477,7 @@ results = path_patch(
 # %%
 imshow_p(
     results['z'],
+    save_path=f"data/images/{model.cfg.model_name}-{TASK}-path_patching_attn_heads.pdf",
     title="Direct effect on logit diff (patch from head output -> final resid)",
     labels={"x": "Head", "y": "Layer", "color": "Logit diff variation"},
     border=True,
@@ -480,7 +486,7 @@ imshow_p(
 )
 
 # %%
-from visualization import (
+from utils.visualization import (
     plot_attention_heads,
     scatter_attention_and_contribution
 )
@@ -491,12 +497,12 @@ import circuitsvis as cv
 plot_attention_heads(-results['z'].cuda(), top_n=15, range_x=[0, 0.5])
 
 # %%
-from visualization import get_attn_head_patterns
+from utils.visualization import get_attn_head_patterns
 
 top_k = 5
 top_heads = torch.topk(-results['z'].flatten(), k=top_k).indices.cpu().numpy()
 heads = [(head // model.cfg.n_heads, head % model.cfg.n_heads) for head in top_heads]
-tokens, attn, names = get_attn_head_patterns(model, all_prompts[21], heads)
+tokens, attn, names = get_attn_head_patterns(model, all_prompts[0], heads)
 cv.attention.attention_heads(tokens=tokens, attention=attn, attention_head_names=names)
 
 # %%
