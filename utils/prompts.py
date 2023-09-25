@@ -595,8 +595,8 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diff = torch.mean(clean_logit_diffs)
         self.corrupted_prob_diff = torch.mean(corrupted_prob_diffs)
         self.clean_prob_diff = torch.mean(clean_prob_diffs)
-        self.clean_accuracy = (clean_logit_diffs > 0).mean()
-        self.corrupted_accuracy = (corrupted_logit_diffs > 0).mean()
+        self.clean_accuracy = (clean_logit_diffs > 0).to(dtype=torch.float32).mean()
+        self.corrupted_accuracy = (corrupted_logit_diffs > 0).to(dtype=torch.float32).mean()
 
     def __str__(self) -> str:
         return (
