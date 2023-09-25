@@ -113,11 +113,12 @@ def get_logit_diff(
     return (left_logits_batch - right_logits_batch).mean()
 
 
+@typechecked
 def get_prob_diff(
-    logits: Float[Tensor, "batch pos vocab"],
+    logits: Float[Tensor, "batch *pos vocab"],
     answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
     per_prompt: bool = False,
-):
+) -> Float[Tensor, "*batch"]:
     """
     Gets the difference between the softmax probabilities of the provided tokens 
     e.g., the correct and incorrect tokens in IOI
@@ -127,30 +128,30 @@ def get_prob_diff(
         answer_tokens (torch.Tensor): Indices of the tokens to compare.
 
     Returns:
-        torch.Tensor: Difference between the logits of the provided tokens.
+        torch.Tensor: Difference between the softmax probs of the provided tokens.
     """
     if answer_tokens.ndim == 2:
         answer_tokens = answer_tokens.unsqueeze(1)
     n_pairs = answer_tokens.shape[1]
-    if len(logits.shape) == 3:
-        # Get final logits only
-        logits: Float[Tensor, "batch vocab"] = logits[:, -1, :]
-    logits = einops.repeat(
-        logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
+    final_token_logits: Float[Tensor, "batch vocab"] = (
+        logits[:, -1, :] if len(logits.shape) == 3 else logits
     )
-    probs: Float[Tensor, "batch n_pairs vocab"] = logits.softmax(dim=-1)
+    repeated_logits: Float[Tensor, "batch n_pairs d_vocab"] = einops.repeat(
+        final_token_logits, "batch vocab -> batch n_pairs vocab", n_pairs=n_pairs
+    )
+    probs: Float[Tensor, "batch n_pairs vocab"] = repeated_logits.softmax(dim=-1)
     left_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
         -1, answer_tokens[:, :, 0].unsqueeze(-1)
     )
     right_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
         -1, answer_tokens[:, :, 1].unsqueeze(-1)
     )
-    left_probs: Float[Tensor, "batch"] = left_probs.mean(dim=1)
-    right_probs: Float[Tensor, "batch"] = right_probs.mean(dim=1)
+    left_probs_batch: Float[Tensor, "batch"] = left_probs.mean(dim=1)
+    right_probs_batch: Float[Tensor, "batch"] = right_probs.mean(dim=1)
     if per_prompt:
-        return left_probs - right_probs
+        return left_probs_batch - right_probs_batch
 
-    return (left_probs - right_probs).mean()
+    return (left_probs_batch - right_probs_batch).mean()
 
 
 def get_log_probs(

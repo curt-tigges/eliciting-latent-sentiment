@@ -487,10 +487,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
 
         # Initialise arrays
         total_samples = len(dataloader.dataset)
-        clean_logit_diffs = torch.zeros(total_samples, dtype=dtype)
-        corrupted_logit_diffs = torch.zeros(total_samples, dtype=dtype)
-        clean_prob_diffs = torch.zeros(total_samples, dtype=dtype)
-        corrupted_prob_diffs = torch.zeros(total_samples, dtype=dtype)
+        clean_logit_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
+        corrupted_logit_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
+        clean_prob_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
+        corrupted_prob_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
 
         corrupted_dict = dict()
         clean_dict = dict()
