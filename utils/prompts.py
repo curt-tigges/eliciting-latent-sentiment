@@ -404,6 +404,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_tokens: Int[Tensor, "batch pos"],
         answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
+        model: HookedTransformer,
     ):
         assert len(clean_tokens) == len(corrupted_tokens)
         assert len(clean_tokens) == len(answer_tokens)
@@ -414,6 +415,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         self.corrupted_tokens = corrupted_tokens
         self.answer_tokens = answer_tokens
         self.all_prompts = all_prompts
+        self.model = model
 
     def get_subset(self, indices: List[int]):
         return CleanCorruptedDataset(
@@ -421,7 +423,25 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.corrupted_tokens[indices],
             self.answer_tokens[indices],
             [self.all_prompts[i] for i in indices],
+            self.model,
         )
+    
+    def get_num_pad_tokens(self) -> Int[Tensor, "batch"]:
+        return (
+            self.clean_tokens == self.model.tokenizer.pad_token_id
+        ).sum(dim=1)
+    
+    def get_num_non_pad_tokens(self) -> Int[Tensor, "batch"]:
+        return (
+            self.clean_tokens == self.model.tokenizer.pad_token_id
+        ).sum(dim=1)
+    
+    def restrict_by_padding(self, min_tokens: int, max_tokens: int):
+        num_pad_tokens = self.get_num_non_pad_tokens()
+        indices = torch.where(
+            (num_pad_tokens >= min_tokens) & (num_pad_tokens <= max_tokens)
+        )[0]
+        return self.get_subset(indices)
     
     def shuffle(self, seed: int = 0):
         random.seed(seed)
@@ -695,6 +715,7 @@ def get_dataset(
         answer_tokens=answer_tokens, 
         clean_tokens=clean_tokens, 
         corrupted_tokens=corrupted_tokens,
+        model=model,
     )
 
 
