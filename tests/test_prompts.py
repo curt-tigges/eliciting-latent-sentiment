@@ -63,10 +63,10 @@ class TestCleanCorruptedCacheResults(unittest.TestCase):
             dataset, 
             corrupted_cache, 
             clean_cache, 
-            [0.5],
-            [0.6],
-            [0.7],
-            [0.8],
+            torch.tensor([0.5]),
+            torch.tensor([0.6]),
+            torch.tensor([0.7]),
+            torch.tensor([0.8]),
         )
 
     def test_initialization(self):
