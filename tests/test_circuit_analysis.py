@@ -26,7 +26,7 @@ from typing import List, Optional, Callable, Tuple, Dict, Literal, Set
 from rich import print as rprint
 
 from typing import List, Union
-from utils.circuit_analysis import get_logit_diff, residual_stack_to_logit_diff, cache_to_logit_diff, project_to_subspace, create_cache_for_dir_patching
+from utils.circuit_analysis import get_logit_diff, residual_stack_to_logit_diff, cache_to_logit_diff, project_to_subspace, create_cache_for_dir_patching, get_prob_diff
 import unittest
 
 
@@ -168,6 +168,31 @@ class TestCircuitAnalysis(unittest.TestCase):
             result_cache['other'], torch.tensor([3.5, 4.5]), 
             atol=1e-5
         ))
+
+
+class TestGetProbDiff(unittest.TestCase):
+
+    def test_basic_functionality(self):
+        logits = torch.tensor([[[0.5, 1.0, 0.0]]])
+        answer_tokens = torch.tensor([[0, 1]])
+        result = get_prob_diff(logits, answer_tokens)
+        expected = torch.tensor([-0.19928])  # Pre-computed value based on the given logits and tokens
+        self.assertTrue(torch.allclose(result, expected, atol=1e-4))
+
+    def test_per_prompt_true(self):
+        logits = torch.tensor([[[0.5, 1.0, 0.0]]])
+        answer_tokens = torch.tensor([[0, 1]])
+        result = get_prob_diff(logits, answer_tokens, per_prompt=True)
+        expected = torch.tensor([-0.19928])  # Same as above because there's only one batch
+        self.assertTrue(torch.allclose(result, expected, atol=1e-4))
+
+    def test_multiple_batches(self):
+        logits = torch.tensor([[[0.5, 1.0, 0.0]], [[0.5, 0.0, 1.0]]])
+        answer_tokens = torch.tensor([[0, 1], [1, 2]])
+        result = get_prob_diff(logits, answer_tokens, per_prompt=True)
+        expected_mean_diff = (torch.tensor([-0.19928, -0.3202]))
+        self.assertTrue(torch.allclose(result, expected_mean_diff, atol=1e-4))
+
 
 
 if __name__ == "__main__":

@@ -142,10 +142,10 @@ def get_prob_diff(
     probs: Float[Tensor, "batch n_pairs vocab"] = repeated_logits.softmax(dim=-1)
     left_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
         -1, answer_tokens[:, :, 0].unsqueeze(-1)
-    )
+    ).squeeze(-1)
     right_probs: Float[Tensor, "batch n_pairs"] = probs.gather(
         -1, answer_tokens[:, :, 1].unsqueeze(-1)
-    )
+    ).squeeze(-1)
     left_probs_batch: Float[Tensor, "batch"] = left_probs.mean(dim=1)
     right_probs_batch: Float[Tensor, "batch"] = right_probs.mean(dim=1)
     if per_prompt:
