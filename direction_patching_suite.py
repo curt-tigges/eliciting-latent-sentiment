@@ -115,7 +115,7 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
             direction = direction.squeeze(1)
         elif direction.ndim == 2 and direction.shape[0] == 1:
             direction = direction.squeeze(0)
-        assert direction.ndim == 1, f"Direction {direction_labels[i]} has shape {direction.shape}"
+        assert direction.ndim <= 3, f"Direction {direction_labels[i]} has shape {direction.shape}"
         directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
     direction_labels = [zero_pad_layer_string(label) for label in direction_labels]
     sorted_indices = sorted(
@@ -280,7 +280,6 @@ def get_results_for_direction_and_position(
         return_tensor=True,
     )
 
-    direction = direction / direction.norm()
     new_cache = create_cache_for_dir_patching(
         patching_dataset.clean_cache, patching_dataset.corrupted_cache, direction, model
     )
@@ -330,7 +329,7 @@ def get_results_for_metric(
     )
     results = pd.DataFrame(index=direction_labels, dtype=float)
     for prompt_type, (direction_label, direction) in bar:
-        bar.set_description(f"{prompt_type.value} {direction_label} batch size {batch_size}")
+        bar.set_description(f"{prompt_type.value} {direction_label} batch_size={batch_size}")
         placeholders = prompt_type.get_placeholders() + ['ALL']
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
@@ -471,7 +470,7 @@ PROMPT_TYPES = [
     # PromptType.SIMPLE_FRENCH,
 ]
 METRICS = [
-    logit_diff_denoising,
+    # logit_diff_denoising,
     logit_flip_denoising,
     # prob_diff_denoising,
 ]
@@ -493,6 +492,9 @@ BATCH_SIZES = {
 model = None
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 for model_name, metric, use_heads in model_metric_bar:
+    # if "flip" in metric.__name__:
+    #     batch_size = 32
+    # else:
     batch_size = BATCH_SIZES[model_name]
     if use_heads and model_name not in HEADS:
         continue
@@ -501,7 +503,7 @@ for model_name, metric, use_heads in model_metric_bar:
     else:
         heads = None
     patch_label = "attn_result" if use_heads else "resid" 
-    model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label} batch size {batch_size}")
+    model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label} batch_size={batch_size}")
     if model is None or model_name not in model.name:
         model = get_model(model_name)
     DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
