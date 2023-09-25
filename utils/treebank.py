@@ -185,3 +185,4 @@ def create_dataset_for_model(
     for split in ('train', 'dev', 'test'):
         for scaffold in ReviewScaffold:
             create_dataset_for_split(paired_df, split, model, scaffold)
+    return paired_df

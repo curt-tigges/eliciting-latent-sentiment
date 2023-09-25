@@ -464,6 +464,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         device: torch.device = None,
         disable_tqdm: bool = None,
         dtype: torch.dtype = torch.float32,
+        center: bool = True,
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
@@ -569,19 +570,22 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             clean_logit_diffs=clean_logit_diffs,
             corrupted_prob_diffs=corrupted_prob_diffs,
             clean_prob_diffs=clean_prob_diffs,
+            center=center,
         )
 
 
 class CleanCorruptedCacheResults:
 
     def __init__(
-        self, dataset: CleanCorruptedDataset,
+        self, 
+        dataset: CleanCorruptedDataset,
         corrupted_cache: ActivationCache,
         clean_cache: ActivationCache,
         corrupted_logit_diffs: Float[Tensor, "batch"],
         clean_logit_diffs: Float[Tensor, "batch"],
         corrupted_prob_diffs: Float[Tensor, "batch"],
         clean_prob_diffs: Float[Tensor, "batch"],
+        center: bool = True,
     ) -> None:
         self.dataset = dataset
         self.corrupted_cache = corrupted_cache
@@ -590,6 +594,12 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diffs = clean_logit_diffs
         self.corrupted_prob_diffs = corrupted_prob_diffs
         self.clean_prob_diffs = clean_prob_diffs
+
+        if center:
+            self.center_logit_diffs()
+        else:
+            self.corrupted_logit_bias = 0
+            self.clean_logit_bias = 0
 
         self.corrupted_logit_diff = torch.mean(corrupted_logit_diffs)
         self.clean_logit_diff = torch.mean(clean_logit_diffs)
@@ -609,6 +619,21 @@ class CleanCorruptedCacheResults:
             f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n"
             f")"
         )
+    
+    def _center_logit_diffs(self, logit_diffs: Float[Tensor, "batch"]):
+        is_positive = (
+            self.dataset.answer_tokens[:, 0, 0] == 
+            self.dataset.answer_tokens[0, 0, 0]
+        ).cpu()
+        bias = torch.where(is_positive, logit_diffs, -logit_diffs).mean().cpu()
+        debiased = (
+            logit_diffs - torch.where(is_positive, bias, -bias)
+        )
+        return debiased, bias
+    
+    def center_logit_diffs(self):
+        self.corrupted_logit_diffs, self.corrupted_logit_bias = self._center_logit_diffs(self.corrupted_logit_diffs)
+        self.clean_logit_diffs, self.clean_logit_bias = self._center_logit_diffs(self.clean_logit_diffs)
 
 
 def get_dataset(
