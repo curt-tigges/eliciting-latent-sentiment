@@ -484,7 +484,14 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_prob_diffs = []
         clean_prob_diffs = []
         buffer_initialized = False
+
+        # Initialise arrays
         total_samples = len(dataloader.dataset)
+        clean_logit_diffs = torch.zeros(total_samples, dtype=dtype)
+        corrupted_logit_diffs = torch.zeros(total_samples, dtype=dtype)
+        clean_prob_diffs = torch.zeros(total_samples, dtype=dtype)
+        corrupted_prob_diffs = torch.zeros(total_samples, dtype=dtype)
+
         corrupted_dict = dict()
         clean_dict = dict()
         if disable_tqdm is None:
@@ -503,16 +510,12 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 corrupted_logits, corrupted_cache = model.run_with_cache(
                     corrupted_tokens, names_filter=names_filter
                 )
-                corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
-                corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
                 corrupted_cache.to('cpu')
 
                 # clean forward pass
                 clean_logits, clean_cache = model.run_with_cache(
                     clean_tokens, names_filter=names_filter
                 )
-                clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
-                clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
                 clean_cache.to('cpu')
 
                 # Initialise the buffer tensors if necessary
@@ -533,10 +536,18 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                     corrupted_dict[k][start_idx:end_idx] = v
                 for k, v in clean_cache.items():
                     clean_dict[k][start_idx:end_idx] = v
-        corrupted_logit_diff = sum(corrupted_logit_diffs) / len(corrupted_logit_diffs)
-        clean_logit_diff = sum(clean_logit_diffs) / len(clean_logit_diffs)
-        corrupted_prob_diff = sum(corrupted_prob_diffs) / len(corrupted_prob_diffs)
-        clean_prob_diff = sum(clean_prob_diffs) / len(clean_prob_diffs)
+                clean_logit_diffs[start_idx:end_idx] = get_logit_diff(
+                    clean_logits, answer_tokens, per_prompt=True
+                ).detach().cpu()
+                corrupted_logit_diffs[start_idx:end_idx] = get_logit_diff(
+                    corrupted_logits, answer_tokens, per_prompt=True
+                ).detach().cpu()
+                clean_prob_diffs[start_idx:end_idx] = get_prob_diff(
+                    clean_logits, answer_tokens, per_prompt=True
+                ).detach().cpu()
+                corrupted_prob_diffs[start_idx:end_idx] = get_prob_diff(
+                    corrupted_logits, answer_tokens, per_prompt=True
+                ).detach().cpu()
         corrupted_cache = ActivationCache(
             {k: v.detach().clone().requires_grad_(requires_grad) for k, v in corrupted_dict.items()}, 
             model=model
@@ -558,10 +569,6 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             clean_logit_diffs=clean_logit_diffs,
             corrupted_prob_diffs=corrupted_prob_diffs,
             clean_prob_diffs=clean_prob_diffs,
-            corrupted_logit_diff=corrupted_logit_diff,
-            clean_logit_diff=clean_logit_diff,
-            corrupted_prob_diff=corrupted_prob_diff,
-            clean_prob_diff=clean_prob_diff,
         )
 
 
@@ -571,14 +578,10 @@ class CleanCorruptedCacheResults:
         self, dataset: CleanCorruptedDataset,
         corrupted_cache: ActivationCache,
         clean_cache: ActivationCache,
-        corrupted_logit_diffs: List[float],
-        clean_logit_diffs: List[float],
-        corrupted_prob_diffs: List[float],
-        clean_prob_diffs: List[float],
-        corrupted_logit_diff: float,
-        clean_logit_diff: float,
-        corrupted_prob_diff: float,
-        clean_prob_diff: float,
+        corrupted_logit_diffs: Float[Tensor, "batch"],
+        clean_logit_diffs: Float[Tensor, "batch"],
+        corrupted_prob_diffs: Float[Tensor, "batch"],
+        clean_prob_diffs: Float[Tensor, "batch"],
     ) -> None:
         self.dataset = dataset
         self.corrupted_cache = corrupted_cache
@@ -587,16 +590,13 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diffs = clean_logit_diffs
         self.corrupted_prob_diffs = corrupted_prob_diffs
         self.clean_prob_diffs = clean_prob_diffs
-        self.corrupted_logit_diff = corrupted_logit_diff
-        self.clean_logit_diff = clean_logit_diff
-        self.corrupted_prob_diff = corrupted_prob_diff
-        self.clean_prob_diff = clean_prob_diff
-        self.clean_accuracy = (
-            np.array(clean_logit_diffs, dtype=np.float32) > 0
-        ).sum() / len(clean_logit_diffs)
-        self.corrupted_accuracy = (
-            np.array(corrupted_logit_diffs, dtype=np.float32) > 0
-        ).sum() / len(corrupted_logit_diffs)
+
+        self.corrupted_logit_diff = torch.mean(corrupted_logit_diffs)
+        self.clean_logit_diff = torch.mean(clean_logit_diffs)
+        self.corrupted_prob_diff = torch.mean(corrupted_prob_diffs)
+        self.clean_prob_diff = torch.mean(clean_prob_diffs)
+        self.clean_accuracy = (clean_logit_diffs > 0).mean()
+        self.corrupted_accuracy = (corrupted_logit_diffs > 0).mean()
 
     def __str__(self) -> str:
         return (
