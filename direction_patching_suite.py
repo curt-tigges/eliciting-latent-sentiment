@@ -21,7 +21,7 @@ from IPython.display import display, HTML
 from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
-from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising
+from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising, PatchingMetric
 from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN, is_file, get_csv, get_csv_path, flatten_multiindex
 from utils.residual_stream import get_resid_name
 #%%
@@ -246,6 +246,7 @@ def get_results_for_direction_and_position(
     batch_size: int = 16,
     heads: List[Tuple[int]] = None,
     scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
+    center: bool = True,
 ) -> float:
     if heads is None:
         layer = extract_layer_from_string(direction_label)
@@ -261,22 +262,26 @@ def get_results_for_direction_and_position(
         batch_size=batch_size,
         device=device,
         disable_tqdm=True,
+        center=center,
     )
     example_prompt = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     if position == 'ALL':
         seq_pos = None
     else:
         seq_pos = prompt_type.get_placeholder_positions(example_prompt)[position][-1]
-    if "logit" in patching_metric_base.__name__:
-        clean_diff = patching_dataset.clean_logit_diff
-        corrupt_diff = patching_dataset.corrupted_logit_diff
-    else:
-        clean_diff = patching_dataset.clean_prob_diff
-        corrupt_diff = patching_dataset.corrupted_prob_diff
+    if patching_metric_base == PatchingMetric.LOGIT_DIFF_DENOISING:
+        clean_value = patching_dataset.clean_logit_diff
+        corrupt_value = patching_dataset.corrupted_logit_diff
+    elif patching_metric_base == PatchingMetric.PROB_DIFF_DENOISING:
+        clean_value = patching_dataset.clean_prob_diff
+        corrupt_value = patching_dataset.corrupted_prob_diff
+    elif patching_metric_base == PatchingMetric.LOGIT_FLIP_DENOISING:
+        clean_value = patching_dataset.clean_accuracy
+        corrupt_value = patching_dataset.corrupted_accuracy
     patching_metric = partial(
         patching_metric_base, 
-        flipped_value=corrupt_diff,
-        clean_value=clean_diff,
+        flipped_value=corrupt_value,
+        clean_value=clean_value,
         return_tensor=True,
     )
 
@@ -470,9 +475,9 @@ PROMPT_TYPES = [
     # PromptType.SIMPLE_FRENCH,
 ]
 METRICS = [
-    # logit_diff_denoising,
-    logit_flip_denoising,
-    # prob_diff_denoising,
+    PatchingMetric.LOGIT_DIFF_DENOISING,
+    PatchingMetric.LOGIT_FLIP_DENOISING,
+    # PatchingMetric.PROB_DIFF_DENOISING,
 ]
 USE_HEADS = [False, ]
 SCAFFOLD = ReviewScaffold.CONTINUATION

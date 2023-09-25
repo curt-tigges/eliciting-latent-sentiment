@@ -1,6 +1,6 @@
-import os
+from enum import Enum
 from functools import partial
-from typing import Union
+from typing import Tuple, Union
 
 import torch
 from torch import Tensor
@@ -269,6 +269,35 @@ def prob_diff_denoising(
         return ld.item()
     
 
+def center_logit_diffs(
+    logit_diffs: Float[Tensor, "batch"],
+    answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
+) -> Tuple[Float[Tensor, "batch"], float]:
+    """
+    Useful to debias a model when using as a binary classifier
+    """
+    device = logit_diffs.device
+    if answer_tokens.ndim == 2:
+        answer_tokens = answer_tokens.unsqueeze(1)
+    is_positive = (
+        answer_tokens[:, 0, 0] == 
+        answer_tokens[0, 0, 0]
+    ).to(device=device)
+    bias = torch.where(
+        is_positive, logit_diffs, -logit_diffs
+    ).mean().to(device=device)
+    debiased = (
+        logit_diffs - torch.where(is_positive, bias, -bias)
+    )
+    return debiased, bias.item()
+
+
+def get_accuracy_from_logit_diffs(
+    logit_diffs: Float[Tensor, "batch"]
+):
+    return (logit_diffs > 0).float().mean()
+    
+
 def logit_flip_denoising(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Int[Tensor, "batch *n_pairs 2"],
@@ -277,16 +306,16 @@ def logit_flip_denoising(
     return_tensor: bool = False,
 ) -> Float[Tensor, ""]:
     '''
-    Linear function of logit diff, calibrated so that it equals 0 when performance is
+    Linear function of accuracy, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
     Moves in discrete jumps based on whether logit diffs are closer to clean or corrupted.
     '''
     if answer_tokens.ndim == 2:
         answer_tokens = answer_tokens.unsqueeze(1)
-    patched_logit_diff = get_logit_diff(logits, answer_tokens, per_prompt=True)
-    clean_distances = (clean_value - patched_logit_diff).abs()
-    corrupt_distances = (flipped_value - patched_logit_diff).abs()
-    lf = (clean_distances < corrupt_distances).float().mean()
+    patched_logit_diffs = get_logit_diff(logits, answer_tokens, per_prompt=True)
+    centered_logit_diffs = center_logit_diffs(patched_logit_diffs, answer_tokens)[0]
+    accuracy = get_accuracy_from_logit_diffs(centered_logit_diffs)
+    lf = ((accuracy - flipped_value) / (clean_value  - flipped_value)).item()
     if return_tensor:
         return lf
     else:
@@ -515,3 +544,10 @@ def create_cache_for_dir_patching(
             cache_dict[act_name] = corrupted_cache[act_name].to(device)
 
     return ActivationCache(cache_dict, model)
+
+
+class PatchingMetric(Enum):
+    LOGIT_DIFF_DENOISING = logit_diff_denoising
+    LOGIT_DIFF_NOISING = logit_diff_noising
+    LOGIT_FLIP_DENOISING = logit_flip_denoising
+    PROB_DIFF_DENOISING = prob_diff_denoising

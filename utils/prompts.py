@@ -13,7 +13,7 @@ from enum import Enum
 import re
 from tqdm.auto import tqdm
 from utils.store import load_pickle
-from utils.circuit_analysis import get_logit_diff, get_prob_diff
+from utils.circuit_analysis import get_logit_diff, get_prob_diff, center_logit_diffs, get_accuracy_from_logit_diffs
 
 
 class ReviewScaffold(Enum):
@@ -618,23 +618,12 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diff = torch.mean(self.clean_logit_diffs)
         self.corrupted_prob_diff = torch.mean(self.corrupted_prob_diffs)
         self.clean_prob_diff = torch.mean(self.clean_prob_diffs)
-        self.clean_accuracy = (self.clean_logit_diffs > 0).to(dtype=torch.float32).mean()
-        self.corrupted_accuracy = (self.corrupted_logit_diffs > 0).to(dtype=torch.float32).mean()
-    
-    def _center_logit_diffs(self, logit_diffs: Float[Tensor, "batch"]):
-        is_positive = (
-            self.dataset.answer_tokens[:, 0, 0] == 
-            self.dataset.answer_tokens[0, 0, 0]
-        ).cpu()
-        bias = torch.where(is_positive, logit_diffs, -logit_diffs).mean().cpu()
-        debiased = (
-            logit_diffs - torch.where(is_positive, bias, -bias)
-        )
-        return debiased, bias
+        self.clean_accuracy = get_accuracy_from_logit_diffs(self.clean_logit_diffs)
+        self.corrupted_accuracy = get_accuracy_from_logit_diffs(self.corrupted_logit_diffs)
     
     def center_logit_diffs(self):
-        self.corrupted_logit_diffs, self.corrupted_logit_bias = self._center_logit_diffs(self.corrupted_logit_diffs)
-        self.clean_logit_diffs, self.clean_logit_bias = self._center_logit_diffs(self.clean_logit_diffs)
+        self.corrupted_logit_diffs, self.corrupted_logit_bias = center_logit_diffs(self.corrupted_logit_diffs)
+        self.clean_logit_diffs, self.clean_logit_bias = center_logit_diffs(self.clean_logit_diffs)
 
 
 def get_dataset(
