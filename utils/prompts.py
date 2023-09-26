@@ -3,6 +3,7 @@ import numpy as np
 import yaml
 from transformers import PreTrainedTokenizerBase
 from transformer_lens import HookedTransformer, ActivationCache
+from transformer_lens.utils import get_attention_mask
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
@@ -14,7 +15,11 @@ from enum import Enum
 import re
 from tqdm.auto import tqdm
 from utils.store import load_pickle
-from utils.circuit_analysis import get_logit_diff, get_prob_diff, center_logit_diffs, get_accuracy_from_logit_diffs
+from utils.circuit_analysis import (
+    get_logit_diff, get_prob_diff, center_logit_diffs, 
+    get_accuracy_from_logit_diffs,
+    get_final_non_pad_token,
+)
 
 
 class ReviewScaffold(Enum):
@@ -559,17 +564,22 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                     corrupted_dict[k][start_idx:end_idx] = v
                 for k, v in clean_cache.items():
                     clean_dict[k][start_idx:end_idx] = v
+                # Fill logit and prob diff tensors
                 clean_logit_diffs[start_idx:end_idx] = get_logit_diff(
-                    clean_logits, answer_tokens, per_prompt=True
+                    clean_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
                 ).detach().cpu()
                 corrupted_logit_diffs[start_idx:end_idx] = get_logit_diff(
-                    corrupted_logits, answer_tokens, per_prompt=True
+                    corrupted_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
                 ).detach().cpu()
                 clean_prob_diffs[start_idx:end_idx] = get_prob_diff(
-                    clean_logits, answer_tokens, per_prompt=True
+                    clean_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
                 ).detach().cpu()
                 corrupted_prob_diffs[start_idx:end_idx] = get_prob_diff(
-                    corrupted_logits, answer_tokens, per_prompt=True
+                    corrupted_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
                 ).detach().cpu()
         corrupted_cache = ActivationCache(
             {k: v.detach().clone().requires_grad_(requires_grad) for k, v in corrupted_dict.items()}, 
