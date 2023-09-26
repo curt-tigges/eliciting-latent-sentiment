@@ -405,7 +405,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_tokens: Int[Tensor, "batch pos"],
         answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
-        tokenizer: PreTrainedTokenizerBase,
+        tokenizer: Optional[PreTrainedTokenizerBase] = None,
     ):
         assert len(clean_tokens) == len(corrupted_tokens)
         assert len(clean_tokens) == len(answer_tokens)
