@@ -147,7 +147,7 @@ def create_dataset_for_split(
     split: str,
     model: HookedTransformer,
     scaffold: str = ReviewScaffold.PLAIN,
-    padding_side: str = 'left',
+    padding_side: Optional[Literal['left', 'right']] = None,
 ):
     df = full_df.loc[full_df.split == split]
     clean_prompts = [
