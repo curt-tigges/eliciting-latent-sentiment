@@ -481,6 +481,27 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
         return token_answer_dataloader
     
+    def forward(
+        self,
+        model: HookedTransformer, 
+        batch_size: int,
+        requires_grad: bool = True,
+        device: torch.device = None,
+        disable_tqdm: bool = None,
+        dtype: torch.dtype = torch.float32,
+        center: bool = True,
+    ):
+        return self.run_with_cache(
+            model=model,
+            names_filter=lambda _: False,
+            batch_size=batch_size,
+            requires_grad=requires_grad,
+            device=device,
+            disable_tqdm=disable_tqdm,
+            dtype=dtype,
+            center=center,
+        )
+    
     def run_with_cache(
         self, 
         model: HookedTransformer, 
@@ -657,7 +678,8 @@ class CleanCorruptedCacheResults:
             f"  corrupted_prob_diff={self.corrupted_prob_diff:.2f},\n"
             f"  clean_prob_diff={self.clean_prob_diff:.2f},\n"
             f"  clean_accuracy={self.clean_accuracy:.1%},\n"
-            f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n"
+            f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n",
+            f"  length={len(self.dataset)}"
             f")"
         )
     
