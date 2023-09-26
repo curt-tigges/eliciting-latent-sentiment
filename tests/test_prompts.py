@@ -25,7 +25,6 @@ class TestCleanCorruptedDataset(unittest.TestCase):
         with self.assertRaises(AssertionError):
             CleanCorruptedDataset(
                 self.clean_tokens, torch.tensor([[3]]), self.answer_tokens, self.all_prompts,
-                self.tokenizer
             )
 
     def test_len(self):
