@@ -3,7 +3,7 @@ import os
 from enum import Enum
 from datasets import Dataset, DatasetDict
 from jaxtyping import Float
-from typing import List
+from typing import List, Optional
 from transformer_lens import HookedTransformer
 import torch
 from torch import Tensor
