@@ -532,6 +532,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             clean_tokens = clean_tokens.to(device)
             answer_tokens = answer_tokens.to(device)
             with torch.inference_mode():
+                # update bar description
+                bar.set_description(
+                    "run_with_cache: corrupted forward pass"
+                )
                 # corrupted forward pass
                 corrupted_logits, corrupted_cache = model.run_with_cache(
                     corrupted_tokens, names_filter=names_filter
@@ -539,6 +543,9 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 corrupted_cache.to('cpu')
 
                 # clean forward pass
+                bar.set_description(
+                    "run_with_cache: clean forward pass"
+                )
                 clean_logits, clean_cache = model.run_with_cache(
                     clean_tokens, names_filter=names_filter
                 )
@@ -546,6 +553,9 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
 
                 # Initialise the buffer tensors if necessary
                 if not buffer_initialized:
+                    bar.set_description(
+                        "run_with_cache: initializing buffer"
+                    )
                     for k, v in corrupted_cache.items():
                         corrupted_dict[k] = torch.zeros(
                             (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
@@ -555,6 +565,9 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                         )
                     buffer_initialized = True
 
+                bar.set_description(
+                    "run_with_cache: filling buffer"
+                )
                 # Fill the buffer tensors
                 start_idx = idx * batch_size
                 end_idx = start_idx + corrupted_tokens.size(0)
