@@ -770,7 +770,8 @@ def path_patch(
     
     # If we're fixing receiver(s), and iterating over senders:
     elif isinstance(sender_nodes, IterNode):
-        sender_nodes_dict = sender_nodes.get_node_dict(model, new_cache["q", 0])
+        batch_pos_tensor = get_batch_pos_tensor(new_cache)
+        sender_nodes_dict = sender_nodes.get_node_dict(model, batch_pos_tensor)
         progress_bar = tqdm(total=sum(len(node_list) for node_list in sender_nodes_dict.values()))
         for sender_node_name, sender_node_list in sender_nodes_dict.items():
             progress_bar.set_description(f"Patching over {sender_node_name!r}")
@@ -861,7 +862,8 @@ def act_patch(
 
     # If we're iterating over nodes:
     results_dict = defaultdict(list)
-    nodes_dict = patching_nodes.get_node_dict(model, new_cache["q", 0])
+    batch_pos_tensor = get_batch_pos_tensor(new_cache)
+    nodes_dict = patching_nodes.get_node_dict(model, batch_pos_tensor)
     progress_bar = tqdm(total=sum(len(node_list) for node_list in nodes_dict.values()), leave=leave, disable=disable)
     for node_name, node_list in nodes_dict.items():
         progress_bar.set_description(f"Patching {node_name!r}")
