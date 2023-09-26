@@ -394,7 +394,7 @@ def logit_flip_denoising(
     )
     centered_logit_diffs = center_logit_diffs(patched_logit_diffs, answer_tokens)[0]
     accuracy = get_accuracy_from_logit_diffs(centered_logit_diffs)
-    lf = ((accuracy - flipped_value) / (clean_value  - flipped_value)).item()
+    lf = ((accuracy - flipped_value) / (clean_value  - flipped_value))
     if return_tensor:
         return lf
     else:
