@@ -495,15 +495,13 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
+        assert batch_size is not None, "run_with_cache: must specify batch size"
         model.tokenizer = self.tokenizer
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         was_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(False)
-        model = model.eval().requires_grad_(False)
-        assert batch_size is not None, "run_with_cache: must specify batch size"
-        if model.cfg.device != device:
-            model = model.to(device)
+        model.requires_grad_(False)
         corrupted_dict = dict()
         clean_dict = dict()
         dataloader = self.get_dataloader(batch_size=batch_size)
@@ -515,10 +513,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
 
         # Initialise arrays
         total_samples = len(dataloader.dataset)
-        clean_logit_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
-        corrupted_logit_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
-        clean_prob_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
-        corrupted_prob_diffs = torch.zeros(total_samples, dtype=dtype).cpu()
+        clean_logit_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
+        corrupted_logit_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
+        clean_prob_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
+        corrupted_prob_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
 
         corrupted_dict = dict()
         clean_dict = dict()
