@@ -635,7 +635,7 @@ def get_batch_pos_tensor(
     ]
     layers = cache.model.cfg.n_layers
     for key in keys_to_try:
-        for layer in layers:
+        for layer in range(layers):
             if f"blocks.{layer}.{key}" in cache.keys():
                 return cache[key]
     raise ValueError("Couldn't find a tensor with batch and pos dimensions in the cache.")
