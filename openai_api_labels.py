@@ -13,7 +13,7 @@ with open("api_key.txt", "r") as f:
 csv_df = get_csv(FILE_NAME, MODEL)
 csv_df.head()
 # %%
-prefix = "Your job is to classify the sentiment of a given token (i.e. word or word fragment) into Positive/Somewhat positive/Neutral/Somewhat negative/Negative."
+prefix = "Your job is to classify the sentiment of a given token (i.e. word or word fragment) into Positive/Neutral/Negative."
 sentiment_data = []
 assert len(csv_df) < 1_000
 for idx, row in csv_df.iterrows():
