@@ -16,7 +16,8 @@ class TestCleanCorruptedDataset(unittest.TestCase):
         self.answer_tokens = torch.tensor([[2, 3], [4, 5]], dtype=torch.int32)
         self.all_prompts = ["prompt1", "prompt2"]
         self.dataset = CleanCorruptedDataset(
-            self.clean_tokens, self.corrupted_tokens, self.answer_tokens, self.all_prompts
+            self.clean_tokens, self.corrupted_tokens, self.answer_tokens, self.all_prompts,
+            model=None,
         )
 
     def test_initialization(self):
