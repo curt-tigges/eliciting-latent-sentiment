@@ -1,12 +1,13 @@
 import random
 import numpy as np
 import yaml
+from transformers import PreTrainedTokenizerBase
 from transformer_lens import HookedTransformer, ActivationCache
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 from jaxtyping import Float, Int, Bool
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 from typeguard import typechecked
 import einops
 from enum import Enum
@@ -404,7 +405,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_tokens: Int[Tensor, "batch pos"],
         answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
-        model: HookedTransformer,
+        tokenizer: PreTrainedTokenizerBase,
     ):
         assert len(clean_tokens) == len(corrupted_tokens)
         assert len(clean_tokens) == len(answer_tokens)
@@ -415,7 +416,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         self.corrupted_tokens = corrupted_tokens
         self.answer_tokens = answer_tokens
         self.all_prompts = all_prompts
-        self.model = model
+        self.tokenizer = tokenizer
 
     def get_subset(self, indices: List[int]):
         return CleanCorruptedDataset(
@@ -423,17 +424,17 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.corrupted_tokens[indices],
             self.answer_tokens[indices],
             [self.all_prompts[i] for i in indices],
-            self.model,
+            self.tokenizer,
         )
     
     def get_num_pad_tokens(self) -> Int[Tensor, "batch"]:
         return (
-            self.clean_tokens == self.model.tokenizer.pad_token_id
+            self.clean_tokens == self.tokenizer.pad_token_id
         ).sum(dim=1)
     
     def get_num_non_pad_tokens(self) -> Int[Tensor, "batch"]:
         return (
-            self.clean_tokens == self.model.tokenizer.pad_token_id
+            self.clean_tokens == self.tokenizer.pad_token_id
         ).sum(dim=1)
     
     def restrict_by_padding(self, min_tokens: int, max_tokens: int):
@@ -489,6 +490,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
+        model.tokenizer = self.tokenizer
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         was_grad_enabled = torch.is_grad_enabled()
@@ -715,7 +717,7 @@ def get_dataset(
         answer_tokens=answer_tokens, 
         clean_tokens=clean_tokens, 
         corrupted_tokens=corrupted_tokens,
-        model=model,
+        tokenizer=model.tokenizer,
     )
 
 
