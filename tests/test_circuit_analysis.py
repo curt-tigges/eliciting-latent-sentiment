@@ -26,7 +26,11 @@ from typing import List, Optional, Callable, Tuple, Dict, Literal, Set
 from rich import print as rprint
 
 from typing import List, Union
-from utils.circuit_analysis import get_logit_diff, residual_stack_to_logit_diff, cache_to_logit_diff, project_to_subspace, create_cache_for_dir_patching, get_prob_diff
+from utils.circuit_analysis import (
+    get_logit_diff, residual_stack_to_logit_diff, cache_to_logit_diff, 
+    project_to_subspace, create_cache_for_dir_patching, get_prob_diff,
+    get_final_non_pad_token,
+)
 import unittest
 
 
@@ -192,6 +196,70 @@ class TestGetProbDiff(unittest.TestCase):
         result = get_prob_diff(logits, answer_tokens, per_prompt=True)
         expected_mean_diff = (torch.tensor([-0.19928, -0.3202]))
         self.assertTrue(torch.allclose(result, expected_mean_diff, atol=1e-4))
+
+
+class TestFinalNonPadToken(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.logits = torch.tensor([
+            [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]],
+            [[0.9, 0.8, 0.7], [0.6, 0.5, 0.4], [0.3, 0.2, 0.1]]
+        ])
+
+    def test_simple_case(self):
+        # Test case 1: Simple case
+        attention_mask = torch.tensor([
+            [1, 1, 0],
+            [0, 1, 1]
+        ])
+        expected = torch.tensor([
+            [0.4, 0.5, 0.6],
+            [0.3, 0.2, 0.1]
+        ])
+        self.assertTrue(torch.allclose(
+            get_final_non_pad_token(self.logits, attention_mask), expected
+        ))
+
+    def test_all_zeros(self):
+        # Test case 2: All zeros in attention mask
+        attention_mask = torch.tensor([
+            [0, 0, 0],
+            [1, 1, 1]
+        ])
+        # check raises assertion error
+        with self.assertRaises(AssertionError):
+            get_final_non_pad_token(self.logits, attention_mask)
+
+    def test_all_ones(self):
+        # Test case 3: All ones in attention mask
+        attention_mask = torch.tensor([
+            [1, 1, 1],
+            [1, 1, 1]
+        ])
+        expected = torch.tensor([
+            [0.7, 0.8, 0.9],
+            [0.3, 0.2, 0.1]
+        ])
+        self.assertTrue(torch.allclose(
+            get_final_non_pad_token(self.logits, attention_mask), expected
+        ))
+    
+    def test_single_batch(self):
+        # Test case 4: Single batch
+        logits = torch.tensor([
+            [[0.1, 0.2], [0.4, 0.5], [0.7, 0.8]]
+        ])
+        attention_mask = torch.tensor([
+            [1, 0, 1]
+        ])
+        expected = torch.tensor([
+            [0.7, 0.8]
+        ])
+        self.assertTrue(torch.allclose(
+            get_final_non_pad_token(logits, attention_mask), expected
+        ))
+
 
 
 

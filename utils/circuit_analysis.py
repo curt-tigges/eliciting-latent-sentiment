@@ -17,6 +17,39 @@ from IPython.display import display
 from transformer_lens import ActivationCache, HookedTransformer
 
 
+def get_final_non_pad_token(
+    logits: Float[Tensor, "batch pos vocab"],
+    attention_mask: Int[Tensor, "batch pos"],
+) -> Float[Tensor, "batch vocab"]:
+    """Gets the final non-pad token from a tensor.
+
+    Args:
+        logits (torch.Tensor): Logits to use.
+        attention_mask (torch.Tensor): Attention mask to use.
+
+    Returns:
+        torch.Tensor: Final non-pad token logits.
+    """
+    # Get the last non-pad token
+    position_index = einops.repeat(
+        torch.arange(logits.shape[1], device=logits.device),
+        "pos -> batch pos",
+        batch=logits.shape[0],
+    )
+    masked_position = torch.where(
+        attention_mask == 0, torch.full_like(position_index, -1), position_index
+    )
+    last_non_pad_token = einops.reduce(
+        masked_position, "batch pos -> batch", reduction="max"
+    )
+    assert (last_non_pad_token >= 0).all()
+    # Get the final token logits
+    final_token_logits = logits[
+        torch.arange(logits.shape[0]), last_non_pad_token, :
+    ]
+    return final_token_logits
+
+
 # =============== VISUALIZATION UTILS ===============
 def visualize_tensor(tensor, labels, zmin=-1.0, zmax=1.0):
     """Visualizes a 3D tensor as a series of heatmaps.
