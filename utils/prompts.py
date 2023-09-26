@@ -554,14 +554,19 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 # Initialise the buffer tensors if necessary
                 if not buffer_initialized:
                     bar.set_description(
-                        "run_with_cache: initializing buffer"
+                        f"run_with_cache: initializing {len(corrupted_cache)} "
+                        f"buffers of size {total_samples}"
                     )
                     for k, v in corrupted_cache.items():
                         corrupted_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                            (total_samples, *v.shape[1:]), 
+                            dtype=dtype, 
+                            device='cpu'
                         )
                         clean_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                            (total_samples, *v.shape[1:]), 
+                            dtype=dtype, 
+                            device='cpu'
                         )
                     buffer_initialized = True
 
