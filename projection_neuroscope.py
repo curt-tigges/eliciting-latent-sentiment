@@ -215,7 +215,7 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
 # ============================================================================ #
 # Negations
 #%%
-negation = plot_neuroscope(
+negation_short = plot_neuroscope(
     """You never fail. Don't doubt it. I don't like you.""", 
     model,
     centred=False,
@@ -223,8 +223,8 @@ negation = plot_neuroscope(
     special_dir=sentiment_dir,
     show_selectors=False,
 )
-render_local(negation)
-save_html(negation, "negation_full", model)
+render_local(negation_short)
+save_html(negation_short, "negation_short", model)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
@@ -285,13 +285,11 @@ class ClearCache:
 #%%
 if is_file("sentiment_activations.npy", model):
     print("Loading activations from file")
-    print("Loading activations from file")
     sentiment_activations = load_array("sentiment_activations", model)
     sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(
         sentiment_activations, device=device, dtype=torch.float32
     )
 else:
-    print("Computing activations")
     print("Computing activations")
     with ClearCache():
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(dataloader)
@@ -474,9 +472,6 @@ def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
 
     return fig
 #%%
-# fig = plot_weighted_histogram(labelled_bin_samples)
-# save_pdf(fig, "weighted_histogram", model)
-# save_html(fig, "weighted_histogram", model)
 # fig = plot_weighted_histogram(labelled_bin_samples)
 # save_pdf(fig, "weighted_histogram", model)
 # save_html(fig, "weighted_histogram", model)
