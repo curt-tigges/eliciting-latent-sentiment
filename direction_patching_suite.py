@@ -49,6 +49,7 @@ DIRECTION_GLOBS = [
     'das_simple_train_ADJ_layer*.npy',
     'das2d_simple_train_ADJ*.npy',
     'das3d_simple_train_ADJ*.npy',
+    'random_direction*.npy',
     # 'das_treebank*.npy',
 ]
 PROMPT_TYPES = [
@@ -63,7 +64,7 @@ PROMPT_TYPES = [
 SCAFFOLD = ReviewScaffold.CLASSIFICATION
 METRICS = [
     PatchingMetric.LOGIT_DIFF_DENOISING,
-    # PatchingMetric.LOGIT_FLIP_DENOISING,
+    PatchingMetric.LOGIT_FLIP_DENOISING,
     # PatchingMetric.PROB_DIFF_DENOISING,
 ]
 USE_HEADS = [False, ]
@@ -330,6 +331,54 @@ def get_dataset_cached(
     dataset_cache[key] = clean_corrupt_data
     return dataset_cache[key]
 
+
+#%%
+def get_results_cached(
+    patching_metric_base: PatchingMetric, 
+    prompt_type: PromptType,
+    position: str,
+    direction_label: str, 
+    direction: Float[Tensor, "d_model"],
+    model: HookedTransformer,
+    device: torch.device = None,
+    batch_size: int = 16,
+    heads: List[Tuple[int]] = None,
+    scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
+    center: bool = True,
+    all_layers: bool = True,
+    min_tokens: int = 0,
+    max_tokens: int = 25,
+    disable_tqdm: bool = True,
+):
+    use_csv = heads is None and not all_layers
+    csv_name = (
+        patching_metric_base.value.__name__.replace('_denoising', '') +
+        f"_{prompt_type.value}_{scaffold}_{min_tokens}_{max_tokens}_{position}_"
+        f"{direction_label}.csv"
+    )
+    if use_csv and is_file(csv_name, model):
+        return get_csv(csv_name, model, index_col=0, header=[0, 1])
+    result = get_results_for_direction_and_position(
+        patching_metric_base=patching_metric_base, 
+        prompt_type=prompt_type,
+        position=position,
+        direction_label=direction_label,
+        direction=direction,
+        model=model,
+        device=device,
+        batch_size=batch_size,
+        heads=heads,
+        scaffold=scaffold,
+        center=center,
+        all_layers=all_layers,
+        min_tokens=min_tokens,
+        max_tokens=max_tokens,
+        disable_tqdm=disable_tqdm,
+    )
+    if use_csv:
+        to_csv(result, csv_name.replace(".csv", ""), model, index=True)
+    return result
+
     
 #%%
 def get_results_for_direction_and_position(
@@ -457,7 +506,7 @@ def get_results_for_metric(
         placeholders = ['ALL']
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
-            result = get_results_for_direction_and_position(
+            result = get_results_cached(
                 patching_metric_base=patching_metric_base, 
                 prompt_type=prompt_type,
                 position=position,
@@ -516,7 +565,7 @@ def export_results(
     s_df = s_df.reset_index().groupby(['method', 'dataset', 'position']).max().drop('layer', axis=1, level=0)
     s_df = flatten_multiindex(s_df)
     s_df = s_df[["simple_test_ALL", "treebank_test_ALL"]]
-    s_df.columns = s_df.columns.str.replace("test_", "").str.replace("treebank_ALL", "treebank")
+    s_df.columns = s_df.columns.str.replace("test_", "").str.replace("_ALL", "")
     s_df.index = s_df.index.str.replace("_simple_train_ADJ", "")
     s_style = (
         s_df
@@ -629,18 +678,18 @@ for model_name, metric, use_heads in model_metric_bar:
     metric_label = metric.__name__.replace('_base', '').replace('_denoising', '')
     export_results(results, metric_label, use_heads_label)
 #%%
-def concat_layer_data(models: Iterable[str], metric_label: str, use_heads_label: str):
-    layer_data = []
+def concat_simple_data(models: Iterable[str], metric_label: str, use_heads_label: str):
+    simple_data = []
     for model in models:
         model_df = get_csv(
-            f"direction_patching_{metric_label}_layers", model, index_col=0
+            f"direction_patching_{metric_label}_simple", model, index_col=0
         ) # FIXME: add {heads_label}
         if 'layer' not in model_df.columns:
             print(model, metric_label, use_heads_label, model_df, f"direction_patching_{metric_label}_layers")
         model_df['model'] = model
         model_df['max_layer'] = model_df.layer.max()
-        layer_data.append(model_df)
-    layer_df = pd.concat(layer_data)
+        simple_data.append(model_df)
+    layer_df = pd.concat(simple_data)
     layer_df['model_family'] = np.where(
         layer_df.model.str.contains("pythia"),
         "pythia",
@@ -681,8 +730,55 @@ def concat_layer_data(models: Iterable[str], metric_label: str, use_heads_label:
     save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
     save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
     fig.show()
-# %%
-# concat_layer_data(
-#     MODELS, "logit_diff", "resid"
-# )
+#%%
+def concat_layer_data(models: Iterable[str], metric_label: str, use_heads_label: str):
+    layer_data = []
+    for model in models:
+        model_df = get_csv(
+            f"direction_patching_{metric_label}_layers", model, index_col=0
+        ) # FIXME: add {heads_label}
+        if 'layer' not in model_df.columns:
+            print(model, metric_label, use_heads_label, model_df, f"direction_patching_{metric_label}_layers")
+        model_df['model'] = model
+        model_df['max_layer'] = model_df.layer.max()
+        layer_data.append(model_df)
+    layer_df = pd.concat(layer_data)
+    fig = px.line(
+        x="layer", 
+        y="treebank_test", 
+        color="method", 
+        facet_col="model", 
+        data_frame=layer_df,
+        labels={
+            "treebank_test": f"{metric_label} (%)",
+        }
+    )
+    fig.update_layout(
+        title="Out-of-distribution directional patching performance by method and layer",
+        width=1600,
+        height=500,
+        title_x=0.5,
+        font=dict(  # global font settings
+            size=16  # global font size
+        ),
+    )
+    for axis in fig.layout:
+        if "xaxis" in axis:
+            fig.layout[axis].matches = None
+    save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
+    save_html(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
+    save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
+    fig.show()
+#%%
+concat_layer_data(
+    ["gpt2-small", "gpt2-medium", "gpt2-large", "gpt2-xl"], 
+    "logit_diff", 
+    "resid_gpt2"
+)
+#%%
+concat_layer_data(
+    ["EleutherAI/pythia-160m", "EleutherAI/pythia-410m", "EleutherAI/pythia-1.4b", "EleutherAI/pythia-2.8b"], 
+    "logit_diff", 
+    "resid_pythia"
+)
 #%%
