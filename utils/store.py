@@ -112,6 +112,11 @@ def add_styling(
     #{table_id} thead {{
         background-color: #ddd;
     }}
+
+    #{table_id} caption {{
+        display: none;
+    }}
+
     """
     
     # Insert the general styles into the existing style section of the HTML
