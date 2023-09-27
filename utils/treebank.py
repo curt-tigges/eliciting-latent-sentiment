@@ -3,7 +3,7 @@ import os
 from enum import Enum
 from datasets import Dataset, DatasetDict
 from jaxtyping import Float
-from typing import List
+from typing import List, Optional, Literal
 from transformer_lens import HookedTransformer
 import torch
 from torch import Tensor
@@ -147,7 +147,7 @@ def create_dataset_for_split(
     split: str,
     model: HookedTransformer,
     scaffold: str = ReviewScaffold.PLAIN,
-    padding_side: str = 'left',
+    padding_side: Optional[Literal['left', 'right']] = None,
 ):
     df = full_df.loc[full_df.split == split]
     clean_prompts = [
@@ -158,14 +158,17 @@ def create_dataset_for_split(
     corrupt_prompts = clean_prompts[1:] + [clean_prompts[0]]
     clean_prompts = apply_scaffold_to_prompts(clean_prompts, scaffold)
     corrupt_prompts = apply_scaffold_to_prompts(corrupt_prompts, scaffold)
-    clean_tokens = model.to_tokens(clean_prompts, padding_side=padding_side)
-    corrupted_tokens = model.to_tokens(corrupt_prompts, padding_side=padding_side)
+    if padding_side is not None:
+        model.tokenizer.padding_side = padding_side
+    clean_tokens = model.to_tokens(clean_prompts)
+    corrupted_tokens = model.to_tokens(corrupt_prompts)
     answer_tokens = construct_answer_tokens(scaffold, len(df), model)
     dataset = CleanCorruptedDataset(
         clean_tokens=clean_tokens.cpu(),
         corrupted_tokens=corrupted_tokens.cpu(),
         answer_tokens=answer_tokens.cpu(),
-        all_prompts=clean_prompts
+        all_prompts=clean_prompts,
+        tokenizer=model.tokenizer,
     )
     dataset.shuffle()
     save_pickle(dataset, f'treebank_{split}_{scaffold.value}', model)
@@ -175,6 +178,7 @@ def create_dataset_for_split(
 def create_dataset_for_model(
     model: HookedTransformer,
     sentence_phrase_df: pd.DataFrame,
+    padding_side: Optional[Literal['left', 'right']] = None,
 ):
     for idx, row in sentence_phrase_df.iterrows():
         str_tokens = model.to_str_tokens(row['sentence'])
@@ -184,4 +188,7 @@ def create_dataset_for_model(
     paired_df = pair_by_num_tokens_and_split(sentence_phrase_df)
     for split in ('train', 'dev', 'test'):
         for scaffold in ReviewScaffold:
-            create_dataset_for_split(paired_df, split, model, scaffold)
+            create_dataset_for_split(
+                paired_df, split, model, scaffold, padding_side=padding_side
+            )
+    return paired_df

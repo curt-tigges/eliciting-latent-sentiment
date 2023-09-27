@@ -14,7 +14,7 @@ with open("api_key.txt", "r") as f:
 steering_dict = load_pickle('steering_dict', MODEL)
 # %%
 def generate():
-    prefix = "Your job is to classify the sentiment of a snippet of a movie review into Positive/Somewhat positive/Neutral/Somewhat negative/Negative."
+    prefix = "Your job is to classify the sentiment of a snippet of a movie review into Positive/Neutral/Negative."
     sentiment_data = []
     assert len(steering_dict) < 1_000
     idx = 0
@@ -51,7 +51,7 @@ out_df
 # %%
 def plot_bin_proportions(df: pd.DataFrame, nbins=50):
     df.sentiment = df.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
-    assert df.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
+    assert df.sentiment.isin(['Positive', 'Negative', 'Neutral']).all()
 
     sentiments = sorted(df['sentiment'].unique())
     df = df.sort_values(by='coef').reset_index(drop=True)

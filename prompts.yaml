@@ -302,6 +302,14 @@ positive_adjectives_test:
   - glorious
   - magical
   - pleasing
+  - lively
+  - warm
+  - strong
+  - helpful
+  - vivid
+  - modern
+  - crisp
+  - sweet
 
 negative_adjectives_test:
   - foul
@@ -310,6 +318,14 @@ negative_adjectives_test:
   - rotten
   - grim
   - dismal
+  - lazy
+  - poor
+  - rough
+  - noisy
+  - sour
+  - flat
+  - ancient
+  - bitter
 
 positive_adjectives_multitoken:
   - magnanimous

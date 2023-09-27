@@ -16,14 +16,15 @@ class TestCleanCorruptedDataset(unittest.TestCase):
         self.answer_tokens = torch.tensor([[2, 3], [4, 5]], dtype=torch.int32)
         self.all_prompts = ["prompt1", "prompt2"]
         self.dataset = CleanCorruptedDataset(
-            self.clean_tokens, self.corrupted_tokens, self.answer_tokens, self.all_prompts
+            self.clean_tokens, self.corrupted_tokens, self.answer_tokens, self.all_prompts,
+            tokenizer=None,
         )
 
     def test_initialization(self):
         # Test if the assertion works when shapes don't match
         with self.assertRaises(AssertionError):
             CleanCorruptedDataset(
-                self.clean_tokens, torch.tensor([[3]]), self.answer_tokens, self.all_prompts
+                self.clean_tokens, torch.tensor([[3]]), self.answer_tokens, self.all_prompts,
             )
 
     def test_len(self):
@@ -56,21 +57,19 @@ class TestCleanCorruptedCacheResults(unittest.TestCase):
             torch.tensor([[1], [2]], dtype=torch.int), 
             torch.tensor([[3], [5]], dtype=torch.int), 
             torch.tensor([[2, 3], [4, 5]], dtype=torch.int), 
-            ["prompt1", "prompt2"])
+            ["prompt1", "prompt2"],
+            tokenizer=None,
+        )
         corrupted_cache = ActivationCache({}, model=None)  # Assuming a mock model
         clean_cache = ActivationCache({}, model=None)  # Assuming a mock model
         self.results = CleanCorruptedCacheResults(
             dataset, 
             corrupted_cache, 
             clean_cache, 
-            [0.5],
-            [0.6],
-            [0.7],
-            [0.8],
-            0.5, 
-            0.6, 
-            0.7, 
-            0.8,
+            torch.tensor([0.5]),
+            torch.tensor([0.6]),
+            torch.tensor([0.7]),
+            torch.tensor([0.8]),
         )
 
     def test_initialization(self):

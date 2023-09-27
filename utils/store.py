@@ -288,7 +288,7 @@ def get_labels(glob_str: str, model: Union[HookedTransformer, str]) -> list:
     return labels
 
 
-def is_file(name: str, model: Union[HookedTransformer, str]) -> list:
+def is_file(name: str, model: Union[HookedTransformer, str]) -> bool:
     model: str = get_model_name(model)
     model_path = os.path.join('data', model)
     file_path = os.path.join(model_path, name)

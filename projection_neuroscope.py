@@ -35,7 +35,7 @@ pd.set_option('display.max_colwidth', 200)
 torch.set_grad_enabled(False)
 #%%
 device = "cuda"
-MODEL_NAME = "gpt2-small"
+MODEL_NAME = "EleutherAI/pythia-2.8b"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     device=device,
@@ -53,23 +53,37 @@ def render_local(html):
 # Harry Potter example
 
 #%%
-# hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
-# harry_potter_neuroscope = plot_neuroscope(
-#     hp_4_paras, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5,
-#     show_selectors=False,
-# )
-# save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-# render_local(harry_potter_neuroscope)
+hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
+harry_potter_neuroscope = plot_neuroscope(
+    hp_4_paras, model, centred=True, verbose=False, 
+    special_dir=sentiment_dir, default_layer=7,
+    show_selectors=False,
+)
+save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
+render_local(harry_potter_neuroscope)
 #%%
 # ============================================================================ #
-# harry_potter_fr_neuroscope = plot_neuroscope(
-#     harry_potter_fr_start, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5, 
-#     show_selectors=False,
-# )
-# save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-# render_local(harry_potter_fr_neuroscope)
+harry_potter_fr_neuroscope = plot_neuroscope(
+    harry_potter_fr_start, model, centred=True, verbose=False, 
+    special_dir=sentiment_dir, default_layer=7, 
+    show_selectors=False,
+)
+save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+render_local(harry_potter_fr_neuroscope)
+#%%
+french_short_text = """et son bon à rien de mari
+ils étaient parfaitement normaux
+gris et triste et rien dans
+la plus sinistre pour aller
+"""
+french_neuroscope = plot_neuroscope(
+    french_short_text, model, centred=True, verbose=False,
+    special_dir=sentiment_dir, default_layer=7,
+    show_selectors=False,
+    prepend_bos=False,
+)
+save_html(french_neuroscope, "french_short_text", model)
+render_local(french_neuroscope)
 #%%
 # Mandarin example
 # mandarin_text = """
@@ -153,20 +167,20 @@ def run_steering_search(
         coef_dict[coef] = coef_dict.get(coef, []) + [gen.replace(prompt, "")]
     return text.replace("<|endoftext|>", ""), coef_dict
 #%%
-steering_text, steering_dict = run_steering_search(
-    coefs=torch.arange(-20, 1, dtype=torch.int32),
-    samples=20,
-    sentiment_dir=sentiment_dir,
-    model=model,
-    top_k=10,
-    temperature=1.0,
-    max_new_tokens=30,
-    do_sample=True,
-    seed=0,
-    prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
-)
-save_text(steering_text, "steering_text", model)
-save_pickle(steering_dict, "steering_dict", model)
+# steering_text, steering_dict = run_steering_search(
+#     coefs=torch.arange(-20, 1, dtype=torch.int32),
+#     samples=20,
+#     sentiment_dir=sentiment_dir,
+#     model=model,
+#     top_k=10,
+#     temperature=1.0,
+#     max_new_tokens=30,
+#     do_sample=True,
+#     seed=0,
+#     prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
+# )
+# save_text(steering_text, "steering_text", model)
+# save_pickle(steering_dict, "steering_dict", model)
 #%%
 # plot_neuroscope(steering_text, model, centred=True, special_dir=sentiment_dir)
 #%%
@@ -500,6 +514,7 @@ def plot_batch_pos(
     file_name: str = "sentiment_at_batch_pos",
     show_selectors: bool = True,
     verbose: bool = False,
+    prepend_bos: bool = False,
 ):
     """
     One-sided topk plotting.
@@ -541,6 +556,7 @@ def plot_batch_pos(
         activations=acts_cat, 
         verbose=verbose,
         show_selectors=show_selectors,
+        prepend_bos=prepend_bos,
     )
     save_html(html, file_name, model)
     return html

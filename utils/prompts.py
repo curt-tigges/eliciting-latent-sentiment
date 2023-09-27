@@ -1,19 +1,25 @@
 import random
 import numpy as np
 import yaml
+from transformers import PreTrainedTokenizerBase
 from transformer_lens import HookedTransformer, ActivationCache
+from transformer_lens.utils import get_attention_mask
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 from jaxtyping import Float, Int, Bool
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 from typeguard import typechecked
 import einops
 from enum import Enum
 import re
 from tqdm.auto import tqdm
 from utils.store import load_pickle
-from utils.circuit_analysis import get_logit_diff, get_prob_diff
+from utils.circuit_analysis import (
+    get_logit_diff, get_prob_diff, center_logit_diffs, 
+    get_accuracy_from_logit_diffs,
+    get_final_non_pad_token,
+)
 
 
 class ReviewScaffold(Enum):
@@ -404,6 +410,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_tokens: Int[Tensor, "batch pos"],
         answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
+        tokenizer: Optional[PreTrainedTokenizerBase] = None,
     ):
         assert len(clean_tokens) == len(corrupted_tokens)
         assert len(clean_tokens) == len(answer_tokens)
@@ -414,6 +421,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         self.corrupted_tokens = corrupted_tokens
         self.answer_tokens = answer_tokens
         self.all_prompts = all_prompts
+        self.tokenizer = tokenizer
 
     def get_subset(self, indices: List[int]):
         return CleanCorruptedDataset(
@@ -421,7 +429,25 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.corrupted_tokens[indices],
             self.answer_tokens[indices],
             [self.all_prompts[i] for i in indices],
+            self.tokenizer,
         )
+    
+    def get_num_pad_tokens(self) -> Int[Tensor, "batch"]:
+        return (
+            self.clean_tokens == self.tokenizer.pad_token_id
+        ).sum(dim=1)
+    
+    def get_num_non_pad_tokens(self) -> Int[Tensor, "batch"]:
+        return (
+            self.clean_tokens == self.tokenizer.pad_token_id
+        ).sum(dim=1)
+    
+    def restrict_by_padding(self, min_tokens: int, max_tokens: int):
+        num_pad_tokens = self.get_num_non_pad_tokens()
+        indices = torch.where(
+            (num_pad_tokens >= min_tokens) & (num_pad_tokens <= max_tokens)
+        )[0]
+        return self.get_subset(indices)
     
     def shuffle(self, seed: int = 0):
         random.seed(seed)
@@ -455,6 +481,27 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         token_answer_dataloader = DataLoader(token_answer_dataset, batch_size=batch_size)
         return token_answer_dataloader
     
+    def forward(
+        self,
+        model: HookedTransformer, 
+        batch_size: int,
+        requires_grad: bool = True,
+        device: torch.device = None,
+        disable_tqdm: bool = None,
+        dtype: torch.dtype = torch.float32,
+        center: bool = True,
+    ):
+        return self.run_with_cache(
+            model=model,
+            names_filter=lambda _: False,
+            batch_size=batch_size,
+            requires_grad=requires_grad,
+            device=device,
+            disable_tqdm=disable_tqdm,
+            dtype=dtype,
+            center=center,
+        )
+    
     def run_with_cache(
         self, 
         model: HookedTransformer, 
@@ -464,18 +511,18 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         device: torch.device = None,
         disable_tqdm: bool = None,
         dtype: torch.dtype = torch.float32,
+        center: bool = True,
     ):
         """
         Note that variable names here assume denoising, i.e. corrupted -> clean
         """
+        assert batch_size is not None, "run_with_cache: must specify batch size"
+        model.tokenizer = self.tokenizer
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         was_grad_enabled = torch.is_grad_enabled()
         torch.set_grad_enabled(False)
-        model = model.eval().requires_grad_(False)
-        assert batch_size is not None, "run_with_cache: must specify batch size"
-        if model.cfg.device != device:
-            model = model.to(device)
+        model.requires_grad_(False)
         corrupted_dict = dict()
         clean_dict = dict()
         dataloader = self.get_dataloader(batch_size=batch_size)
@@ -484,7 +531,14 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_prob_diffs = []
         clean_prob_diffs = []
         buffer_initialized = False
+
+        # Initialise arrays
         total_samples = len(dataloader.dataset)
+        clean_logit_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
+        corrupted_logit_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
+        clean_prob_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
+        corrupted_prob_diffs = torch.zeros(total_samples, dtype=dtype, device='cpu')
+
         corrupted_dict = dict()
         clean_dict = dict()
         if disable_tqdm is None:
@@ -499,33 +553,47 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             clean_tokens = clean_tokens.to(device)
             answer_tokens = answer_tokens.to(device)
             with torch.inference_mode():
+                # update bar description
+                bar.set_description(
+                    "run_with_cache: corrupted forward pass"
+                )
                 # corrupted forward pass
                 corrupted_logits, corrupted_cache = model.run_with_cache(
                     corrupted_tokens, names_filter=names_filter
                 )
-                corrupted_logit_diffs.append(get_logit_diff(corrupted_logits, answer_tokens).item())
-                corrupted_prob_diffs.append(get_prob_diff(corrupted_logits, answer_tokens).item())
                 corrupted_cache.to('cpu')
 
                 # clean forward pass
+                bar.set_description(
+                    "run_with_cache: clean forward pass"
+                )
                 clean_logits, clean_cache = model.run_with_cache(
                     clean_tokens, names_filter=names_filter
                 )
-                clean_logit_diffs.append(get_logit_diff(clean_logits, answer_tokens).item())
-                clean_prob_diffs.append(get_prob_diff(clean_logits, answer_tokens).item())
                 clean_cache.to('cpu')
 
                 # Initialise the buffer tensors if necessary
                 if not buffer_initialized:
+                    bar.set_description(
+                        f"run_with_cache: initializing {len(corrupted_cache)} "
+                        f"buffers of size {total_samples}"
+                    )
                     for k, v in corrupted_cache.items():
                         corrupted_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                            (total_samples, *v.shape[1:]), 
+                            dtype=dtype, 
+                            device='cpu'
                         )
                         clean_dict[k] = torch.zeros(
-                            (total_samples, *v.shape[1:]), dtype=dtype, device='cpu'
+                            (total_samples, *v.shape[1:]), 
+                            dtype=dtype, 
+                            device='cpu'
                         )
                     buffer_initialized = True
 
+                bar.set_description(
+                    "run_with_cache: filling buffer"
+                )
                 # Fill the buffer tensors
                 start_idx = idx * batch_size
                 end_idx = start_idx + corrupted_tokens.size(0)
@@ -533,10 +601,23 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                     corrupted_dict[k][start_idx:end_idx] = v
                 for k, v in clean_cache.items():
                     clean_dict[k][start_idx:end_idx] = v
-        corrupted_logit_diff = sum(corrupted_logit_diffs) / len(corrupted_logit_diffs)
-        clean_logit_diff = sum(clean_logit_diffs) / len(clean_logit_diffs)
-        corrupted_prob_diff = sum(corrupted_prob_diffs) / len(corrupted_prob_diffs)
-        clean_prob_diff = sum(clean_prob_diffs) / len(clean_prob_diffs)
+                # Fill logit and prob diff tensors
+                clean_logit_diffs[start_idx:end_idx] = get_logit_diff(
+                    clean_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
+                ).detach().cpu()
+                corrupted_logit_diffs[start_idx:end_idx] = get_logit_diff(
+                    corrupted_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
+                ).detach().cpu()
+                clean_prob_diffs[start_idx:end_idx] = get_prob_diff(
+                    clean_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
+                ).detach().cpu()
+                corrupted_prob_diffs[start_idx:end_idx] = get_prob_diff(
+                    corrupted_logits, answer_tokens, per_prompt=True,
+                    tokens=clean_tokens, tokenizer=model.tokenizer
+                ).detach().cpu()
         corrupted_cache = ActivationCache(
             {k: v.detach().clone().requires_grad_(requires_grad) for k, v in corrupted_dict.items()}, 
             model=model
@@ -558,27 +639,22 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             clean_logit_diffs=clean_logit_diffs,
             corrupted_prob_diffs=corrupted_prob_diffs,
             clean_prob_diffs=clean_prob_diffs,
-            corrupted_logit_diff=corrupted_logit_diff,
-            clean_logit_diff=clean_logit_diff,
-            corrupted_prob_diff=corrupted_prob_diff,
-            clean_prob_diff=clean_prob_diff,
+            center=center,
         )
 
 
 class CleanCorruptedCacheResults:
 
     def __init__(
-        self, dataset: CleanCorruptedDataset,
+        self, 
+        dataset: CleanCorruptedDataset,
         corrupted_cache: ActivationCache,
         clean_cache: ActivationCache,
-        corrupted_logit_diffs: List[float],
-        clean_logit_diffs: List[float],
-        corrupted_prob_diffs: List[float],
-        clean_prob_diffs: List[float],
-        corrupted_logit_diff: float,
-        clean_logit_diff: float,
-        corrupted_prob_diff: float,
-        clean_prob_diff: float,
+        corrupted_logit_diffs: Float[Tensor, "batch"],
+        clean_logit_diffs: Float[Tensor, "batch"],
+        corrupted_prob_diffs: Float[Tensor, "batch"],
+        clean_prob_diffs: Float[Tensor, "batch"],
+        center: bool = True,
     ) -> None:
         self.dataset = dataset
         self.corrupted_cache = corrupted_cache
@@ -587,16 +663,12 @@ class CleanCorruptedCacheResults:
         self.clean_logit_diffs = clean_logit_diffs
         self.corrupted_prob_diffs = corrupted_prob_diffs
         self.clean_prob_diffs = clean_prob_diffs
-        self.corrupted_logit_diff = corrupted_logit_diff
-        self.clean_logit_diff = clean_logit_diff
-        self.corrupted_prob_diff = corrupted_prob_diff
-        self.clean_prob_diff = clean_prob_diff
-        self.clean_accuracy = (
-            np.array(clean_logit_diffs, dtype=np.float32) > 0
-        ).sum() / len(clean_logit_diffs)
-        self.corrupted_accuracy = (
-            np.array(corrupted_logit_diffs, dtype=np.float32) > 0
-        ).sum() / len(corrupted_logit_diffs)
+        if center:
+            self.center_logit_diffs()
+        else:
+            self.corrupted_logit_bias = 0
+            self.clean_logit_bias = 0
+        self.set_accuracy()
 
     def __str__(self) -> str:
         return (
@@ -606,8 +678,26 @@ class CleanCorruptedCacheResults:
             f"  corrupted_prob_diff={self.corrupted_prob_diff:.2f},\n"
             f"  clean_prob_diff={self.clean_prob_diff:.2f},\n"
             f"  clean_accuracy={self.clean_accuracy:.1%},\n"
-            f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n"
+            f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n",
+            f"  length={len(self.dataset)}"
             f")"
+        )
+    
+    def set_accuracy(self):
+        self.corrupted_logit_diff = torch.mean(self.corrupted_logit_diffs)
+        self.clean_logit_diff = torch.mean(self.clean_logit_diffs)
+        self.corrupted_prob_diff = torch.mean(self.corrupted_prob_diffs)
+        self.clean_prob_diff = torch.mean(self.clean_prob_diffs)
+        self.clean_accuracy = get_accuracy_from_logit_diffs(self.clean_logit_diffs)
+        self.corrupted_accuracy = get_accuracy_from_logit_diffs(self.corrupted_logit_diffs)
+    
+    def center_logit_diffs(self):
+        answer_tokens = self.dataset.answer_tokens
+        self.corrupted_logit_diffs, self.corrupted_logit_bias = center_logit_diffs(
+            self.corrupted_logit_diffs, answer_tokens
+        )
+        self.clean_logit_diffs, self.clean_logit_bias = center_logit_diffs(
+            self.clean_logit_diffs, answer_tokens
         )
 
 
@@ -675,6 +765,7 @@ def get_dataset(
         answer_tokens=answer_tokens, 
         clean_tokens=clean_tokens, 
         corrupted_tokens=corrupted_tokens,
+        tokenizer=model.tokenizer,
     )
 
 
