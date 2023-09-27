@@ -1,5 +1,5 @@
 from jaxtyping import Float, Int, Bool
-from typing import Dict, Iterable, List, Literal, Tuple, Union
+from typing import Dict, Iterable, List, Literal, Optional, Tuple, Union
 import numpy as np
 import torch
 from torch import Tensor
@@ -10,7 +10,8 @@ from transformer_lens import HookedTransformer
 from transformer_lens.utils import tokenize_and_concatenate, get_act_name
 from circuitsvis.activations import text_neuron_activations
 from IPython.display import display
-from utils.store import save_html
+from tqdm.auto import tqdm
+from utils.store import save_html, save_array, load_array, is_file
 
 
 # Harry Potter in English
@@ -63,6 +64,59 @@ def get_dataloader(
         dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last
     )
     return data_loader
+
+
+def get_activations_from_dataloader(
+    data: torch.utils.data.dataloader.DataLoader,
+    direction: Float[Tensor, "d_model"],
+    model: HookedTransformer,
+    device: Optional[torch.device] = None,
+    max_batches: int = None,
+) -> Float[Tensor, "row pos"]:
+    if device is None:
+        device = model.cfg.device
+    all_acts = []
+    for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
+        batch_tokens = batch_value['tokens'].to(device)
+        batch_acts: Float[Tensor, "batch pos layer"] = get_projections_for_text(
+            batch_tokens, direction, model
+        )
+        all_acts.append(batch_acts)
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+    # Concatenate the activations into a single tensor
+    all_acts: Float[Tensor, "row pos layer"] = torch.cat(all_acts, dim=0)
+    return all_acts
+
+
+#%%
+def get_activations_cached(
+    data: torch.utils.data.dataloader.DataLoader,
+    direction_label: str,
+    model: HookedTransformer,
+    device: Optional[torch.device] = None,
+    verbose: bool = True,
+):
+    path = direction_label + "_activations.npy"
+    if is_file(path, model):
+        if verbose:
+            print("Loading activations from file")
+        sentiment_activations = load_array(path, model)
+        sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(
+            sentiment_activations, device=device, dtype=torch.float32
+        )
+    else:
+        if verbose:
+            print("Computing activations")
+        direction = load_array(direction_label + ".npy", model)
+        direction = torch.tensor(
+            direction, device=device, dtype=torch.float32
+        )
+        sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(
+            data, direction
+        )
+        save_array(sentiment_activations, path, model)
+    return sentiment_activations
 
 
 def names_filter(name: str):
