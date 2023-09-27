@@ -35,7 +35,7 @@ pd.set_option('display.max_colwidth', 200)
 torch.set_grad_enabled(False)
 #%%
 device = "cuda"
-MODEL_NAME = "EleutherAI/pythia-2.8b"
+MODEL_NAME = "gpt2-small"
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     device=device,
@@ -53,37 +53,37 @@ def render_local(html):
 # Harry Potter example
 
 #%%
-hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
-harry_potter_neuroscope = plot_neuroscope(
-    hp_4_paras, model, centred=True, verbose=False, 
-    special_dir=sentiment_dir, default_layer=7,
-    show_selectors=False,
-)
-save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-render_local(harry_potter_neuroscope)
+# hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
+# harry_potter_neuroscope = plot_neuroscope(
+#     hp_4_paras, model, centred=True, verbose=False, 
+#     special_dir=sentiment_dir, default_layer=7,
+#     show_selectors=False,
+# )
+# save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
+# render_local(harry_potter_neuroscope)
 #%%
 # ============================================================================ #
-harry_potter_fr_neuroscope = plot_neuroscope(
-    harry_potter_fr_start, model, centred=True, verbose=False, 
-    special_dir=sentiment_dir, default_layer=7, 
-    show_selectors=False,
-)
-save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
-render_local(harry_potter_fr_neuroscope)
+# harry_potter_fr_neuroscope = plot_neuroscope(
+#     harry_potter_fr_start, model, centred=True, verbose=False, 
+#     special_dir=sentiment_dir, default_layer=7, 
+#     show_selectors=False,
+# )
+# save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
+# render_local(harry_potter_fr_neuroscope)
 #%%
-french_short_text = """et son bon à rien de mari
-ils étaient parfaitement normaux
-gris et triste et rien dans
-la plus sinistre pour aller
-"""
-french_neuroscope = plot_neuroscope(
-    french_short_text, model, centred=True, verbose=False,
-    special_dir=sentiment_dir, default_layer=7,
-    show_selectors=False,
-    prepend_bos=False,
-)
-save_html(french_neuroscope, "french_short_text", model)
-render_local(french_neuroscope)
+# french_short_text = """et son bon à rien de mari
+# ils étaient parfaitement normaux
+# gris et triste et rien dans
+# la plus sinistre pour aller
+# """
+# french_neuroscope = plot_neuroscope(
+#     french_short_text, model, centred=True, verbose=False,
+#     special_dir=sentiment_dir, default_layer=7,
+#     show_selectors=False,
+#     prepend_bos=False,
+# )
+# save_html(french_neuroscope, "french_short_text", model)
+# render_local(french_neuroscope)
 #%%
 # Mandarin example
 # mandarin_text = """
@@ -211,17 +211,27 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
 # ============================================================================ #
 # Negations
 #%%
+negation_short = plot_neuroscope(
+    """You never fail. Don't doubt it. I don't like you.""", 
+    model,
+    centred=False,
+    default_layer=list(range(1, model.cfg.n_layers, 3)), 
+    special_dir=sentiment_dir,
+    show_selectors=False,
+)
+render_local(negation_short)
+save_html(negation_short, "neuroscope_negations", model)
 #%%
-# negation = plot_neuroscope(
-#     "You never fail. Don't doubt it. I am not uncertain.", 
-#     model,
-#     centred=False,
-#     default_layer="all", 
-#     special_dir=sentiment_dir,
-#     show_selectors=False,
-# )
-# save_html(negation, "negation", model)
-# render_local(negation)
+negation_full = plot_neuroscope(
+    """You never fail. Don't doubt it. I don't like you.""", 
+    model,
+    centred=False,
+    default_layer="all", 
+    special_dir=sentiment_dir,
+    show_selectors=False,
+)
+render_local(negation_full)
+save_html(negation_full, "negation_full", model)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
@@ -244,7 +254,7 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
 # ============================================================================ #
 # Openwebtext-10k
 #%%
-dataloader = get_dataloader(model, "stas/openwebtext-10k", batch_size=8)
+dataloader = get_dataloader(model, "stas/openwebtext-10k", batch_size=64)
 #%%
 def get_activations_from_dataloader(
     data: torch.utils.data.dataloader.DataLoader,
@@ -337,8 +347,8 @@ bin_samples
 labelled_bin_samples = get_csv(
     "labelled_bin_samples", model
 )
-labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive')
-assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral', 'Somewhat Positive', 'Somewhat Negative']).all()
+labelled_bin_samples.sentiment = labelled_bin_samples.sentiment.str.replace('negative', 'Negative').str.replace('positive', 'Positive').str.replace("Somewhat ", "")
+assert labelled_bin_samples.sentiment.isin(['Positive', 'Negative', 'Neutral']).all()
 labelled_bin_samples
 #%%
 sampled_activations = []
@@ -523,9 +533,9 @@ def plot_batch_pos(
     device = all_activations.device
     layers = all_activations.shape[-1]
     zeros = torch.zeros((1, layers), device=device, dtype=torch.float32)
-    texts = [model.tokenizer.bos_token]
+    texts = []
     text_to_not_repeat = set()
-    acts = [zeros]
+    acts = []
     text_sep = "\n"
     for batch, pos in batch_and_pos:
         text_window: List[str] = extract_text_window(
@@ -566,22 +576,24 @@ batch_pos_dict = dict(
     neuroscope_adjectives=[(2861, 739), (5957, 800), (3889, 480), (1313, 528)],
     neuroscope_adverbs=[(10095, 900), (7733, 740), (5479, 471), (2559, 426)],
     neuroscope_nouns=[(2439, 800), (4428, 862), (1230, 281), (7327, 81)],
-    neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
+    # neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
     neuroscope_medical=[(6690, 669), (3852, 819), (9791, 460), (7888, 326)],
 )
-# for file_name, batch_pos in batch_pos_dict.items():
-#     html = plot_batch_pos(
-#         sentiment_activations, 
-#         dataloader, 
-#         model, 
-#         batch_pos,
-#         centred=True,
-#         file_name=file_name,
-#         window_size=2,
-#         show_selectors=False,
-#         verbose=False,
-#     )
-#     display(HTML(html.local_src))
+for file_name, batch_pos in batch_pos_dict.items():
+    html = plot_batch_pos(
+        sentiment_activations, 
+        dataloader, 
+        model, 
+        batch_pos,
+        centred=True,
+        file_name=file_name,
+        window_size=2,
+        show_selectors=False,
+        verbose=False,
+        prepend_bos=False,
+    )
+    render_local(html)
+    display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Top k max activating examples
