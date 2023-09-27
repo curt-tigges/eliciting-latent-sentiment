@@ -202,9 +202,13 @@ def plot_neuroscope(
         str_tokens = text
 
     if default_layer == "all":
+        assert prepend_bos
         n_layers = activations.shape[1]
         orig_len = len(str_tokens)
-        str_tokens = (str_tokens + ["\n"]) * n_layers
+        numbered_tokens = []
+        for layer in range(n_layers):
+            numbered_tokens += [f"{layer:02d} "] + str_tokens[1:] + ["\n"]
+        str_tokens = numbered_tokens
         activations = torch.cat([activations, torch.zeros_like(activations[:1])], dim=0)
         activations = einops.rearrange(
             activations, "pos layer 1 -> (layer pos) 1 1"
