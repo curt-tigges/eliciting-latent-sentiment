@@ -15,9 +15,8 @@ import imgkit
 
 
 DIRECTION_PATTERN = (
-    r'^(kmeans|pca|das|das2d|das3d|logistic_regression|mean_diff)_'
-    r'(simple_train|treebank_train)_'
-    r'(ADJ|ALL)_'
+    r'^(kmeans|pca|das|das2d|das3d|logistic_regression|mean_diff|random_direction)_'
+    r'(?:(simple_train|treebank_train)_(ADJ|ALL)_)?'
     r'layer(\d*)'
     r'\.npy$'
 )
@@ -47,12 +46,7 @@ def extract_layer_from_string(s: str) -> int:
 
 def zero_pad_layer_string(s: str) -> str:
     # Find numbers that directly follow the text "layer"
-    number = extract_layer_from_string(s)
-    if number is not None:
-        # Replace the original number with the zero-padded version
-        s = s.replace(f'layer{number}', f'layer{number:02d}')
-    return s
-
+    return re.sub(r'(?<=layer)(\d+)', lambda m: m.group(1).zfill(2), s)
 
 def add_styling(
     html: str,
