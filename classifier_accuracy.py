@@ -28,7 +28,8 @@ from utils.store import load_array, save_html, save_array, is_file, get_model_na
 from utils.neuroscope import (
     plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
     harry_potter_start, harry_potter_fr_start, get_batch_pos_mask, extract_text_window,
-    extract_activations_window
+    extract_activations_window, get_activations_from_dataloader,
+    get_activations_cached,
 )
 #%%
 pd.set_option('display.max_colwidth', 200)
@@ -50,59 +51,6 @@ model = HookedTransformer.from_pretrained(
 )
 #%%
 dataloader = get_dataloader(model, "stas/openwebtext-10k", batch_size=16)
-#%%
-def get_activations_from_dataloader(
-    data: torch.utils.data.dataloader.DataLoader,
-    direction: Float[Tensor, "d_model"],
-    max_batches: int = None,
-) -> Float[Tensor, "row pos"]:
-    all_acts = []
-    for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
-        batch_tokens = batch_value['tokens'].to(device)
-        batch_acts: Float[Tensor, "batch pos layer"] = get_projections_for_text(
-            batch_tokens, direction, model
-        )
-        all_acts.append(batch_acts)
-        if max_batches is not None and batch_idx >= max_batches:
-            break
-    # Concatenate the activations into a single tensor
-    all_acts: Float[Tensor, "row pos layer"] = torch.cat(all_acts, dim=0)
-    return all_acts
-#%%
-class ClearCache:
-    def __enter__(self):
-        gc.collect()
-        torch.cuda.empty_cache()
-        model.cuda()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        model.cpu()
-        gc.collect()
-        torch.cuda.empty_cache()
-#%%
-def get_activations_cached(
-    data: torch.utils.data.dataloader.DataLoader,
-    direction_label: str,
-):
-    path = direction_label + "_activations.npy"
-    if is_file(path, model):
-        print("Loading activations from file")
-        sentiment_activations = load_array(path, model)
-        sentiment_activations: Float[Tensor, "row pos layer"]  = torch.tensor(
-            sentiment_activations, device=device, dtype=torch.float32
-        )
-    else:
-        print("Computing activations")
-        with ClearCache():
-            direction = load_array(direction_label + ".npy", model)
-            direction = torch.tensor(
-                direction, device=device, dtype=torch.float32
-            )
-            sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(
-                data, direction
-            )
-        save_array(sentiment_activations, path, model)
-    return sentiment_activations
 #%%
 def sample_by_bin(
     data: Float[Tensor, "batch pos"],
