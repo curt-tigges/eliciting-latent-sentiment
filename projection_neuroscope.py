@@ -211,7 +211,7 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
 # ============================================================================ #
 # Negations
 #%%
-negation = plot_neuroscope(
+negation_short = plot_neuroscope(
     """You never fail. Don't doubt it. I don't like you.""", 
     model,
     centred=False,
@@ -219,10 +219,10 @@ negation = plot_neuroscope(
     special_dir=sentiment_dir,
     show_selectors=False,
 )
-render_local(negation)
-save_html(negation, "negation_short", model)
+render_local(negation_short)
+save_html(negation_short, "neuroscope_negations", model)
 #%%
-negation = plot_neuroscope(
+negation_full = plot_neuroscope(
     """You never fail. Don't doubt it. I don't like you.""", 
     model,
     centred=False,
@@ -230,8 +230,8 @@ negation = plot_neuroscope(
     special_dir=sentiment_dir,
     show_selectors=False,
 )
-render_local(negation)
-save_html(negation, "negation_full", model)
+render_local(negation_full)
+save_html(negation_full, "negation_full", model)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
@@ -576,7 +576,7 @@ batch_pos_dict = dict(
     neuroscope_adjectives=[(2861, 739), (5957, 800), (3889, 480), (1313, 528)],
     neuroscope_adverbs=[(10095, 900), (7733, 740), (5479, 471), (2559, 426)],
     neuroscope_nouns=[(2439, 800), (4428, 862), (1230, 281), (7327, 81)],
-    neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
+    # neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
     neuroscope_medical=[(6690, 669), (3852, 819), (9791, 460), (7888, 326)],
 )
 for file_name, batch_pos in batch_pos_dict.items():
