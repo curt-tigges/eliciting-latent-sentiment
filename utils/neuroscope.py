@@ -158,7 +158,7 @@ def plot_neuroscope(
     activations: Float[Tensor, "pos layer 1"] = None,
     special_dir: Float[Tensor, "d_model"] = None,
     verbose: bool = False,
-    default_layer: Union[Literal["all"], int] = 1,
+    default_layer: Union["all", int, List[int]] = 1,
     show_selectors: bool = True,
     prepend_bos: bool = True,
 ):
@@ -201,22 +201,29 @@ def plot_neuroscope(
     else:
         str_tokens = text
 
-    if default_layer == "all":
+    if isinstance(default_layer, list) or isinstance(default_layer, str):
         assert prepend_bos
-        n_layers = activations.shape[1]
+        if default_layer == "all":
+            layers = list(range(activations.shape[1]))
+        else:
+            layers = default_layer
         orig_len = len(str_tokens)
         numbered_tokens = []
-        for layer in range(n_layers):
+        for layer in layers:
             numbered_tokens += [f"{layer:02d} "] + str_tokens[1:] + ["\n"]
         str_tokens = numbered_tokens
-        activations = torch.cat([activations, torch.zeros_like(activations[:1])], dim=0)
+        activations = torch.cat(
+            [activations, torch.zeros_like(activations[:1])], 
+            dim=0
+        ) # Appending 0 activation for the newlines
+        activations = activations[:, layers, :]
         activations = einops.rearrange(
             activations, "pos layer 1 -> (layer pos) 1 1"
         )
-        first_dimension_labels = ["all"]
+        first_dimension_labels = ["multi"]
         default_layer = 0
-        assert len(str_tokens) == (orig_len + 1) * n_layers
-        assert len(activations) == (orig_len + 1) * n_layers
+        assert len(str_tokens) == (orig_len + 1) * len(layers)
+        assert len(activations) == (orig_len + 1) * len(layers)
     else:
         first_dimension_labels = [f"{i}_pre" for i in range(activations.shape[1])]
     
