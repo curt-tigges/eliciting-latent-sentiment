@@ -29,7 +29,7 @@ torch.set_grad_enabled(False)
 pio.renderers.default = "notebook"
 #%% # Global Settings
 USE_CACHE = False
-ALL_LAYERS = True
+ALL_LAYERS = False
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
     # 'gpt2-small',
@@ -42,17 +42,17 @@ MODELS = [
     # 'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
-    # 'mean_diff_simple_train_ADJ*.npy',
-    # 'pca_simple_train_ADJ*.npy',
-    # 'kmeans_simple_train_ADJ*.npy',
-    # 'logistic_regression_simple_train_ADJ*.npy',
-    'das_simple_train_ADJ*.npy',
-    # 'das2d_simple_train_ADJ*.npy',
-    # 'das3d_simple_train_ADJ*.npy',
+    'mean_diff_simple_train_ADJ*.npy',
+    'pca_simple_train_ADJ*.npy',
+    'kmeans_simple_train_ADJ*.npy',
+    'logistic_regression_simple_train_ADJ*.npy',
+    'das_simple_train_ADJ_layer*.npy',
+    'das2d_simple_train_ADJ*.npy',
+    'das3d_simple_train_ADJ*.npy',
     # 'das_treebank*.npy',
 ]
 PROMPT_TYPES = [
-    # PromptType.SIMPLE_TEST,
+    PromptType.SIMPLE_TEST,
     PromptType.TREEBANK_TEST,
     # PromptType.SIMPLE_TRAIN,
     # PromptType.COMPLETION,
@@ -62,8 +62,8 @@ PROMPT_TYPES = [
 ]
 SCAFFOLD = ReviewScaffold.CLASSIFICATION
 METRICS = [
-    # PatchingMetric.LOGIT_DIFF_DENOISING,
-    PatchingMetric.LOGIT_FLIP_DENOISING,
+    PatchingMetric.LOGIT_DIFF_DENOISING,
+    # PatchingMetric.LOGIT_FLIP_DENOISING,
     # PatchingMetric.PROB_DIFF_DENOISING,
 ]
 USE_HEADS = [False, ]
@@ -232,7 +232,7 @@ def run_resid_patching(
         act_name, hook_layer = get_resid_name(layer, model)
         node_name = act_name.split('hook_')[-1]
         patching_nodes = Node(node_name, layer=hook_layer, seq_pos=seq_pos)
-    return batched_act_patch(
+    result =  batched_act_patch(
         model=model,
         orig_input=orig_input,
         new_cache=new_cache,
@@ -242,7 +242,10 @@ def run_resid_patching(
         answer_tokens=answer_tokens,
         verbose=True,
         disable=True,
-    ) * 100 # .item()
+    ) * 100
+    if isinstance(result, Tensor):
+        result = result.item()
+    return result
 #%%
 def run_head_patching(
     model: HookedTransformer,
@@ -274,6 +277,61 @@ def run_head_patching(
         disable=True,
     ).item() * 100
 #%%
+dataset_cache = dict()
+
+
+def get_dataset_cached(
+    model: HookedTransformer,
+    prompt_type: PromptType,
+    scaffold: ReviewScaffold,
+    min_tokens: int = 0,
+    max_tokens: int = 25,
+    batch_size: int = 16,
+    device: torch.device = None,
+    center: bool = True,
+    disable_tqdm: bool = True,
+):
+    key = (
+        model.cfg.model_name,
+        prompt_type.value,
+        scaffold.value,
+        min_tokens,
+        max_tokens,
+        center,
+    )
+    if key in dataset_cache:
+        return dataset_cache[key]
+    clean_corrupt_data = get_dataset(
+        model, "cpu", prompt_type=prompt_type, scaffold=scaffold
+    )
+    clean_corrupt_data = clean_corrupt_data.restrict_by_padding(
+        min_tokens=min_tokens, max_tokens=max_tokens
+    )
+
+    # restrict to correct answers
+    baseline = clean_corrupt_data.run_with_cache(
+        model,
+        names_filter=lambda _: False,
+        batch_size=batch_size,
+        device=device,
+        disable_tqdm=disable_tqdm,
+        center=center,
+    )
+    is_correct = baseline.clean_logit_diffs > 0
+    is_positive = clean_corrupt_data.answer_tokens[:, 0, 0] == clean_corrupt_data.answer_tokens[0, 0, 0]
+    pos_correct = is_correct & is_positive
+    neg_correct = is_correct & ~is_positive
+    num_to_keep = min(pos_correct.sum(), neg_correct.sum())
+    pos_to_keep = torch.where(pos_correct)[0][:num_to_keep]
+    neg_to_keep = torch.where(neg_correct)[0][:num_to_keep]
+    to_keep = torch.cat([pos_to_keep, neg_to_keep])
+    clean_corrupt_data = clean_corrupt_data.get_subset(to_keep)
+    print(f"Filtered down to {len(clean_corrupt_data)} examples")
+    dataset_cache[key] = clean_corrupt_data
+    return dataset_cache[key]
+
+    
+#%%
 def get_results_for_direction_and_position(
     patching_metric_base: PatchingMetric, 
     prompt_type: PromptType,
@@ -288,7 +346,8 @@ def get_results_for_direction_and_position(
     center: bool = True,
     all_layers: bool = True,
     min_tokens: int = 0,
-    max_tokens: int = 30,
+    max_tokens: int = 25,
+    disable_tqdm: bool = True,
 ) -> float:
     if heads is None and all_layers:
         names_filter = lambda name: 'resid_pre' in name
@@ -299,16 +358,23 @@ def get_results_for_direction_and_position(
     else:
         names_filter = lambda name: 'result' in name
     model.reset_hooks()
-    clean_corrupt_data = get_dataset(model, "cpu", prompt_type=prompt_type, scaffold=scaffold)
-    clean_corrupt_data = clean_corrupt_data.restrict_by_padding(
-        min_tokens=min_tokens, max_tokens=max_tokens
+    clean_corrupt_data = get_dataset_cached(
+        model=model,
+        prompt_type=prompt_type,
+        scaffold=scaffold,
+        min_tokens=min_tokens,
+        max_tokens=max_tokens,
+        center=center,
+        disable_tqdm=disable_tqdm,
+        batch_size=batch_size,
+        device=device,
     )
     patching_dataset: CleanCorruptedCacheResults = clean_corrupt_data.run_with_cache(
         model, 
         names_filter=names_filter,
         batch_size=batch_size,
         device=device,
-        disable_tqdm=True,
+        disable_tqdm=disable_tqdm,
         center=center,
     )
     example_prompt = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
@@ -436,7 +502,11 @@ def export_results(
     save_html(layers_style, f"direction_patching_{metric_label}_{use_heads_label}", model)
     display(layers_style)
 
-    if not results.columns.get_level_values(0).str.contains("treebank").any():
+    missing_data = (
+        not results.columns.get_level_values(0).str.contains("treebank").any() or 
+        not results.columns.get_level_values(0).str.contains("simple").any()
+    )
+    if missing_data:
         return
 
     s_df = results[~results.index.str.contains("treebank")].copy()
@@ -529,7 +599,7 @@ BATCH_SIZES = {
     "gpt2-xl": 256,
     "EleutherAI/pythia-160m": 512,
     "EleutherAI/pythia-410m": 512,
-    "EleutherAI/pythia-1.4b": 128,
+    "EleutherAI/pythia-1.4b": 256,
     "EleutherAI/pythia-2.8b": 64,
 }
 model = None
