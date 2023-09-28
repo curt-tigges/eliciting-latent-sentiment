@@ -113,7 +113,7 @@ def get_activations_cached(
             direction, device=device, dtype=torch.float32
         )
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(
-            data, direction
+            data, direction, model
         )
         save_array(sentiment_activations, path, model)
     return sentiment_activations
