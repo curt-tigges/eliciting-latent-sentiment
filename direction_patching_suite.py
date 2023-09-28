@@ -42,14 +42,14 @@ MODELS = [
     # 'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
-    'mean_diff_simple_train_ADJ*.npy',
-    'pca_simple_train_ADJ*.npy',
-    'kmeans_simple_train_ADJ*.npy',
-    'logistic_regression_simple_train_ADJ*.npy',
-    'das_simple_train_ADJ_layer*.npy',
-    'das2d_simple_train_ADJ*.npy',
-    'das3d_simple_train_ADJ*.npy',
-    'random_direction*.npy',
+    # 'mean_diff_simple_train_ADJ*.npy',
+    # 'pca_simple_train_ADJ*.npy',
+    # 'kmeans_simple_train_ADJ*.npy',
+    # 'logistic_regression_simple_train_ADJ*.npy',
+    'das_simple_train_ADJ_layer1[0-5].npy',
+    # 'das2d_simple_train_ADJ*.npy',
+    # 'das3d_simple_train_ADJ*.npy',
+    # 'random_direction_layer00.npy',
     # 'das_treebank*.npy',
 ]
 PROMPT_TYPES = [
@@ -63,7 +63,7 @@ PROMPT_TYPES = [
 ]
 SCAFFOLD = ReviewScaffold.CLASSIFICATION
 METRICS = [
-    PatchingMetric.LOGIT_DIFF_DENOISING,
+    # PatchingMetric.LOGIT_DIFF_DENOISING,
     PatchingMetric.LOGIT_FLIP_DENOISING,
     # PatchingMetric.PROB_DIFF_DENOISING,
 ]
@@ -80,36 +80,8 @@ def get_model(name: str) -> HookedTransformer:
     model.name = name
     model.set_use_attn_result(True)
     return model
-#%%
-def display_cosine_sims(
-    direction_labels: List[str], directions: List[Float[Tensor, "d_model"]],
-    model: Union[str, HookedTransformer]
-):
-    cosine_similarities = []
-    for i, (label_i, direction_i) in enumerate(zip(direction_labels, directions)):
-        for j, (label_j, direction_j) in enumerate(zip(direction_labels, directions)):
-            similarity = einsum(
-                "d_model, d_model -> ", 
-                direction_i / direction_i.norm(), 
-                direction_j / direction_j.norm()
-            )
-            cosine_similarities.append([label_i, label_j, similarity.cpu().detach().item()])
-
-    sim_df = pd.DataFrame(cosine_similarities, columns=['direction1', 'direction2', 'cosine_similarity'])
-    sim_pt = sim_df.pivot(index='direction1', columns='direction2', values='cosine_similarity')
-    styled = (
-        sim_pt
-        .style
-        .background_gradient(cmap='Reds', axis=0)
-        .format("{:.1%}")
-        .set_caption("Cosine similarities")
-        .set_properties(**{'text-align': 'center'})
-    )
-    display(styled)
-    save_html(styled, "cosine_similarities", model)
-
 #%% # Direction loading
-def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List[np.ndarray], List[str]]:
+def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str]]:
     model_name = get_model_name(model)
     
     direction_paths = [
@@ -143,8 +115,9 @@ def get_directions(model: HookedTransformer, display: bool = True) -> Tuple[List
     direction_labels = [direction_labels[i] for i in sorted_indices]
     directions = [directions[i] for i in sorted_indices]
 
-    if display:
-        display_cosine_sims(direction_labels, directions)
+    # direction_labels.append('zero')
+    # directions.append(torch.zeros_like(directions[0]))
+
     return directions, direction_labels
 #%%
 # ============================================================================ #
@@ -243,9 +216,7 @@ def run_resid_patching(
         answer_tokens=answer_tokens,
         verbose=True,
         disable=True,
-    ) * 100
-    if isinstance(result, Tensor):
-        result = result.item()
+    ).item() * 100
     return result
 #%%
 def run_head_patching(
@@ -287,10 +258,7 @@ def get_dataset_cached(
     scaffold: ReviewScaffold,
     min_tokens: int = 0,
     max_tokens: int = 25,
-    batch_size: int = 16,
-    device: torch.device = None,
     center: bool = True,
-    disable_tqdm: bool = True,
 ):
     key = (
         model.cfg.model_name,
@@ -305,29 +273,12 @@ def get_dataset_cached(
     clean_corrupt_data = get_dataset(
         model, "cpu", prompt_type=prompt_type, scaffold=scaffold
     )
+
+    # Filter by padding
     clean_corrupt_data = clean_corrupt_data.restrict_by_padding(
         min_tokens=min_tokens, max_tokens=max_tokens
     )
 
-    # restrict to correct answers
-    baseline = clean_corrupt_data.run_with_cache(
-        model,
-        names_filter=lambda _: False,
-        batch_size=batch_size,
-        device=device,
-        disable_tqdm=disable_tqdm,
-        center=center,
-    )
-    is_correct = baseline.clean_logit_diffs > 0
-    is_positive = clean_corrupt_data.answer_tokens[:, 0, 0] == clean_corrupt_data.answer_tokens[0, 0, 0]
-    pos_correct = is_correct & is_positive
-    neg_correct = is_correct & ~is_positive
-    num_to_keep = min(pos_correct.sum(), neg_correct.sum())
-    pos_to_keep = torch.where(pos_correct)[0][:num_to_keep]
-    neg_to_keep = torch.where(neg_correct)[0][:num_to_keep]
-    to_keep = torch.cat([pos_to_keep, neg_to_keep])
-    clean_corrupt_data = clean_corrupt_data.get_subset(to_keep)
-    print(f"Filtered down to {len(clean_corrupt_data)} examples")
     dataset_cache[key] = clean_corrupt_data
     return dataset_cache[key]
 
@@ -350,9 +301,9 @@ def get_results_cached(
     max_tokens: int = 25,
     disable_tqdm: bool = True,
 ):
-    use_csv = heads is None and not all_layers
+    use_csv = USE_CACHE and heads is None and not all_layers
     csv_name = (
-        patching_metric_base.value.__name__.replace('_denoising', '') +
+        patching_metric_base.__name__.replace('_denoising', '') +
         f"_{prompt_type.value}_{scaffold}_{min_tokens}_{max_tokens}_{position}_"
         f"{direction_label}.csv"
     )
@@ -426,6 +377,7 @@ def get_results_for_direction_and_position(
         disable_tqdm=disable_tqdm,
         center=center,
     )
+    # print(patching_dataset.clean_logit_diff, patching_dataset.corrupted_logit_diff)
     example_prompt = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
     if position == 'ALL':
         seq_pos = None
@@ -449,7 +401,10 @@ def get_results_for_direction_and_position(
         return_tensor=True,
     )
     new_cache = create_cache_for_dir_patching(
-        patching_dataset.clean_cache, patching_dataset.corrupted_cache, direction, model
+        patching_dataset.clean_cache, 
+        patching_dataset.corrupted_cache, 
+        direction, 
+        model,
     )
     if heads is None:
         return run_resid_patching(
@@ -668,7 +623,7 @@ for model_name, metric, use_heads in model_metric_bar:
     model_metric_bar.set_description(f"{model_name} {metric.__name__} {patch_label} batch_size={batch_size}")
     if model is None or model_name not in model.name:
         model = get_model(model_name)
-    DIRECTIONS, DIRECTION_LABELS = get_directions(model, display=False)
+    DIRECTIONS, DIRECTION_LABELS = get_directions(model)
     results = get_results_for_metric(
         metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, device, heads, 
         scaffold=SCAFFOLD, batch_size=batch_size,
@@ -690,21 +645,6 @@ def concat_simple_data(models: Iterable[str], metric_label: str, use_heads_label
         model_df['max_layer'] = model_df.layer.max()
         simple_data.append(model_df)
     layer_df = pd.concat(simple_data)
-    layer_df['model_family'] = np.where(
-        layer_df.model.str.contains("pythia"),
-        "pythia",
-        "gpt2",
-    )
-    layer_df['model_size'] = layer_df.model.replace({
-        "gpt2-small": "small/140m",
-        "gpt2-medium": "medium/410m",
-        "gpt2-large": "large/1.4b",
-        "gpt2-xl": "xl/2.8b",
-        "EleutherAI/pythia-160m": "small/140m",
-        "EleutherAI/pythia-410m": "medium/410m",
-        "EleutherAI/pythia-1.4b": "large/1.4b",
-        "EleutherAI/pythia-2.8b": "xl/2.8b",
-    })
     fig = px.line(
         x="layer", 
         y="treebank_test", 
@@ -770,15 +710,15 @@ def concat_layer_data(models: Iterable[str], metric_label: str, use_heads_label:
     save_pdf(fig, f"direction_patching_{metric_label}_{use_heads_label}_facet_plot", model)
     fig.show()
 #%%
-concat_layer_data(
-    ["gpt2-small", "gpt2-medium", "gpt2-large", "gpt2-xl"], 
-    "logit_diff", 
-    "resid_gpt2"
-)
-#%%
-concat_layer_data(
-    ["EleutherAI/pythia-160m", "EleutherAI/pythia-410m", "EleutherAI/pythia-1.4b", "EleutherAI/pythia-2.8b"], 
-    "logit_diff", 
-    "resid_pythia"
-)
+# concat_layer_data(
+#     ["gpt2-small", "gpt2-medium", "gpt2-large", "gpt2-xl"], 
+#     "logit_diff", 
+#     "resid_gpt2"
+# )
+# #%%
+# concat_layer_data(
+#     ["EleutherAI/pythia-160m", "EleutherAI/pythia-410m", "EleutherAI/pythia-1.4b", "EleutherAI/pythia-2.8b"], 
+#     "logit_diff", 
+#     "resid_pythia"
+# )
 #%%
