@@ -330,10 +330,15 @@ def create_datasets_for_model(
     sentence_phrase_df.num_tokens = sentence_phrase_df.num_tokens.astype(int)
     for split in ('train', 'dev', 'test'):
         for scaffold in ReviewScaffold:
-            if scaffold != ReviewScaffold.CLASSIFICATION or split != 'test':
-                min_logit_diff = None
-            else:
+            filter_by_logit_diff = (
+                scaffold == ReviewScaffold.CLASSIFICATION and 
+                split == 'test' and
+                "1.4b" in model.cfg.model_name
+            )
+            if filter_by_logit_diff:
                 min_logit_diff = 0
+            else:
+                min_logit_diff = None
             create_dataset_for_split(
                 sentence_phrase_df, split, model, scaffold, 
                 padding_side=padding_side,
