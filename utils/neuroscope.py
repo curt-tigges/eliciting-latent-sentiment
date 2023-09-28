@@ -75,6 +75,7 @@ def get_activations_from_dataloader(
 ) -> Float[Tensor, "row pos"]:
     if device is None:
         device = model.cfg.device
+    direction = direction.to(device=device)
     all_acts = []
     for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
         batch_tokens = batch_value['tokens'].to(device)
@@ -112,6 +113,7 @@ def get_activations_cached(
         direction = torch.tensor(
             direction, device=device, dtype=torch.float32
         )
+        direction /= direction.norm()
         sentiment_activations: Float[Tensor, "row pos layer"]  = get_activations_from_dataloader(
             data, direction, model
         )
@@ -131,6 +133,7 @@ def get_projections_for_text(
     device: str = "cpu",
 ) -> Float[Tensor, "batch pos layer"]:
     """Computes residual stream projections across all layers and positions for a given text."""
+    special_dir /= special_dir.norm()
     _, cache = model.run_with_cache(
         tokens, 
         names_filter=names_filter
