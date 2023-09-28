@@ -255,7 +255,7 @@ def create_dataset_for_split(
     model: HookedTransformer,
     scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
     padding_side: Optional[Literal['left', 'right']] = None,
-    min_logit_diff: float = 0,
+    min_logit_diff: Optional[float] = None,
     device: Optional[torch.device] = None,
     batch_size: int = 16,
 ):
@@ -263,13 +263,16 @@ def create_dataset_for_split(
     input_raw, answers_raw = apply_scaffold_to_data_frame(
         split_df, scaffold, model, padding_side=padding_side
     )
-    mask = filter_by_logit_diff(
-        model, input_raw, answers_raw, 
-        min_logit_diff=min_logit_diff,
-        device=device,
-        batch_size=batch_size,
-    )
-    mask_df = split_df[mask.numpy()]
+    if min_logit_diff is None:
+        mask_df = split_df
+    else:
+        mask = filter_by_logit_diff(
+            model, input_raw, answers_raw, 
+            min_logit_diff=min_logit_diff,
+            device=device,
+            batch_size=batch_size,
+        )
+        mask_df = split_df[mask.numpy()]
     paired_df = pair_by_num_tokens_and_split(mask_df)
     to_csv(paired_df, f'treebank_{split}_{scaffold.value}', model)
     clean_prompts = [
@@ -328,11 +331,13 @@ def create_datasets_for_model(
     for split in ('train', 'dev', 'test'):
         for scaffold in ReviewScaffold:
             if scaffold != ReviewScaffold.CLASSIFICATION or split != 'test':
-                continue # FIXME: remove this line
+                min_logit_diff = None
+            else:
+                min_logit_diff = 0
             create_dataset_for_split(
                 sentence_phrase_df, split, model, scaffold, 
                 padding_side=padding_side,
                 device=device,
                 batch_size=batch_size,
-                min_logit_diff=0,
+                min_logit_diff=min_logit_diff,
             )
