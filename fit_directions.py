@@ -37,13 +37,13 @@ from utils.methods import FittingMethod
 SKIP_IF_EXISTS = True
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODELS = [
-    'gpt2-small',
+    # 'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
-    # 'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-1.4b',
     # 'EleutherAI/pythia-2.8b',
 ]
 METHODS = [
@@ -67,15 +67,11 @@ TRAIN_TYPES = [
     # PromptType.TREEBANK_TRAIN,
 ]
 TEST_TYPES = [
-    PromptType.SIMPLE_TEST,
+    # PromptType.SIMPLE_TEST,
     # PromptType.SIMPLE_ADVERB,
-    # PromptType.NONE,
+    PromptType.NONE,
 ]
 SCAFFOLD = ReviewScaffold.CONTINUATION
-LAYERS = [
-    "0", "1", "{n} // 4", "{n} // 3", "{n} // 2", 
-    "2 * {n} // 3", "3 * {n} // 4", "{n} - 1", "{n}"
-]
 BATCH_SIZES = {
     'gpt2-small': 128,
     'gpt2-medium': 64,
@@ -97,6 +93,19 @@ def get_model(name: str):
     ).requires_grad_(False)
     model.name = name
     return model
+#%%
+def select_layers(
+    n_layers: int,
+):
+    if n_layers <= 12:
+        return list(range(n_layers + 1))
+    if n_layers <= 24:
+        return list(range(0, n_layers + 1, 1))
+    if n_layers <= 36:
+        return list(range(0, n_layers + 1, 3))
+    if n_layers <= 48:
+        return list(range(0, n_layers + 1, 4))
+    
 #%%
 # sweep_model = HookedClassifier.from_pretrained(
 #     "data/gpt2-small/gpt2_imdb_classifier",
@@ -182,10 +191,7 @@ for model_name, train_type, test_type, method in BAR:
         train_placeholders = ["ALL"]
     if len(test_placeholders) == 0:
         test_placeholders = ["ALL"]
-    if model.cfg.n_layers > MAX_LAYERS:
-        layers = [eval(layer.format(n=model.cfg.n_layers)) for layer in LAYERS]
-    else:
-        layers = list(range(model.cfg.n_layers + 1))
+    layers = select_layers(model.cfg.n_layers)
     placeholders_layers = list(itertools.product(
         train_placeholders, 
         test_placeholders,
@@ -194,7 +200,7 @@ for model_name, train_type, test_type, method in BAR:
     assert len(placeholders_layers) > 0
     kwargs = dict()
     if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
-        kwargs['n_components'] = 2
+        kwargs['n_components'] = 1
     layers_bar = tqdm(placeholders_layers, leave=False)
     for train_pos, test_pos, train_layer in layers_bar:
         test_layer = train_layer # Don't train/eval on different layers
