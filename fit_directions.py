@@ -43,8 +43,8 @@ MODELS = [
     # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    # 'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-1.4b',
+    'EleutherAI/pythia-2.8b',
 ]
 METHODS = [
     # ClassificationMethod.KMEANS,
@@ -53,8 +53,8 @@ METHODS = [
     # ClassificationMethod.MEAN_DIFF,
     # ClassificationMethod.LOGISTIC_REGRESSION,
     GradientMethod.DAS,
-    GradientMethod.DAS2D,
-    GradientMethod.DAS3D,
+    # GradientMethod.DAS2D,
+    # GradientMethod.DAS3D,
 ]
 TRAIN_TYPES = [
     PromptType.SIMPLE_TRAIN,
@@ -100,11 +100,11 @@ def select_layers(
     if n_layers <= 12:
         return list(range(n_layers + 1))
     if n_layers <= 24:
-        return list(range(0, n_layers + 1, 1))
+        return list(range(0, n_layers + 1, 2))
     if n_layers <= 36:
         return list(range(0, n_layers + 1, 3))
     if n_layers <= 48:
-        return list(range(0, n_layers + 1, 4))
+        return list(range(0, n_layers + 1, 8))
     
 #%%
 # sweep_model = HookedClassifier.from_pretrained(
@@ -258,6 +258,10 @@ for model_name, train_type, test_type, method in BAR:
                 **kwargs
             )
             print(f"Saving classification direction to {cls_path}")
+#%%
+# ============================================================================ #
+# # END OF ACTUAL DIRECTION FITTING
+
 #%%
 # ============================================================================ #
 # Summary stats

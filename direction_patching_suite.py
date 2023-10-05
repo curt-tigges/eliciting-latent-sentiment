@@ -22,7 +22,7 @@ from tqdm.notebook import tqdm
 from path_patching import act_patch, Node, IterNode
 from utils.prompts import CleanCorruptedCacheResults, get_dataset, PromptType, ReviewScaffold
 from utils.circuit_analysis import create_cache_for_dir_patching, logit_diff_denoising, prob_diff_denoising, logit_flip_denoising, PatchingMetric
-from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN, is_file, get_csv, get_csv_path, flatten_multiindex
+from utils.store import save_array, load_array, save_html, save_pdf, to_csv, get_model_name, extract_layer_from_string, zero_pad_layer_string, DIRECTION_PATTERN, is_file, get_csv, get_csv_path, flatten_multiindex, save_text, load_text
 from utils.residual_stream import get_resid_name
 #%%
 torch.set_grad_enabled(False)
@@ -36,24 +36,24 @@ MODELS = [
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
-    # 'EleutherAI/pythia-160m',
-    # 'EleutherAI/pythia-410m',
+    'EleutherAI/pythia-160m',
+    'EleutherAI/pythia-410m',
     'EleutherAI/pythia-1.4b',
-    # 'EleutherAI/pythia-2.8b',
+    'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
     # 'mean_diff_simple_train_ADJ*.npy',
     # 'pca_simple_train_ADJ*.npy',
-    # 'kmeans_simple_train_ADJ*.npy',
-    # 'logistic_regression_simple_train_ADJ*.npy',
+    'kmeans_simple_train_ADJ*.npy',
+    'logistic_regression_simple_train_ADJ*.npy',
     'das_simple_train_ADJ_layer*.npy',
     # 'das2d_simple_train_ADJ*.npy',
     # 'das3d_simple_train_ADJ*.npy',
-    'random_direction_layer*.npy',
+    # 'random_direction_layer*.npy',
     # 'das_treebank*.npy',
 ]
 PROMPT_TYPES = [
-    PromptType.SIMPLE_TEST,
+    # PromptType.SIMPLE_TEST,
     PromptType.TREEBANK_TEST,
     # PromptType.SIMPLE_TRAIN,
     # PromptType.COMPLETION,
@@ -61,10 +61,10 @@ PROMPT_TYPES = [
     # PromptType.SIMPLE_MOOD,
     # PromptType.SIMPLE_FRENCH,
 ]
-SCAFFOLD = ReviewScaffold.CLASSIFICATION
+SCAFFOLD = ReviewScaffold.CONTINUATION
 METRICS = [
     PatchingMetric.LOGIT_DIFF_DENOISING,
-    PatchingMetric.LOGIT_FLIP_DENOISING,
+    # PatchingMetric.LOGIT_FLIP_DENOISING,
     # PatchingMetric.PROB_DIFF_DENOISING,
 ]
 USE_HEADS = [False, ]
@@ -88,7 +88,7 @@ def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str
         path
         for glob_str in DIRECTION_GLOBS
         for path in glob.glob(os.path.join('data', model_name, glob_str))
-        if "None" not in path and "_all_" not in path
+        if "None" not in path and "_all_" not in path and "_activations" not in path
     ]
     direction_labels = [os.path.split(path)[-1] for path in direction_paths]
     del direction_paths
@@ -274,17 +274,18 @@ def get_dataset_cached(
         model, "cpu", prompt_type=prompt_type, scaffold=scaffold
     )
 
-    # Filter by padding
-    clean_corrupt_data = clean_corrupt_data.restrict_by_padding(
-        min_tokens=min_tokens, max_tokens=max_tokens
-    )
+    # FIXME: need to uncomment if using max_tokens
+    # # Filter by padding
+    # clean_corrupt_data = clean_corrupt_data.restrict_by_padding(
+    #     min_tokens=min_tokens, max_tokens=max_tokens
+    # )
 
     dataset_cache[key] = clean_corrupt_data
     return dataset_cache[key]
 
 
 #%%
-def get_results_cached(
+def get_result_cached(
     patching_metric_base: PatchingMetric, 
     prompt_type: PromptType,
     position: str,
@@ -302,13 +303,13 @@ def get_results_cached(
     disable_tqdm: bool = True,
 ):
     use_csv = USE_CACHE and heads is None and not all_layers
-    csv_name = (
+    txt_name = (
         patching_metric_base.__name__.replace('_denoising', '') +
         f"_{prompt_type.value}_{scaffold}_{min_tokens}_{max_tokens}_{position}_"
-        f"{direction_label}.csv"
+        f"{direction_label}.txt"
     )
-    if use_csv and is_file(csv_name, model):
-        return get_csv(csv_name, model, index_col=0, header=[0, 1])
+    if use_csv and is_file(txt_name, model):
+        return float(load_text(txt_name, model))
     result = get_results_for_direction_and_position(
         patching_metric_base=patching_metric_base, 
         prompt_type=prompt_type,
@@ -327,7 +328,7 @@ def get_results_cached(
         disable_tqdm=disable_tqdm,
     )
     if use_csv:
-        to_csv(result, csv_name.replace(".csv", ""), model, index=True)
+        save_text(str(result), txt_name, model)
     return result
 
     
@@ -459,7 +460,7 @@ def get_results_for_metric(
         placeholders = ['ALL']
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
-            result = get_results_cached(
+            result = get_result_cached(
                 patching_metric_base=patching_metric_base, 
                 prompt_type=prompt_type,
                 position=position,

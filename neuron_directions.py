@@ -74,6 +74,8 @@ fig = px.histogram(
     hover_name="neuron",
     marginal="box", 
     nbins=200,
+    histnorm="percent",
+    barmode="overlay",
 )
 for index, row in sim_df.iterrows():
     if row["neuron"] in ("L6N828", "L3N1605", "L5N671", "L6N1237"):

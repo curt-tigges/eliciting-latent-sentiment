@@ -52,7 +52,7 @@ NEGATIONS = {
     "I don't find it amusing at all.": 'amusing',
     "I don't like you.": 'like',
     "I don't respect that.": 'respect',
-    "I don't trust you.": 'trust',
+    # "I don't trust you.": 'trust',
     "It's hardly a success from my perspective.": 'success',
     "It's hardly a triumph in my eyes.": 'triumph',
     "It's hardly a victory in my eyes.": 'victory',
@@ -72,6 +72,7 @@ NEGATIONS = {
     "I don't want to be with you": 'want',
     "I don't want this.": 'want',
 }
+print(len(NEGATIONS))
 #%%
 device = "cuda"
 MODEL_NAME = "gpt2-small"
@@ -86,12 +87,18 @@ def run_experiment(
     initial_layer: int,
     final_layer: int,
 ) -> pd.DataFrame:
-    direction_scores = {}
-    for direction_label in tqdm(DIRECTIONS):
+    direction_scores = []
+    bar = tqdm(DIRECTIONS)
+    for direction_label in bar:
+        bar.set_description(direction_label)
         direction = load_array(direction_label, model)
         direction = torch.tensor(direction, device=device, dtype=torch.float32)
         activations = get_activations_cached(dataloader, direction_label, model)
+        mean = activations[:, :, :11].flatten().mean().item()
         std_dev = activations[:, :, :11].flatten().std().item()
+        print(direction_label, mean, std_dev)
+        raw_scores = []
+        flip_scores = []
         z_scores = []
         for text, word in NEGATIONS.items():
             str_tokens = [tok.strip() for tok in model.to_str_tokens(text)]
@@ -106,11 +113,29 @@ def run_experiment(
                 text_activations[0, word_idx, initial_layer]
             ).item()
             z_score = abs(act_change) / std_dev
+            flip_score = 0.5 * act_change / (
+                mean - text_activations[0, word_idx, initial_layer]
+            )
             z_scores.append(z_score)
-        overall_score = np.mean(z_scores)
-        direction_scores[direction_label] = overall_score
-    df = pd.DataFrame.from_dict(direction_scores, orient="index", columns=["z_score"])
-    df = df.sort_values("z_score", ascending=False)
+            flip_scores.append(flip_score)
+            raw_scores.append(act_change)
+            if flip_score < -30:
+                print(
+                    text, flip_score,
+                    text_activations[0, word_idx, initial_layer],
+                    text_activations[0, word_idx, final_layer],
+                )
+        direction_scores.append([
+            np.mean(raw_scores),
+            np.mean(z_scores),
+            np.mean(flip_scores),
+        ])
+    df = pd.DataFrame(
+        direction_scores,
+        columns=["raw_score", "z_score", "flip_score"],
+        index=DIRECTIONS,
+    )
+    df = df.sort_values("raw_score", ascending=False)
     to_csv(df, "negation_experiment", model)
     return df
 #%%

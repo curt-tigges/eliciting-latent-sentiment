@@ -154,11 +154,19 @@ def plot_bin_proportions(
         ))
     
     fig.update_layout(
-        title=f"Proportion of Sentiment by Activation ({label})",
-        title_x=0.5,
+        title=dict(
+            text=f"Proportion of Sentiment by Activation ({label})",
+            x=0.5,
+            font=dict(
+                size=18
+            ),
+        ),
         showlegend=True,
         xaxis_title="Activation",
         yaxis_title="Cum. Label proportion",
+        font=dict(  # global font settings
+            size=24  # global font size
+        ),
     )
 
     return fig
@@ -177,7 +185,7 @@ for direction_label in DIRECTIONS:
     save_pdf(fig, out_name, model)
     fig.show()
 
-    activations = get_activations_cached(dataloader, direction_label)
+    activations = get_activations_cached(dataloader, direction_label, model)
     positive_threshold = activations[:, :, 1].flatten().quantile(.999).item()
     negative_threshold = activations[:, :, 1].flatten().quantile(.001).item()
 
