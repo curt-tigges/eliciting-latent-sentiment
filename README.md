@@ -10,6 +10,9 @@ We are very grateful to Neel Nanda for his mentorship and the transformer-lens l
 
 SERI MATS provided funding for this research.
 
+#### Cached sentiment direction
+In the data/gpt2-small directory, there is a residual stream direction already computed using DAS and the "simple_train" dataset for each layer, stored as a numpy file.
+
 #### Training the sentiment direction
 In `fit_directions.py`, you can specify 
 * a list of models (e.g. `gpt2-small`)
