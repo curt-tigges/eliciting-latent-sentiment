@@ -11,7 +11,14 @@ results.json
 neel-plotly
 .vscode/
 .ipynb_checkpoints/
-data/
 circuits/
 api_key.txt
 venv/
+
+data/*
+!data/gpt2-small
+
+data/gpt2-small/*
+!data/gpt2-small/*simple_train_ADJ*
+
+data/gpt2-small/*activations.npy
