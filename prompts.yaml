@@ -747,18 +747,18 @@ negative_infinitives:
   - spurn
   - vilify
 
-  positive_answer_infinitives:
+positive_answer_infinitives:
   - love
   - adore
   - like
 
-  negative_answer_infinitives:
+negative_answer_infinitives:
   - hate
   - detest
   - dislike
 
-  yes_answers:
-  - Yes
+yes_answers:
+  - 'Yes'
 
-  no_answers:
-  - No
+no_answers:
+  - 'No'
