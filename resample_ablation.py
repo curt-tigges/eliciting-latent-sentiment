@@ -35,7 +35,7 @@ from tqdm import tqdm
 from path_patching import act_patch, Node, IterNode
 # %% # Model loading
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-MODEL_NAME = 'gpt2-small'
+MODEL_NAME = 'pythia-2.8b'
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     center_unembed=True,
@@ -57,7 +57,7 @@ answer_tokens = clean_corrupt_data.answer_tokens
 # %%
 example_prompt = model.to_str_tokens(clean_tokens[0])
 adj_token = example_prompt.index(' perfect')
-verb_token = example_prompt.index(' loved')
+verb_token = example_prompt.index(' enjoyed')
 s2_token = example_prompt.index(' movie', example_prompt.index(' movie') + 1)
 end_token = len(example_prompt) - 1
 # %%
@@ -100,18 +100,18 @@ clean_cache['blocks.0.attn.hook_z'].device
 # ]
 circuit_heads = [
     # gpt2-small
-    (0, 4),
-    (7, 1),
-    (9, 2),
-    (10, 1),
-    (10, 4),
-    (11, 9),
-    (8, 5),
-    (9, 2),
-    (9, 10),
-    (6, 4),
-    (7, 1),
-    (7, 5),
+    # (0, 4),
+    # (7, 1),
+    # (9, 2),
+    # (10, 1),
+    # (10, 4),
+    # (11, 9),
+    # (8, 5),
+    # (9, 2),
+    # (9, 10),
+    # (6, 4),
+    # (7, 1),
+    # (7, 5),
 
 
 
@@ -121,7 +121,12 @@ circuit_heads = [
 #     (13, 13),
 #     (18, 2),
 #     (21, 0),
+
+# pythia-2.8b
+(17, 19), (22, 5), (14,4), (20, 10), (12, 2), (10, 26), 
+        (12, 4), (12, 17), (14, 2), (13, 20), (9, 29), (11, 16) 
 ]
+
 non_circuit_heads = [
     (layer, head)
     for layer in range(model.cfg.n_layers)
@@ -138,19 +143,19 @@ all_nodes = circuit_nodes + non_circuit_nodes
 # %%
 # gpt2-small
 circuit_heads_positions = [
-    (0, 4, adj_token),
-    (0, 4, verb_token),
-    (7, 1, end_token),
-    (9, 2, end_token),
-    (10, 1, end_token),
-    (10, 4, end_token),
-    (11, 9, end_token),
-    (8, 5, end_token),
-    (9, 2, end_token),
-    (9, 10, end_token),
-    (6, 4, s2_token),
-    (7, 1, s2_token),
-    (7, 5, s2_token),
+    # (0, 4, adj_token),
+    # (0, 4, verb_token),
+    # (7, 1, end_token),
+    # (9, 2, end_token),
+    # (10, 1, end_token),
+    # (10, 4, end_token),
+    # (11, 9, end_token),
+    # (8, 5, end_token),
+    # (9, 2, end_token),
+    # (9, 10, end_token),
+    # (6, 4, s2_token),
+    # (7, 1, s2_token),
+    # (7, 5, s2_token),
 ]
 # pythia-1.4b
 # circuit_heads_positions = [
