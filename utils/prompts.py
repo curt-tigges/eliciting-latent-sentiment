@@ -127,6 +127,9 @@ class PromptType(Enum):
     SIMPLE = "simple"
     SIMPLE_TRAIN = "simple_train"
     SIMPLE_TEST = "simple_test"
+    SIMPLE_RES = "simple_res"
+    SIMPLE_PRODUCT = "simple_product"
+    SIMPLE_BOOK = "simple_book"
     COMPLETION = "completion"
     COMPLETION_2 = "completion_2"
     CLASSIFICATION = "classification"
@@ -157,6 +160,9 @@ class PromptType(Enum):
         if self.is_treebank():
             return None
         prompt_strings = {
+            PromptType.SIMPLE_BOOK: "The novel was{VRB} by the book club members. The comments were universally{ADJ} \nConclusion: You will",
+            PromptType.SIMPLE_RES: "This restaurant is a{NOUN}, you are going to{VRB} it. \nConclusion: This restaurant is",
+            PromptType.SIMPLE_PRODUCT: "I am {FEEL} about this purchase, it is a {ADJ} product. \nConclusion: Should you buy one?",
             PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TRAIN: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TEST: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
@@ -222,9 +228,9 @@ def get_prompts(
     prompt_type: str = "simple", 
 ) -> Tuple[Dict[str, CircularList[str]], Dict[str, CircularList[str]]]:
     # Define output types
-    pos_prompts: CircularList[str]
-    neg_prompts: CircularList[str]
-    neutral_prompts: CircularList[str]
+    pos_prompts: List[str]
+    neg_prompts: List[str]
+    neutral_prompts: Union[List[str], None]
 
     # Read lists from config
     pos_answers: CircularList[str] = prompt_config.get("positive_answer_tokens", model, filter_length=1)
@@ -273,8 +279,35 @@ def get_prompts(
         pos_prompts = [formatter.format(ADV=positive_adverbs[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADV=negative_adverbs[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
         neutral_prompts = None
-        pos_answers = prompt_config.get("positive_moods", model, filter_length=1)
-        neg_answers = prompt_config.get("negative_moods", model, filter_length=1)
+        pos_answers = prompt_config.get("positive_answer_infinitives", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_answer_infinitives", model, filter_length=1)
+    elif prompt_type == PromptType.SIMPLE_BOOK:
+        positive_adjectives = prompt_config.get("positive_comment_adjectives", model, filter_length=1)
+        negative_adjectives = prompt_config.get("negative_comment_adjectives", model, filter_length=1)
+        n_prompts = min(len(positive_adjectives), len(negative_adjectives), len(negative_verbs), len(positive_verbs))
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
+        neutral_prompts = None
+        pos_answers = prompt_config.get("positive_answer_infinitives", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_answer_infinitives", model, filter_length=1)
+    elif prompt_type == PromptType.SIMPLE_RES:
+        positive_nouns = prompt_config.get("positive_nouns", model, filter_length=1)
+        negative_nouns = prompt_config.get("negative_nouns", model, filter_length=1)
+        positive_infinitives = prompt_config.get("positive_infinitives", model, filter_length=1)
+        negative_infinitives = prompt_config.get("negative_infinitives", model, filter_length=1)
+        n_prompts = min(len(positive_nouns), len(negative_nouns), len(negative_infinitives), len(positive_infinitives))
+        pos_prompts = [formatter.format(NOUN=positive_nouns[i], VRB=positive_infinitives[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(NOUN=negative_nouns[i], VRB=negative_infinitives[i]) for i in range(n_prompts)]
+        neutral_prompts = None
+    elif prompt_type == PromptType.SIMPLE_PRODUCT:
+        positive_feelings = prompt_config.get("positive_feelings", model, filter_length=1)
+        negative_feelings = prompt_config.get("negative_feelings", model, filter_length=1)
+        n_prompts = min(len(positive_feelings), len(negative_feelings), len(negative_adjectives), len(positive_adjectives))
+        pos_prompts = [formatter.format(ADJ=positive_adjectives[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], FEEL=negative_adjectives[i]) for i in range(n_prompts)]
+        neutral_prompts = None
+        pos_answers = prompt_config.get("yes_answers", model, filter_length=1)
+        neg_answers = prompt_config.get("no_answers", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_ADVERB:
         positive_adverbs = prompt_config.get("positive_adverbs", model, filter_length=2)
         negative_adverbs = prompt_config.get("negative_adverbs", model, filter_length=2)
