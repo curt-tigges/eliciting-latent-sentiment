@@ -19,6 +19,6 @@ data/*
 !data/gpt2-small
 
 data/gpt2-small/*
-!data/gpt2-small/*simple_train_ADJ*.npy
+!data/gpt2-small/das_simple_train_ADJ*.npy
 
 data/gpt2-small/*activations.npy
