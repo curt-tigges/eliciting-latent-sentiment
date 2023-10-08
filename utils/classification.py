@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple, Union
 import einops
 from jaxtyping import Int, Float
 from torch import Tensor
@@ -58,9 +58,9 @@ def split_by_label(
 def get_accuracy(
     predicted_positive: Iterable[str],
     predicted_negative: Iterable[str],
-    actual_positive: Iterable[str],
-    actual_negative: Iterable[str],
-) -> Tuple[str, int, int, float]:
+    actual_positive: List[str],
+    actual_negative: List[str],
+) -> Tuple[int, int, float]:
     correct = (
         len(set(predicted_positive) & set(actual_positive)) +
         len(set(predicted_negative) & set(actual_negative))
@@ -71,20 +71,27 @@ def get_accuracy(
 
 
 def _fit(
-    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
-    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
+    train_data: ResidualStreamDataset, 
+    train_pos: Union[str, None], 
+    train_layer: int,
+    test_data: Union[ResidualStreamDataset, None], 
+    test_pos: Union[str, None], 
+    test_layer: int,
     n_init: int = 10,
     n_clusters: int = 2,
     random_state: int = 0,
-    n_components: int = None,
+    n_components: Optional[int] = None,
     method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
         train_pos, train_layer
     )
-    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
-        test_pos, test_layer
-    )
+    if test_data is None:
+        test_embeddings = train_embeddings
+    else:
+        test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
+            test_pos, test_layer
+        )
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
@@ -253,8 +260,8 @@ def _fit_logistic_regression(
 
 
 def train_classifying_direction(
-    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
-    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
+    train_data: ResidualStreamDataset, train_pos: Union[str, None], train_layer: int,
+    test_data: Union[ResidualStreamDataset, None], test_pos: Union[str, None], test_layer: int,
     method: ClassificationMethod,
     **kwargs,
 ):
