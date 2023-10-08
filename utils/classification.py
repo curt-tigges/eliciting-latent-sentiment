@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Iterable, List, Optional, Tuple, Union
+from typing import Iterable, List, Literal, Optional, Tuple, Union
 import einops
 from jaxtyping import Int, Float
 from torch import Tensor
@@ -13,6 +13,9 @@ import warnings
 from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
 from utils.methods import FittingMethod
+
+
+SOLVER_TYPE = Literal['lbfgs', 'liblinear', 'newton-cg', 'newton-cholesky', 'sag', 'saga']
 
 
 class ClassificationMethod(FittingMethod):
@@ -83,6 +86,7 @@ def _fit(
     n_components: Optional[int] = None,
     method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
+    assert train_data is not None
     if test_data is None:
         test_data = train_data
     if test_layer is None:
@@ -231,12 +235,20 @@ def _fit(
 
 def _fit_logistic_regression(
     train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
-    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
+    test_data: Optional[ResidualStreamDataset], 
+    test_pos: Optional[str], 
+    test_layer: Optional[int],
     random_state: int = 0,
-    solver: str = 'liblinear',
+    solver: SOLVER_TYPE = 'liblinear',
     max_iter: int = 1000,
     tol: float = 1e-4,  
 ):
+    if test_data is None:
+        test_data = train_data
+    if test_layer is None:
+        test_layer = train_layer
+    if test_pos is None:
+        test_pos = train_pos
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
         train_pos, train_layer
     )
@@ -255,7 +267,7 @@ def _fit_logistic_regression(
     )
     test_labels = test_data.binary_labels
     total = len(test_labels)
-    accuracy = lr.score(test_embeddings, test_labels)
+    accuracy = lr.score(test_embeddings.numpy(), test_labels)
     correct = int(accuracy * total)
     line = lr.coef_[0, :]
     return line, correct, total, accuracy
@@ -286,11 +298,14 @@ def train_classifying_direction(
                 test_data, test_pos, test_layer,
                 **kwargs,
             )
-            test_line, _, _, _ = fitting_method(
-                test_data, test_pos, test_layer,
-                test_data, test_pos, test_layer,
-                **kwargs,
-            )
+            if test_data is None:
+                test_data = train_data
+            else:
+                test_line, _, _, _ = fitting_method(
+                    test_data, test_pos, test_layer,
+                    test_data, test_pos, test_layer,
+                    **kwargs,
+                )
         except ConvergenceWarning:
             print(
                 f"Convergence warning for {method.value}; "
