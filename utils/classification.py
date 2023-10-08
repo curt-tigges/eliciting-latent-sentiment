@@ -299,7 +299,7 @@ def train_classifying_direction(
                 **kwargs,
             )
             if test_data is None:
-                test_data = train_data
+                test_line = train_line
             else:
                 test_line, _, _, _ = fitting_method(
                     test_data, test_pos, test_layer,
