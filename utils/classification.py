@@ -74,30 +74,29 @@ def _fit(
     train_data: ResidualStreamDataset, 
     train_pos: Union[str, None], 
     train_layer: int,
-    test_data: Union[ResidualStreamDataset, None], 
-    test_pos: Union[str, None], 
-    test_layer: int,
+    test_data: Optional[ResidualStreamDataset], 
+    test_pos: Optional[str], 
+    test_layer: Optional[int],
     n_init: int = 10,
     n_clusters: int = 2,
     random_state: int = 0,
     n_components: Optional[int] = None,
     method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
+    if test_data is None:
+        test_data = train_data
+    if test_layer is None:
+        test_layer = train_layer
+    if test_pos is None:
+        test_pos = train_pos
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
         train_pos, train_layer
     )
-    if test_data is None:
-        test_embeddings = train_embeddings
-    else:
-        test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
-            test_pos, test_layer
-        )
+    test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
+        test_pos, test_layer
+    )
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
-    if test_data is None:
-        test_positive_str_labels = train_positive_str_labels
-        test_negative_str_labels = train_negative_str_labels
-    else:
-        test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
+    test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
     kmeans = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
     if method == ClassificationMethod.KMEANS or method == ClassificationMethod.MEAN_DIFF:
         kmeans.fit(train_embeddings)
