@@ -92,24 +92,27 @@ neutral_answer_tokens:
   - ok
   - decent
 
+positive_very_answers:
+  - good
+  - nice
+  - well
+
+negative_very_answers:
+  - bad
+  - poor
+  - disappointing
+
 positive_moods:
   - happy
+  - good
+  - comfortable
   - excited
-  - delighted
-  - pleased
-  - smiling
-  - satisfied
-  - glad
 
 negative_moods:
   - sad
+  - bad
+  - uncomfortable
   - scared
-  - terrible
-  - terrified
-  - morbid
-  - guilty
-  - suffering
-
 
 positive_adverbs:
   - amusingly
@@ -758,7 +761,13 @@ negative_answer_infinitives:
   - dislike
 
 yes_answers:
-  - 'Yes'
+  - 'yes'
 
 no_answers:
-  - 'No'
+  - 'no'
+
+positive_answer_adjectives:
+  - pleased
+
+negative_answer_adjectives:
+  - disappointed

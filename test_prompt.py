@@ -7,19 +7,44 @@ from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from transformer_lens.utils import test_prompt, get_act_name
 from utils.store import load_array
+from utils.prompts import get_dataset, PromptType
 import tqdm
 import itertools
 #%%
-device = "cpu"
-MODEL_NAME = "gpt2-small"
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 model = HookedTransformer.from_pretrained(
-    MODEL_NAME,
+    "gpt2-small",
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
     device=device,
 )
-model.name = MODEL_NAME
+#%%
+dataset = get_dataset(
+    model, device, 
+    prompt_type=PromptType.SIMPLE_PRODUCT
+)
+#%%
+batch_index = 0
+test_prompt(
+    model.to_string(dataset.clean_tokens[batch_index]),
+    model.to_string(dataset.answer_tokens[batch_index, 0, 0]),
+    model=model,
+)
+#%%
+test_prompt(
+    '<|endoftext|>The novel was admired by the book club members. The comments were universally approving \nConclusion: You will be very',
+    model.to_string(dataset.answer_tokens[1, 0, 0]),
+    model=model,
+)
+#%%
+test_prompt(
+    '<|endoftext|>The novel was condemned by the book club members. The comments were universally critical \nConclusion: You will be very',
+    model.to_string(dataset.answer_tokens[1, 0, 0]),
+    model=model,
+)
+#%%
+
 #%%
 test_prompt("The traveller{ADV} walked to their destination. The traveller felt very".format(ADV=" excitedly"), "happy", model)
 #%%

@@ -8,18 +8,21 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 from jaxtyping import Float, Int, Bool
-from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union, TypeVar
 from typeguard import typechecked
 import einops
 from enum import Enum
 import re
 from tqdm.auto import tqdm
+from collections import UserList
 from utils.store import load_pickle
 from utils.circuit_analysis import (
     get_logit_diff, get_prob_diff, center_logit_diffs, 
     get_accuracy_from_logit_diffs,
     get_final_non_pad_token,
 )
+
+T = TypeVar("T")
 
 
 class ReviewScaffold(Enum):
@@ -82,7 +85,7 @@ def truncate_words_by_length(model: HookedTransformer, words: list, length: int,
     return new_words
 
 
-class CircularList(list):
+class CircularList(UserList[T]):
     def __getitem__(self, index):
         if isinstance(index, slice):
             start, stop, step = index.indices(len(self))
@@ -101,8 +104,8 @@ class PromptsConfig:
         self, 
         key: str, 
         model: HookedTransformer, 
-        filter_length: int = None, 
-        truncate_length: int = None,
+        filter_length: Optional[int] = None, 
+        truncate_length: Optional[int] = None,
         drop_duplicates: bool = True,
         prepend_space: bool = True, 
         verbose: bool = False,
@@ -137,7 +140,6 @@ class PromptType(Enum):
     CLASSIFICATION_3 = "classification_3"
     CLASSIFICATION_4 = "classification_4"
     RES_CLASS_1 = "res_class_1"
-    SIMPLE_MOOD = "simple_mood"
     SIMPLE_ADVERB = "simple_adverb"
     SIMPLE_FRENCH = "simple_french"
     PROPER_NOUNS = "proper_nouns"
@@ -160,13 +162,12 @@ class PromptType(Enum):
         if self.is_treebank():
             return None
         prompt_strings = {
-            PromptType.SIMPLE_BOOK: "The novel was{VRB} by the book club members. The comments were universally{ADJ} \nConclusion: You will",
-            PromptType.SIMPLE_RES: "This restaurant is a{NOUN}, you are going to{VRB} it. \nConclusion: This restaurant is",
-            PromptType.SIMPLE_PRODUCT: "I am {FEEL} about this purchase, it is a {ADJ} product. \nConclusion: Should you buy one?",
+            PromptType.SIMPLE_BOOK: "The novel was{VRB} by the book club members. The comments were universally{ADJ} \nConclusion: You will be very",
+            PromptType.SIMPLE_RES: "This restaurant is a{NOUN}, you are going to{VRB} it. \nConclusion: This restaurant is very",
+            PromptType.SIMPLE_PRODUCT: "I am{FEEL} about this purchase, the product is{ADJ}. \nConclusion: I feel very",
             PromptType.SIMPLE: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TRAIN: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
             PromptType.SIMPLE_TEST: "I thought this movie was{ADJ}, I{VRB} it. \nConclusion: This movie is",
-            PromptType.SIMPLE_MOOD: "The traveller was{ADV} walking to their destination. Upon arrival, they felt{FEEL}. \nConclusion: The traveller is",
             PromptType.SIMPLE_ADVERB: "The traveller{ADV} walked to their destination. The traveller felt very",
             PromptType.SIMPLE_FRENCH: "Je pensais que ce film était{ADJ}, je l'ai{VRB}. \nConclusion: Ce film est très",
             PromptType.PROPER_NOUNS: "When I hear the name{NOUN}, I feel very",
@@ -204,9 +205,9 @@ class PromptType(Enum):
         Handles whether the placeholder is a single token or multi-token.
         Example output: {'ADJ': [4, 5], 'VRB': [8]}
         '''
-        if self.is_treebank():
-            return {}
         format_string = self.get_format_string()
+        if format_string is None or self.is_treebank():
+            return {}
         format_idx = 0
         curr_sub_token = None
         out = dict()
@@ -225,8 +226,8 @@ prompt_config = PromptsConfig()
 
 def get_prompts(
     model: HookedTransformer,
-    prompt_type: str = "simple", 
-) -> Tuple[Dict[str, CircularList[str]], Dict[str, CircularList[str]]]:
+    prompt_type: PromptType = PromptType.SIMPLE, 
+) -> Tuple[Dict[str, List[str]], Dict[str, CircularList[str]]]:
     # Define output types
     pos_prompts: List[str]
     neg_prompts: List[str]
@@ -248,6 +249,7 @@ def get_prompts(
     # Get prompt type/format
     prompt_type = PromptType(prompt_type)
     formatter = prompt_type.get_format_string()
+    assert formatter is not None
 
     if prompt_type == PromptType.SIMPLE:
         n_prompts = min(len(positive_adjectives), len(negative_adjectives))
@@ -270,17 +272,6 @@ def get_prompts(
         neutral_prompts = None
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
-    elif prompt_type == PromptType.SIMPLE_MOOD:
-        positive_feelings: CircularList[str] = prompt_config.get("positive_feelings", model, filter_length=1)
-        negative_feelings: CircularList[str] = prompt_config.get("negative_feelings", model, filter_length=1)
-        positive_adverbs: CircularList[str] = prompt_config.get("positive_adverbs", model, filter_length=2)
-        negative_adverbs: CircularList[str] = prompt_config.get("negative_adverbs", model, filter_length=2)
-        n_prompts = min(len(positive_adverbs), len(positive_feelings), len(negative_adverbs), len(negative_feelings))
-        pos_prompts = [formatter.format(ADV=positive_adverbs[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
-        neg_prompts = [formatter.format(ADV=negative_adverbs[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
-        neutral_prompts = None
-        pos_answers = prompt_config.get("positive_answer_infinitives", model, filter_length=1)
-        neg_answers = prompt_config.get("negative_answer_infinitives", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_BOOK:
         positive_adjectives = prompt_config.get("positive_comment_adjectives", model, filter_length=1)
         negative_adjectives = prompt_config.get("negative_comment_adjectives", model, filter_length=1)
@@ -288,8 +279,8 @@ def get_prompts(
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], VRB=positive_verbs[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], VRB=negative_verbs[i]) for i in range(n_prompts)]
         neutral_prompts = None
-        pos_answers = prompt_config.get("positive_answer_infinitives", model, filter_length=1)
-        neg_answers = prompt_config.get("negative_answer_infinitives", model, filter_length=1)
+        pos_answers = prompt_config.get("positive_answer_adjectives", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_answer_adjectives", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_RES:
         positive_nouns = prompt_config.get("positive_nouns", model, filter_length=1)
         negative_nouns = prompt_config.get("negative_nouns", model, filter_length=1)
@@ -299,15 +290,17 @@ def get_prompts(
         pos_prompts = [formatter.format(NOUN=positive_nouns[i], VRB=positive_infinitives[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(NOUN=negative_nouns[i], VRB=negative_infinitives[i]) for i in range(n_prompts)]
         neutral_prompts = None
+        pos_answers = prompt_config.get("positive_very_answers", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_very_answers", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_PRODUCT:
         positive_feelings = prompt_config.get("positive_feelings", model, filter_length=1)
         negative_feelings = prompt_config.get("negative_feelings", model, filter_length=1)
         n_prompts = min(len(positive_feelings), len(negative_feelings), len(negative_adjectives), len(positive_adjectives))
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
-        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], FEEL=negative_adjectives[i]) for i in range(n_prompts)]
+        neg_prompts = [formatter.format(ADJ=negative_adjectives[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
         neutral_prompts = None
-        pos_answers = prompt_config.get("yes_answers", model, filter_length=1)
-        neg_answers = prompt_config.get("no_answers", model, filter_length=1)
+        pos_answers = prompt_config.get("positive_moods", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_moods", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_ADVERB:
         positive_adverbs = prompt_config.get("positive_adverbs", model, filter_length=2)
         negative_adverbs = prompt_config.get("negative_adverbs", model, filter_length=2)
@@ -374,6 +367,8 @@ def get_prompts(
             formatter.format(ADJ1=neutral_adjectives[i], ADJ2=neutral_adjectives[i + 1], ADJ3=neutral_adjectives[i + 2], ADJ4=neutral_top_adjectives[i], VRB=neutral_verbs[i])
             for i in range(n_prompts)
         ]
+        pos_answers = CircularList([" Positive"])
+        neg_answers = CircularList([" Negative"])
     elif prompt_type == PromptType.MULTI_SUBJECT_1:
         n_prompts = min(len(positive_adjectives), len(negative_adjectives))
         pos_prompts = [
@@ -466,11 +461,13 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         )
     
     def get_num_pad_tokens(self) -> Int[Tensor, "batch"]:
+        assert self.tokenizer is not None
         return (
             self.clean_tokens == self.tokenizer.pad_token_id
         ).sum(dim=1)
     
     def get_num_non_pad_tokens(self) -> Int[Tensor, "batch"]:
+        assert self.tokenizer is not None
         return (
             self.clean_tokens == self.tokenizer.pad_token_id
         ).sum(dim=1)
@@ -479,7 +476,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         num_pad_tokens = self.get_num_non_pad_tokens()
         indices = torch.where(
             (num_pad_tokens >= min_tokens) & (num_pad_tokens <= max_tokens)
-        )[0]
+        )[0].tolist()
         return self.get_subset(indices)
     
     def shuffle(self, seed: int = 0):
@@ -519,8 +516,8 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         model: HookedTransformer, 
         batch_size: int,
         requires_grad: bool = True,
-        device: torch.device = None,
-        disable_tqdm: bool = None,
+        device: Optional[torch.device] = None,
+        disable_tqdm: Optional[bool] = None,
         dtype: torch.dtype = torch.float32,
         center: bool = True,
     ):
@@ -541,8 +538,8 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         names_filter: Callable, 
         batch_size: int,
         requires_grad: bool = True,
-        device: torch.device = None,
-        disable_tqdm: bool = None,
+        device: Optional[torch.device] = None,
+        disable_tqdm: Optional[bool] = None,
         dtype: torch.dtype = torch.float32,
         center: bool = True,
     ):
@@ -585,6 +582,8 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             corrupted_tokens = corrupted_tokens.to(device)
             clean_tokens = clean_tokens.to(device)
             answer_tokens = answer_tokens.to(device)
+            clean_logits: Float[Tensor, "batch pos d_vocab"]
+            corrupted_logits: Float[Tensor, "batch pos d_vocab"]
             with torch.inference_mode():
                 # update bar description
                 bar.set_description(
@@ -593,7 +592,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 # corrupted forward pass
                 corrupted_logits, corrupted_cache = model.run_with_cache(
                     corrupted_tokens, names_filter=names_filter
-                )
+                ) # type: ignore
                 corrupted_cache.to('cpu')
 
                 # clean forward pass
@@ -602,7 +601,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
                 )
                 clean_logits, clean_cache = model.run_with_cache(
                     clean_tokens, names_filter=names_filter
-                )
+                ) # type: ignore
                 clean_cache.to('cpu')
 
                 # Initialise the buffer tensors if necessary
@@ -711,7 +710,7 @@ class CleanCorruptedCacheResults:
             f"  corrupted_prob_diff={self.corrupted_prob_diff:.2f},\n"
             f"  clean_prob_diff={self.clean_prob_diff:.2f},\n"
             f"  clean_accuracy={self.clean_accuracy:.1%},\n"
-            f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n",
+            f"  corrupted_accuracy={self.corrupted_accuracy:.1%},\n"
             f"  length={len(self.dataset)}"
             f")"
         )
@@ -737,10 +736,10 @@ class CleanCorruptedCacheResults:
 def get_dataset(
     model: HookedTransformer, 
     device: torch.device,
-    n_pairs: int = None,
-    prompt_type: str = "simple",
+    n_pairs: Optional[int] = None,
+    prompt_type: PromptType = PromptType.SIMPLE,
     comparison: Tuple[str, str] = ("positive", "negative"),
-    scaffold: ReviewScaffold = None,
+    scaffold: Optional[ReviewScaffold] = None,
 ) -> CleanCorruptedDataset:
     prompt_type = PromptType(prompt_type)
     if prompt_type in (
@@ -788,6 +787,7 @@ def get_dataset(
     corrupted_tokens = model.to_tokens(
         all_prompts[1:] + [all_prompts[0]], prepend_bos=True
     ).to(device)
+    assert model.tokenizer is not None
     assert (clean_tokens[:, -1] != model.tokenizer.bos_token_id).all(), (
         "Last token in prompt should not be BOS token, "
         "this suggests inconsistent prompt lengths."
@@ -817,7 +817,7 @@ def get_onesided_datasets(
     model: HookedTransformer, 
     device: torch.device,
     n_answers: int = 1,
-    prompt_type: str = "simple",
+    prompt_type: PromptType = PromptType.SIMPLE,
     dataset_sentiments: list = ["positive", "negative"],
     answer_sentiment: str = "positive",
 ):
@@ -826,8 +826,6 @@ def get_onesided_datasets(
         list of the token (ie an integer) corresponding to each answer, 
         in the format (correct_token, incorrect_token)
     '''
-    assert prompt_type in ["simple", "completion", "classification"]
-    
     prompt_str_dict, answers_dict = get_prompts(
         model, prompt_type
     )
@@ -846,7 +844,7 @@ def get_onesided_datasets(
         s:prompts_dict[s][:n_prompts] for s in dataset_sentiments
     }
 
-    answers = answers or answers_dict[answer_sentiment]
+    answers = answers_dict[answer_sentiment]
     assert len(answers) >= n_answers
     answers = torch.tensor([int(model.to_single_token(a)) for a in answers[:n_answers]])
     answer_list = [answers for _ in range(n_prompts)]
@@ -860,7 +858,7 @@ def get_onesided_datasets(
 def get_ccs_dataset(
     model: HookedTransformer,
     device: torch.device,
-    prompt_type: str = "classification_4",
+    prompt_type: PromptType = PromptType.CLASSIFICATION_4,
     pos_answers: List[str] = [" Positive"],
     neg_answers: List[str] = [" Negative"],
 ) -> Tuple[
@@ -873,7 +871,6 @@ def get_ccs_dataset(
 ]:
     clean_corrupt_data: CleanCorruptedDataset = get_dataset(
         model, device, n_pairs=1, prompt_type=prompt_type, 
-        pos_answers=pos_answers, neg_answers=neg_answers,
     )
     answer_tokens: Int[Tensor, "batch 2"] = clean_corrupt_data.answer_tokens.squeeze(1)
     possible_answers = answer_tokens[0]
