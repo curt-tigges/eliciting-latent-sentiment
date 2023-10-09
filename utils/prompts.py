@@ -540,6 +540,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         requires_grad: bool = True,
         device: Optional[torch.device] = None,
         disable_tqdm: Optional[bool] = None,
+        leave_tqdm: bool = False,
         dtype: torch.dtype = torch.float32,
         center: bool = True,
     ):
@@ -573,7 +574,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         clean_dict = dict()
         if disable_tqdm is None:
             disable_tqdm = len(dataloader) == 1
-        bar = tqdm(dataloader, disable=disable_tqdm)
+        bar = tqdm(dataloader, disable=disable_tqdm, leave=leave_tqdm)
         bar.set_description(
             f"Running with cache: model={model.cfg.model_name}, "
             f"batch_size={batch_size}"
