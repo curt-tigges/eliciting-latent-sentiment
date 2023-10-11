@@ -15,7 +15,7 @@ from plotly.subplots import make_subplots
 import torch
 from torch import Tensor
 from transformer_lens import ActivationCache, HookedTransformer, utils
-from typing import Dict, Iterable, Tuple, Union, List, Optional, Callable
+from typing import Dict, Iterable, Literal, Tuple, Union, List, Optional, Callable
 from functools import partial
 from IPython.display import display, HTML
 from tqdm.notebook import tqdm
@@ -30,23 +30,24 @@ pio.renderers.default = "notebook"
 #%% # Global Settings
 USE_CACHE = False
 ALL_LAYERS = False
+PROJ = "ortho"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    # 'gpt2-small',
+    'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
-    'EleutherAI/pythia-160m',
-    'EleutherAI/pythia-410m',
-    'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-160m',
+    # 'EleutherAI/pythia-410m',
+    # 'EleutherAI/pythia-1.4b',
+    # 'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
-    # 'mean_diff_simple_train_ADJ*.npy',
+    'mean_diff_simple_*.npy',
+    'logistic_regression_simple_*.npy',
+    'das_simple_*.npy',
     # 'pca_simple_train_ADJ*.npy',
-    'kmeans_simple_train_ADJ*.npy',
-    'logistic_regression_simple_train_ADJ*.npy',
-    'das_simple_train_ADJ_layer*.npy',
+    # 'kmeans_simple_train_ADJ*.npy',
     # 'das2d_simple_train_ADJ*.npy',
     # 'das3d_simple_train_ADJ*.npy',
     # 'random_direction_layer*.npy',
@@ -54,11 +55,13 @@ DIRECTION_GLOBS = [
 ]
 PROMPT_TYPES = [
     # PromptType.SIMPLE_TEST,
-    PromptType.TREEBANK_TEST,
-    # PromptType.SIMPLE_TRAIN,
+    # PromptType.TREEBANK_TEST,
+    PromptType.SIMPLE_ADVERB,
+    PromptType.SIMPLE_BOOK,
+    PromptType.SIMPLE_PRODUCT,
+    PromptType.SIMPLE_RES,
+    PromptType.SIMPLE_TRAIN,
     # PromptType.COMPLETION,
-    # PromptType.SIMPLE_ADVERB,
-    # PromptType.SIMPLE_MOOD,
     # PromptType.SIMPLE_FRENCH,
 ]
 SCAFFOLD = ReviewScaffold.CONTINUATION
@@ -77,7 +80,6 @@ def get_model(name: str) -> HookedTransformer:
         fold_ln=True,
         device=device,
     )
-    model.name = name
     model.set_use_attn_result(True)
     return model
 #%% # Direction loading
@@ -88,7 +90,8 @@ def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str
         path
         for glob_str in DIRECTION_GLOBS
         for path in glob.glob(os.path.join('data', model_name, glob_str))
-        if "None" not in path and "_all_" not in path and "_activations" not in path
+        if "None" not in path and "_all_" not in path and "_activations" not in path and '_ALL_' not in path
+        and 'french' not in path # FIXME: remove this
     ]
     direction_labels = [os.path.split(path)[-1] for path in direction_paths]
     del direction_paths
@@ -133,7 +136,7 @@ FN_OF_ANSWERS = Callable[
 #%%
 def batched_act_patch(
     model: HookedTransformer,
-    orig_input: Union[str, List[str], Int[Tensor, "batch seq_len"]],
+    orig_input: Int[Tensor, "batch seq_len"],
     patching_nodes: Union[IterNode, Node, List[Node]],
     patching_metric: FN_OF_ANSWERS,
     answer_tokens: Int[Tensor, "batch pair correct"],
@@ -147,12 +150,13 @@ def batched_act_patch(
     was_grad_enabled = torch.is_grad_enabled()
     torch.set_grad_enabled(False)
     device = model.cfg.device
-    result = 0
+    result: Float[Tensor, ""] = torch.tensor([0], device=device, dtype=torch.float32)
     bar = tqdm(
         enumerate(range(0, len(orig_input), batch_size)),
         total=len(orig_input) // batch_size,
         disable=disable,
     )
+    batch_idx = 0
     for batch_idx, start_idx in bar:
         end_idx = min(start_idx + batch_size, len(orig_input))
         batch_orig_input = orig_input[start_idx:end_idx].to(device=device)
@@ -271,7 +275,7 @@ def get_dataset_cached(
     if key in dataset_cache:
         return dataset_cache[key]
     clean_corrupt_data = get_dataset(
-        model, "cpu", prompt_type=prompt_type, scaffold=scaffold
+        model, torch.device("cpu"), prompt_type=prompt_type, scaffold=scaffold
     )
 
     # FIXME: need to uncomment if using max_tokens
@@ -292,9 +296,9 @@ def get_result_cached(
     direction_label: str, 
     direction: Float[Tensor, "d_model"],
     model: HookedTransformer,
-    device: torch.device = None,
+    device: Optional[torch.device] = None,
     batch_size: int = 16,
-    heads: List[Tuple[int]] = None,
+    heads: Optional[List[Tuple[int]]] = None,
     scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
     center: bool = True,
     all_layers: bool = True,
@@ -340,9 +344,9 @@ def get_results_for_direction_and_position(
     direction_label: str, 
     direction: Float[Tensor, "d_model"],
     model: HookedTransformer,
-    device: torch.device = None,
+    device: Optional[torch.device] = None,
     batch_size: int = 16,
-    heads: List[Tuple[int]] = None,
+    heads: Optional[List[Tuple[int]]] = None,
     scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
     center: bool = True,
     all_layers: bool = True,
@@ -434,17 +438,19 @@ def get_results_for_metric(
     direction_labels: List[str], 
     directions: List[Float[Tensor, "d_model"]],
     model: HookedTransformer,
-    device: torch.device = None,
-    heads: List[Tuple[int]] = None,
+    device: Optional[torch.device] = None,
+    heads: Optional[List[Tuple[int]]] = None,
     disable_tqdm: bool = False,
     scaffold: ReviewScaffold = ReviewScaffold.PLAIN,
     batch_size: int = 16,
     all_layers: bool = True,
+    proj: Optional[Literal["para", "ortho"]] = None,
 ) -> Float[pd.DataFrame, "direction prompt"]:
     use_heads_label = "resid" if heads is None else "attn_result"
     metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
+    proj_label = "" if proj is None else f"_{proj}"
     csv_path = (
-        f"direction_patching_{metric_label}_{use_heads_label}_{scaffold.value}.csv"
+        f"direction_patching_{metric_label}_{use_heads_label}_{scaffold.value}{proj_label}.csv"
     )
     # if use_cache and is_file(csv_path, model):
     #     return get_csv(csv_path, model, index_col=0, header=[0, 1])
@@ -454,24 +460,78 @@ def get_results_for_metric(
         disable=disable_tqdm,
     )
     results = pd.DataFrame(index=direction_labels, dtype=float)
-    for prompt_type, (direction_label, direction) in bar:
-        bar.set_description(f"{prompt_type.value} {direction_label} batch_size={batch_size}")
+    results.index = results.index.str.replace(".npy", f"{proj_label}.npy")
+    for prompt_type, (direction_label, raw_direction) in bar:
+        direction = raw_direction.clone()
+        bar.set_description(f"{prompt_type.value} {direction_label}, batch_size={batch_size}, proj={PROJ}")
+        match = re.match(DIRECTION_PATTERN, direction_label)
+        assert match is not None, (
+            f"Direction label {direction_label} does not match pattern {DIRECTION_PATTERN}"
+        )
+        method, _, _, layer = match.groups()
+        if proj is not None:
+            base_direction_label = [
+                label for label in direction_labels
+                if prompt_type.value in label and method in label and layer in label
+            ]
+            assert len(base_direction_label) == 1, (
+                f"Could not find base direction for {direction_label}. "
+                f"Found {base_direction_label}. "
+                f"Prompt type {prompt_type.value}, method {method}, layer {layer}."
+
+            )
+            base_direction_label = base_direction_label[0]
+            insample = base_direction_label == direction_label
+            will_zero = insample and (proj == "ortho")
+            base_direction = directions[direction_labels.index(base_direction_label)].clone()
+            base_direction /= base_direction.norm(keepdim=True)
+            direction /= direction.norm(keepdim=True)
+            assert np.isclose(direction.norm().item(), 1.0)
+            assert np.isclose(base_direction.norm().item(), 1.0)
+            if proj == "para":
+                direction = base_direction * (base_direction @ direction)
+            elif will_zero:
+                direction = torch.zeros_like(direction)
+            elif proj == "ortho":
+                direction -= base_direction * (base_direction @ direction)
+            else:
+                raise ValueError(f"Unknown projection {proj}")
+            direction_label = direction_label.replace(".npy", f"{proj_label}.npy")
+            if direction.norm() > 0:
+                direction /= direction.norm(keepdim=True)
+                assert np.isclose(
+                    direction.norm().item(), 1.0
+                ), (
+                    f"Projected direction {direction_label} has norm {direction.norm()}"
+                )
+            assert not torch.isnan(direction).any()
+            
+        assert direction_label in results.index, (
+            f"Direction label {direction_label} not in results index"
+        )
         # placeholders = prompt_type.get_placeholders() + ['ALL']
         placeholders = ['ALL']
         for position in placeholders:
             column = pd.MultiIndex.from_tuples([(prompt_type.value, position)], names=['prompt', 'position'])
-            result = get_result_cached(
-                patching_metric_base=patching_metric_base, 
-                prompt_type=prompt_type,
-                position=position,
-                direction_label=direction_label,
-                direction=direction,
-                model=model,
-                device=device,
-                heads=heads,
-                scaffold=scaffold,
-                batch_size=batch_size,
-                all_layers=all_layers,
+            if (direction != 0).any():
+                result = get_result_cached(
+                    patching_metric_base=patching_metric_base, 
+                    prompt_type=prompt_type,
+                    position=position,
+                    direction_label=direction_label,
+                    direction=direction,
+                    model=model,
+                    device=device,
+                    heads=heads,
+                    scaffold=scaffold,
+                    batch_size=batch_size,
+                    all_layers=all_layers,
+                )
+            else:
+                result = 0
+            assert not np.isnan(result), (
+                f"Result is nan for {prompt_type.value}, {position}, "
+                f"direction_label={direction_label}, direction={direction}"
             )
             # Ensure the column exists
             if (prompt_type.value, position) not in results.columns:
@@ -540,9 +600,8 @@ for model_name, metric, use_heads in model_metric_bar:
         metric, PROMPT_TYPES, DIRECTION_LABELS, DIRECTIONS, model, device, heads, 
         scaffold=SCAFFOLD, batch_size=batch_size,
         all_layers=ALL_LAYERS,
+        proj=PROJ,
     )
     print(results)
-#%%
-results
 #%%
 
