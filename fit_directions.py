@@ -34,30 +34,34 @@ from utils.methods import FittingMethod
 #%%
 # ============================================================================ #
 # model loading
-SKIP_IF_EXISTS = True
+SKIP_IF_EXISTS = False
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODELS = [
-    # 'gpt2-small',
+    'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
     # 'gpt2-xl',
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
     # 'EleutherAI/pythia-1.4b',
-    'EleutherAI/pythia-2.8b',
+    # 'EleutherAI/pythia-2.8b',
 ]
 METHODS = [
     # ClassificationMethod.KMEANS,
     # ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
-    # ClassificationMethod.MEAN_DIFF,
-    # ClassificationMethod.LOGISTIC_REGRESSION,
+    ClassificationMethod.MEAN_DIFF,
+    ClassificationMethod.LOGISTIC_REGRESSION,
     GradientMethod.DAS,
     # GradientMethod.DAS2D,
     # GradientMethod.DAS3D,
 ]
 TRAIN_TYPES = [
     PromptType.SIMPLE_TRAIN,
+    PromptType.SIMPLE_ADVERB,
+    PromptType.SIMPLE_BOOK,
+    PromptType.SIMPLE_RES,
+    PromptType.SIMPLE_PRODUCT,
     # PromptType.CLASSIFICATION_4,
     # PromptType.SIMPLE_ADVERB,
     # PromptType.SIMPLE_MOOD,
@@ -91,7 +95,6 @@ def get_model(name: str):
         fold_ln=True,
         device=device,
     ).requires_grad_(False)
-    model.name = name
     return model
 #%%
 def select_layers(
@@ -166,7 +169,6 @@ def select_layers(
 #%%
 # ============================================================================ #
 # Training loop
-MAX_LAYERS = 12
 BAR = tqdm(
     itertools.product(MODELS, TRAIN_TYPES, TEST_TYPES, METHODS),
     total=len(TRAIN_TYPES) * len(TEST_TYPES) * len(MODELS) * len(METHODS),
@@ -179,7 +181,7 @@ for model_name, train_type, test_type, method in BAR:
         f"testset:{test_type.value},"
         f"method:{method.value}"
     )
-    if model is None or model.name != model_name:
+    if model is None or model.cfg.model_name != model_name:
         del model
         model = get_model(model_name)
     if 'test' in train_type.value:
@@ -191,7 +193,11 @@ for model_name, train_type, test_type, method in BAR:
         train_placeholders = ["ALL"]
     if len(test_placeholders) == 0:
         test_placeholders = ["ALL"]
+    train_placeholders = train_placeholders[:1]
+    test_placeholders = test_placeholders[:1]
     layers = select_layers(model.cfg.n_layers)
+    if layers is None:
+        continue
     placeholders_layers = list(itertools.product(
         train_placeholders, 
         test_placeholders,
@@ -251,6 +257,7 @@ for model_name, train_type, test_type, method in BAR:
             testset = ResidualStreamDataset.get_dataset(
                 model, device, prompt_type=test_type, scaffold=SCAFFOLD
             )
+            assert trainset is not None
             cls_path = train_classifying_direction(
                 trainset, train_pos, train_layer,
                 testset, test_pos, test_layer,
@@ -272,19 +279,19 @@ def hide_nan(val):
 #%%
 def plot_accuracy_similarity(
     df, label: str, model: HookedTransformer,
-    train_sets: Iterable[PromptType] = None,
-    train_positions: Iterable[str] = None,
-    test_sets: Iterable[PromptType] = None,
+    train_sets: Optional[Iterable[PromptType] ]= None,
+    train_positions: Optional[Iterable[str]] = None,
+    test_sets: Optional[Iterable[PromptType]] = None,
 ):
     if train_sets is None:
-        train_sets = [PromptType.SIMPLE_TRAIN.value]
+        train_sets = [PromptType.SIMPLE_TRAIN]
     if train_positions is None:
         train_positions = ['ADJ']
     if test_sets is None:
         test_sets = [
-            PromptType.SIMPLE_TRAIN.value, 
-            PromptType.SIMPLE_TEST.value, 
-            PromptType.SIMPLE_ADVERB.value
+            PromptType.SIMPLE_TRAIN, 
+            PromptType.SIMPLE_TEST, 
+            PromptType.SIMPLE_ADVERB
         ]
     df = df.loc[
         df.train_set.isin(train_sets) & 

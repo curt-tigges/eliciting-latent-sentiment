@@ -1,4 +1,4 @@
-from typing import Callable, List, Tuple, Union
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 import einops
 from jaxtyping import Int, Float, Bool
 from typeguard import typechecked
@@ -37,12 +37,12 @@ class ResidualStreamDataset:
         self._binary_labels = binary_labels
         self.model = model
         self.prompt_type = prompt_type
-        example_str_tokens = model.to_str_tokens(prompt_strings[0])
+        example_str_tokens: List[str] = model.to_str_tokens(prompt_strings[0]) # type: ignore
         self.example = [f"{i}:{tok}" for i, tok in enumerate(example_str_tokens)]
         self.placeholder_dict = prompt_type.get_placeholder_positions(example_str_tokens)
         label_positions = [pos for _, positions in self.placeholder_dict.items() for pos in positions]
         self.str_labels = [
-            ''.join([model.to_str_tokens(prompt)[pos] for pos in label_positions]) 
+            ''.join([model.to_str_tokens(prompt)[pos] for pos in label_positions])  # type: ignore
             for prompt in prompt_strings
         ]
 
@@ -53,7 +53,7 @@ class ResidualStreamDataset:
     def __len__(self) -> int:
         return len(self.prompt_strings)
     
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self, other: 'ResidualStreamDataset') -> bool:
         return set(self.prompt_strings) == set(other.prompt_strings)
     
     def get_dataloader(self, batch_size: int) -> torch.utils.data.DataLoader:
@@ -69,8 +69,9 @@ class ResidualStreamDataset:
         names_filter: Callable, 
         batch_size: int,
         requires_grad: bool = True,
-        device: torch.device = None,
-        disable_tqdm: bool = None,
+        device: Optional[torch.device] = None,
+        disable_tqdm: Optional[bool] = None,
+        leave_tqdm: bool = False,
         dtype: torch.dtype = torch.float32,
     ):
         """
@@ -90,7 +91,7 @@ class ResidualStreamDataset:
         total_samples = len(dataloader.dataset)
         if disable_tqdm is None:
             disable_tqdm = len(dataloader) > 1
-        bar = tqdm(dataloader, disable=disable_tqdm)
+        bar = tqdm(dataloader, disable=disable_tqdm, leave=leave_tqdm)
         bar.set_description(
             f"Running with cache: model={model.cfg.model_name}, "
             f"batch_size={batch_size}"
@@ -125,7 +126,7 @@ class ResidualStreamDataset:
         torch.set_grad_enabled(was_grad_enabled)
         model = model.train().requires_grad_(requires_grad)
 
-        return _, act_cache
+        return None, act_cache
     
     @typechecked
     def embed(
@@ -136,6 +137,7 @@ class ResidualStreamDataset:
         Returns a dataset of embeddings at the specified position and layer.
         Useful for training classifiers on the residual stream.
         """
+        assert self.model.tokenizer is not None, "embed: model must have tokenizer"
         torch.manual_seed(seed)
         assert 0 <= layer <= self.model.cfg.n_layers
         assert position_type is None or position_type in self.placeholder_dict.keys(), (
@@ -163,8 +165,8 @@ class ResidualStreamDataset:
             ).squeeze().to(device=out.device)
             return out[torch.arange(len(out)), embed_position, :].detach().cpu()
         else:
-            embed_position = self.placeholder_dict[position_type][-1]
-            return out[:, embed_position, :].detach().cpu()
+            embed_pos: int = self.placeholder_dict[position_type][-1]
+            return out[:, embed_pos, :].detach().cpu()
     
     @classmethod
     def get_dataset(
@@ -172,8 +174,8 @@ class ResidualStreamDataset:
         model: HookedTransformer,
         device: torch.device,
         prompt_type: PromptType = PromptType.SIMPLE_TRAIN,
-        scaffold: ReviewScaffold = None,
-    ) -> 'ResidualStreamDataset':
+        scaffold: Optional[ReviewScaffold] = None,
+    ) -> Union[None, 'ResidualStreamDataset']:
         """
         N.B. labels assume that first batch corresponds to 1
         """

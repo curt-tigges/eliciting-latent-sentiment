@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Literal, Optional, Tuple, Union
 import einops
 from jaxtyping import Int, Float
 from torch import Tensor
@@ -13,6 +13,9 @@ import warnings
 from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
 from utils.methods import FittingMethod
+
+
+SOLVER_TYPE = Literal['lbfgs', 'liblinear', 'newton-cg', 'newton-cholesky', 'sag', 'saga']
 
 
 class ClassificationMethod(FittingMethod):
@@ -58,9 +61,9 @@ def split_by_label(
 def get_accuracy(
     predicted_positive: Iterable[str],
     predicted_negative: Iterable[str],
-    actual_positive: Iterable[str],
-    actual_negative: Iterable[str],
-) -> Tuple[str, int, int, float]:
+    actual_positive: List[str],
+    actual_negative: List[str],
+) -> Tuple[int, int, float]:
     correct = (
         len(set(predicted_positive) & set(actual_positive)) +
         len(set(predicted_negative) & set(actual_negative))
@@ -71,14 +74,25 @@ def get_accuracy(
 
 
 def _fit(
-    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
-    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
+    train_data: ResidualStreamDataset, 
+    train_pos: Union[str, None], 
+    train_layer: int,
+    test_data: Optional[ResidualStreamDataset], 
+    test_pos: Optional[str], 
+    test_layer: Optional[int],
     n_init: int = 10,
     n_clusters: int = 2,
     random_state: int = 0,
-    n_components: int = None,
+    n_components: Optional[int] = None,
     method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
+    assert train_data is not None
+    if test_data is None:
+        test_data = train_data
+    if test_layer is None:
+        test_layer = train_layer
+    if test_pos is None:
+        test_pos = train_pos
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
         train_pos, train_layer
     )
@@ -220,13 +234,21 @@ def _fit(
 
 
 def _fit_logistic_regression(
-    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
-    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
+    train_data: ResidualStreamDataset, train_pos: Union[str, None], train_layer: int,
+    test_data: Optional[ResidualStreamDataset], 
+    test_pos: Optional[str], 
+    test_layer: Optional[int],
     random_state: int = 0,
-    solver: str = 'liblinear',
+    solver: SOLVER_TYPE = 'liblinear',
     max_iter: int = 1000,
     tol: float = 1e-4,  
 ):
+    if test_data is None:
+        test_data = train_data
+    if test_layer is None:
+        test_layer = train_layer
+    if test_pos is None:
+        test_pos = train_pos
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
         train_pos, train_layer
     )
@@ -245,7 +267,7 @@ def _fit_logistic_regression(
     )
     test_labels = test_data.binary_labels
     total = len(test_labels)
-    accuracy = lr.score(test_embeddings, test_labels)
+    accuracy = lr.score(test_embeddings.numpy(), test_labels)
     correct = int(accuracy * total)
     line = lr.coef_[0, :]
     return line, correct, total, accuracy
@@ -253,14 +275,20 @@ def _fit_logistic_regression(
 
 
 def train_classifying_direction(
-    train_data: ResidualStreamDataset, train_pos: str, train_layer: int,
-    test_data: ResidualStreamDataset, test_pos: str, test_layer: int,
+    train_data: ResidualStreamDataset, train_pos: Union[str, None], train_layer: int,
+    test_data: Union[ResidualStreamDataset, None], test_pos: Union[str, None], test_layer: int,
     method: ClassificationMethod,
     **kwargs,
 ):
     """
     Main entrypoint for training a direction using classification methods
     """
+    if test_data is None:
+        test_data = train_data
+    if test_pos is None:
+        test_pos = train_pos
+    if test_layer is None:
+        test_layer = train_layer
     if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
         assert 'n_components' in kwargs, "Must specify n_components for PCA/SVD"
     model = train_data.model
