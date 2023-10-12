@@ -161,7 +161,9 @@ class ResidualStreamDataset:
             names_filter = lambda name: hook == name, batch_size=batch_size
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook]
-        return out[torch.arange(len(out)), self.position, :].detach().cpu()
+        return out[
+            torch.arange(len(out), device=out.device), self.position, :
+        ].detach().cpu()
     
     @classmethod
     def get_dataset(
