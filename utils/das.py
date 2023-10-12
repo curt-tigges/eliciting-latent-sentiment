@@ -427,6 +427,7 @@ def get_das_dataset(
     device: Optional[torch.device] = None, 
     requires_grad: bool = True,
     verbose: bool = False,
+    label: Optional[str] = None,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
@@ -437,7 +438,7 @@ def get_das_dataset(
         return DataLoader([]), None, None
     clean_corrupt_data = get_dataset(
         model, device, prompt_type=prompt_type, scaffold=scaffold,
-        position=position
+        position=position, label=label,
     )
     if max_dataset_size is not None:
         clean_corrupt_data = clean_corrupt_data.get_subset(
@@ -492,6 +493,7 @@ def train_das_subspace(
     data_requires_grad: bool = False, 
     verbose: bool = False,
     d_das: int = 1, 
+    train_label: Optional[str] = None,
     **config_arg,
 ) -> Tuple[Float[Tensor, "batch d_model"], str]:
     """
@@ -505,7 +507,7 @@ def train_das_subspace(
         train_type, position=train_pos, layer=train_layer, model=model,
         batch_size=batch_size, max_dataset_size=max_dataset_size,
         scaffold=scaffold, device=device, requires_grad=data_requires_grad,
-        verbose=verbose,
+        verbose=verbose, label=train_label
     )
     if test_type != train_type or test_pos != train_pos or test_layer != train_layer:
         testloader, loss_fn_val, test_position = get_das_dataset(
@@ -539,9 +541,9 @@ def train_das_subspace(
         verbose=verbose,
         **config,
     )
-    train_pos = train_pos if train_pos is not None else 'ALL'
     d_das_str = f'{d_das}d' if d_das > 1 else ''
-    save_path = f'das{d_das_str}_{train_type.value}_{train_pos}_layer{train_layer}'
+    train_pos_str = f'_{train_pos}' if train_pos is not None else ''
+    save_path = f'das{d_das_str}_{train_label}{train_pos_str}_layer{train_layer}'
     save_array(
         directions.detach().cpu().squeeze(1).numpy(), 
         save_path, 

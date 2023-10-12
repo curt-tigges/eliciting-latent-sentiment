@@ -245,13 +245,15 @@ for model_name, train_type, test_type, method in BAR:
                 epochs = 1 if "treebank" in train_type.value else 64,
                 batch_size=BATCH_SIZES[model_name],
                 d_das=method.get_dimension(),
+                train_label=train_type.value,
             )
             print(f"Saving DAS direction to {das_path}")
             torch.cuda.empty_cache()
             print("Emptied CUDA cache")
         else:
             trainset = ResidualStreamDataset.get_dataset(
-                model, device, prompt_type=train_types, scaffold=SCAFFOLD
+                model, device, prompt_type=train_types, scaffold=SCAFFOLD,
+                label=train_type.value,
             )
             testset = ResidualStreamDataset.get_dataset(
                 model, device, prompt_type=test_type, scaffold=SCAFFOLD

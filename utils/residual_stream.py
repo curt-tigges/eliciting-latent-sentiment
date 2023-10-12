@@ -37,6 +37,7 @@ class ResidualStreamDataset:
         position: Int[Tensor, "batch"],
         model: HookedTransformer,
         prompt_type: Union[PromptType, List[PromptType]],
+        label: str,
     ) -> None:
         assert len(prompt_strings) == len(prompt_tokens)
         assert len(prompt_strings) == len(is_positive)
@@ -46,6 +47,7 @@ class ResidualStreamDataset:
         self.position = position
         self.model = model
         self.prompt_type = prompt_type
+        self.label = label
         label_tensor = self.prompt_tokens[
             torch.arange(len(self.prompt_tokens)), self.position
         ].cpu().detach()
@@ -169,6 +171,7 @@ class ResidualStreamDataset:
         prompt_type: Union[PromptType, List[PromptType]] = PromptType.SIMPLE_TRAIN,
         scaffold: Optional[ReviewScaffold] = None,
         position: Optional[Union[str, List[str]]] = None,
+        label: Optional[str] = None,
 
     ) -> Union[None, 'ResidualStreamDataset']:
         """
@@ -178,7 +181,7 @@ class ResidualStreamDataset:
             return None
         clean_corrupt_data = get_dataset(
             model, device, prompt_type=prompt_type, scaffold=scaffold,
-            position=position,
+            position=position, label=label,
         )
         
         assert len(clean_corrupt_data.all_prompts) == len(clean_corrupt_data.answer_tokens)
@@ -190,6 +193,7 @@ class ResidualStreamDataset:
             clean_corrupt_data.position,
             model,
             prompt_type,
+            label,
         )
     
 

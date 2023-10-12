@@ -498,6 +498,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         position: Union[None, str, Int[Tensor, "batch"]] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
         prompt_type: Optional[PromptType] = None,
+        label: Optional[str] = None,
     ):
         assert len(clean_tokens) == len(corrupted_tokens)
         assert len(clean_tokens) == len(answer_tokens)
@@ -541,11 +542,13 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         self.prompt_type = prompt_type
         self.is_positive = is_positive
         self.position = position
+        self.label = label
 
     def __add__(self, other: "CleanCorruptedDataset"):
         assert isinstance(other, CleanCorruptedDataset)
         assert self.tokenizer is not None
         assert self.tokenizer == other.tokenizer
+        assert self.label == other.label
         seq_len1 = self.clean_tokens.shape[1]
         seq_len2 = other.clean_tokens.shape[1]
         max_seq_len = max(seq_len1, seq_len2)
@@ -568,6 +571,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             torch.cat([self.position + offset1, other.position + offset2]),
             self.tokenizer,
             None,
+            self.label,
         )
 
     def get_subset(self, indices: List[int]):
@@ -580,6 +584,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.position[indices],
             self.tokenizer,
             self.prompt_type,
+            self.label,
         )
     
     def get_num_pad_tokens(self) -> Int[Tensor, "batch"]:
@@ -868,6 +873,7 @@ def get_dataset(
     comparison: Tuple[str, str] = ("positive", "negative"),
     scaffold: Optional[ReviewScaffold] = None,
     position: Optional[Union[str, List[str], List[None]]] = None,
+    label: Optional[str] = None,
 ) -> CleanCorruptedDataset:
     if isinstance(prompt_type, PromptType):
         assert position is None or isinstance(position, str)
@@ -879,6 +885,7 @@ def get_dataset(
             comparison=comparison,
             scaffold=scaffold,
             position=position,
+            label=label,
         )
     assert len(prompt_type) > 0
     if position is None:
@@ -892,6 +899,7 @@ def get_dataset(
         comparison=comparison,
         scaffold=scaffold,
         position=position[0],
+        label=label,
     )
     for pt, pos in zip(prompt_type[1:], position[1:]):
         assert isinstance(pt, PromptType)
@@ -903,6 +911,7 @@ def get_dataset(
             comparison=comparison,
             scaffold=scaffold,
             position=pos,
+            label=label,
         )
     return out
 
@@ -915,8 +924,10 @@ def _get_dataset(
     comparison: Tuple[str, str] = ("positive", "negative"),
     scaffold: Optional[ReviewScaffold] = None,
     position: Optional[str] = None,
+    label: Optional[str] = None,
 ) -> CleanCorruptedDataset:
-    prompt_type = PromptType(prompt_type)
+    if label is None and isinstance(prompt_type, PromptType):
+        label = prompt_type.value
     if prompt_type in (
         PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV
     ):
@@ -976,6 +987,7 @@ def _get_dataset(
         tokenizer=model.tokenizer,
         position=position,
         prompt_type=prompt_type,
+        label=label,
     )
 
 

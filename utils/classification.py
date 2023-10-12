@@ -86,6 +86,7 @@ def _fit(
     method: ClassificationMethod = ClassificationMethod.KMEANS,
 ):
     assert train_data is not None
+    assert train_layer is not None
     if test_data is None:
         test_data = train_data
     if test_layer is None:
@@ -273,8 +274,12 @@ def _fit_logistic_regression(
 
 
 def train_classifying_direction(
-    train_data: ResidualStreamDataset, train_pos: Union[str, None], train_layer: int,
-    test_data: Union[ResidualStreamDataset, None], test_pos: Union[str, None], test_layer: int,
+    train_data: ResidualStreamDataset, 
+    train_pos: Union[str, None], 
+    train_layer: int,
+    test_data: Union[ResidualStreamDataset, None], 
+    test_pos: Union[str, None], 
+    test_layer: int,
     method: ClassificationMethod,
     **kwargs,
 ):
@@ -298,28 +303,32 @@ def train_classifying_direction(
         warnings.simplefilter("error", ConvergenceWarning)  # Turn the warning into an error
         try:
             train_line, correct, total, accuracy = fitting_method(
-                train_data, train_pos, train_layer,
-                test_data, test_pos, test_layer,
+                train_data, 
+                train_layer,
+                test_data, 
+                test_layer,
                 **kwargs,
             )
             test_line, _, _, _ = fitting_method(
-                test_data, test_pos, test_layer,
-                test_data, test_pos, test_layer,
+                test_data, 
+                test_layer,
+                test_data, 
+                test_layer,
                 **kwargs,
             )
         except ConvergenceWarning:
             print(
                 f"Convergence warning for {method.value}; "
-                f"train type:{train_data.prompt_type.value}, pos: {train_pos}, layer:{train_layer}, "
-                f"test type:{test_data.prompt_type.value}, pos: {test_pos}, layer:{test_layer}, "
+                f"train type:{train_data.prompt_type}, pos: {train_pos}, layer:{train_layer}, "
+                f"test type:{test_data.prompt_type}, pos: {test_pos}, layer:{test_layer}, "
                 f"kwargs: {kwargs}\n"
                 f"train str_labels:{train_data.str_labels}\n"
                 f"test str_labels:{test_data.str_labels}\n"
             )
             return
     # write line to file
-    train_pos_str = train_pos if train_pos is not None else "ALL"
-    array_path = f"{method.value}_{train_data.prompt_type.value}_{train_pos_str}_layer{train_layer}"
+    train_pos_str = f"_{train_pos}" if train_pos is not None else ""
+    array_path = f"{method.value}_{train_data.label}{train_pos_str}_layer{train_layer}"
     save_array(train_line, array_path, model)
 
     cosine_sim = safe_cosine_sim(
