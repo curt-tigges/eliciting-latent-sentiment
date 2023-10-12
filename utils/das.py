@@ -8,8 +8,8 @@ from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
 from torch.cuda.amp import GradScaler, autocast
 from torch.profiler import profile, record_function, ProfilerActivity
-from jaxtyping import Float, Int
-from typing import Callable, Union, List, Tuple
+from jaxtyping import Float, Int, Bool
+from typing import Callable, Optional, Union, List, Tuple
 from transformer_lens.hook_points import HookPoint
 from transformer_lens import HookedTransformer, ActivationCache
 import wandb
@@ -71,11 +71,11 @@ def hook_fn_base(
     resid: Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
     layer: int,
-    position: Union[None, int],
+    position: Optional[Int[Tensor, "batch"]],
     new_value: Float[Tensor, "batch *pos d_model"]
 ):
     batch_size, seq_len, d_model = resid.shape
-    assert 'resid' in hook.name
+    assert hook.name is not None and 'resid' in hook.name
     if hook.layer() != layer:
         return resid
     if position is None:
@@ -86,14 +86,14 @@ def hook_fn_base(
         "batch d_model -> batch pos d_model",
         pos=seq_len,
     )
-    position_index = einops.repeat(
-        torch.arange(seq_len, device=resid.device),
+    position_mask = einops.repeat(
+        torch.arange(seq_len, device=resid.device) == position,
         "pos -> batch pos d_model",
         batch=batch_size,
         d_model=d_model,
     )
     out = torch.where(
-        position_index == position,
+        position_mask,
         new_value_repeat,
         resid,
     )
@@ -107,8 +107,8 @@ def act_patch_simple(
     orig_input: Union[str, List[str], Int[Tensor, "batch pos"]],
     new_value: Float[Tensor, "d_model"],
     layer: int,
-    position: Union[None, int],
     patching_metric: Callable,
+    position: Optional[Int[Tensor, "batch"]] = None,
     verbose: bool = False,
 ) -> Float[Tensor, ""]:
     assert layer <= model.cfg.n_layers
@@ -180,9 +180,9 @@ class RotationModule(torch.nn.Module):
         orig_resid: Float[Tensor, "batch *pos d_model"],
         new_resid: Float[Tensor, "batch *pos d_model"],
         layer: int,
-        position: Union[None, int],
         orig_tokens: Int[Tensor, "batch pos"],
         patching_metric: Callable,
+        position: Optional[Int[Tensor, "batch"]],
         check_requires_grad: bool = False,
         verbose: bool = False,
     ) -> Float[Tensor, ""]:
@@ -207,9 +207,7 @@ class RotationModule(torch.nn.Module):
 
 class TrainingConfig:
     train_layer: int
-    train_position: Union[None, int]
     eval_layer: int
-    eval_position: Union[None, int]
 
     def __init__(self, config_dict: dict):
         self.batch_size = config_dict.get("batch_size", 32)
@@ -240,12 +238,14 @@ def fit_rotation(
     metric_test: Callable,
     model: HookedTransformer, 
     device: torch.device,
-    project: str = None,
+    project: Optional[str] = None,
     profiler: bool = False,
     downcast: bool = False,
     verbose: bool = False,
+    position_train: Optional[Int[Tensor, "batch"]] = None,
+    position_test: Optional[Int[Tensor, "batch"]] = None,
     **config_dict
-) -> Tuple[HookedTransformer, List[Tensor]]:
+) -> Float[Tensor, "d_model d_das"]:
     """
     Entrypoint for training a DAS subspace given
     a counterfactual patching dataset.
@@ -309,7 +309,7 @@ def fit_rotation(
                     orig_resid_train,
                     new_resid_train,
                     layer=config.train_layer,
-                    position=config.train_position,
+                    position=position_train,
                     orig_tokens=orig_tokens_train,
                     patching_metric=partial(metric_train, answer_tokens=answers_train),
                     check_requires_grad=True,
@@ -368,7 +368,7 @@ def fit_rotation(
                     orig_resid_test,
                     new_resid_test,
                     layer=config.eval_layer,
-                    position=config.eval_position,
+                    position=position_test,
                     orig_tokens=orig_tokens_test,
                     patching_metric=partial(metric_test, answer_tokens=answers_test),
                 )
@@ -400,24 +400,33 @@ def fit_rotation(
 
 
 def get_das_dataset(
-    prompt_type: PromptType, position: str, layer: int, model: HookedTransformer,
-    batch_size: int = 32, max_dataset_size: int = None, scaffold: ReviewScaffold = None,
-    pin_memory: bool = True, device: torch.device = None, requires_grad: bool = True,
+    prompt_type: Union[PromptType, List[PromptType]], 
+    position: Union[None, str, List[str]], 
+    layer: int, 
+    model: HookedTransformer,
+    batch_size: int = 32, 
+    max_dataset_size: Optional[int] = None, 
+    scaffold: Optional[ReviewScaffold] = None,
+    pin_memory: bool = True, 
+    device: Optional[torch.device] = None, 
+    requires_grad: bool = True,
     verbose: bool = False,
 ):
     """
     Wrapper for utils.prompts.get_dataset that returns a dataset in a useful form for DAS
     """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
     if prompt_type is None or prompt_type == PromptType.NONE:
         return DataLoader([]), None, None
-    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type, scaffold=scaffold)
+    clean_corrupt_data = get_dataset(
+        model, device, prompt_type=prompt_type, scaffold=scaffold,
+        position=position
+    )
     if max_dataset_size is not None:
         clean_corrupt_data = clean_corrupt_data.get_subset(
             list(range(max_dataset_size))
         )
-    example = model.to_str_tokens(clean_corrupt_data.all_prompts[0])
-    placeholders = prompt_type.get_placeholder_positions(example)
-    pos: int = placeholders[position][-1] if position is not None else None
     results = clean_corrupt_data.run_with_cache(
         model,
         names_filter=lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0]),
@@ -428,21 +437,20 @@ def get_das_dataset(
     act_name, _ = get_resid_name(layer, model)
     loss_fn = partial(
         logit_diff_denoising, 
-        flipped_value=results.clean_logit_diff, 
-        clean_value=results.corrupted_logit_diff,
+        flipped_value=results.clean_logit_diff.item(), 
+        clean_value=results.corrupted_logit_diff.item(),
         return_tensor=True,
     )
     if verbose:
         print(
-            f"example: {example}, \n"
             f"clean logit diff: {results.clean_logit_diff}, \n"
             f"corrupted logit diff: {results.corrupted_logit_diff}"
         )
     orig_resid: Float[Tensor, "batch *pos d_model"] = results.corrupted_cache[act_name]
     new_resid: Float[Tensor, "batch *pos d_model"] = results.clean_cache[act_name]
-    if pos is not None:
-        orig_resid = orig_resid[:, pos, :]
-        new_resid = new_resid[:, pos, :]
+    if orig_resid.ndim == 3:
+        orig_resid = orig_resid[:, clean_corrupt_data.position, :]
+        new_resid = new_resid[:, clean_corrupt_data.position, :]
     # Create a TensorDataset from the tensors
     das_dataset = TensorDataset(
         clean_corrupt_data.corrupted_tokens.detach().cpu(), 
@@ -454,17 +462,21 @@ def get_das_dataset(
     das_dataloader = DataLoader(
         das_dataset, batch_size=batch_size, pin_memory=pin_memory
         )
-    return das_dataloader, loss_fn, pos
+    return das_dataloader, loss_fn, clean_corrupt_data.position
 
 
 def train_das_subspace(
     model: HookedTransformer, device: torch.device,
-    train_type: PromptType, train_pos: Union[None, str], train_layer: int,
+    train_type: Union[PromptType, List[PromptType]], train_pos: Union[None, str], train_layer: int,
     test_type: PromptType, test_pos: Union[None, str], test_layer: int,
-    batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
-    downcast: bool = False, scaffold: ReviewScaffold = None,
-    data_requires_grad: bool = False, verbose: bool = False,
-    d_das: int = 1, **config_arg,
+    batch_size: int = 32, max_dataset_size: Optional[int] = None, 
+    profiler: bool = False,
+    downcast: bool = False, 
+    scaffold: Optional[ReviewScaffold] = None,
+    data_requires_grad: bool = False, 
+    verbose: bool = False,
+    d_das: int = 1, 
+    **config_arg,
 ) -> Tuple[Float[Tensor, "batch d_model"], str]:
     """
     Entrypoint to be used in directional patching experiments
@@ -502,6 +514,8 @@ def train_das_subspace(
         testloader=testloader,
         metric_train=loss_fn,
         metric_test=loss_fn_val,
+        position_train=train_position,
+        position_test=test_position,
         model=model,
         device=device,
         profiler=profiler,

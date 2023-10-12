@@ -36,6 +36,7 @@ from utils.methods import FittingMethod
 # model loading
 SKIP_IF_EXISTS = False
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+ALL_BUT_ONE = True
 MODELS = [
     'gpt2-small',
     # 'gpt2-medium',
@@ -167,6 +168,12 @@ def select_layers(
 #     epochs=1,
 # )
 #%%
+def get_placeholder(prompt_type: PromptType):
+    placeholders = prompt_type.get_placeholders()
+    if len(placeholders) == 0:
+        placeholders = ["ALL"]
+    return placeholders[0]
+#%%
 # ============================================================================ #
 # Training loop
 BAR = tqdm(
@@ -187,28 +194,17 @@ for model_name, train_type, test_type, method in BAR:
     if 'test' in train_type.value:
         # Don't train on test sets
         continue
-    train_placeholders = train_type.get_placeholders()
-    test_placeholders = test_type.get_placeholders()
-    if len(train_placeholders) == 0:
-        train_placeholders = ["ALL"]
-    if len(test_placeholders) == 0:
-        test_placeholders = ["ALL"]
-    train_placeholders = train_placeholders[:1]
-    test_placeholders = test_placeholders[:1]
+    test_pos = get_placeholder(test_type)
+    train_pos = None if ALL_BUT_ONE else get_placeholder(train_type)
     layers = select_layers(model.cfg.n_layers)
     if layers is None:
         continue
-    placeholders_layers = list(itertools.product(
-        train_placeholders, 
-        test_placeholders,
-        layers
-    ))
-    assert len(placeholders_layers) > 0
+    assert len(layers) > 0
     kwargs = dict()
     if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
         kwargs['n_components'] = 1
-    layers_bar = tqdm(placeholders_layers, leave=False)
-    for train_pos, test_pos, train_layer in layers_bar:
+    layers_bar = tqdm(layers, leave=False)
+    for train_layer in layers_bar:
         test_layer = train_layer # Don't train/eval on different layers
         layers_bar.set_description(
             f"train_pos:{train_pos},"
@@ -228,6 +224,7 @@ for model_name, train_type, test_type, method in BAR:
             train_pos = None
         if test_pos == "ALL":
             test_pos = None
+        train_types = [t for t in TRAIN_TYPES if t != train_type] if ALL_BUT_ONE else train_type
         if isinstance(method, GradientMethod):
             train_test_discrepancy = test_type != PromptType.NONE and (
                 train_type != test_type or
@@ -239,7 +236,7 @@ for model_name, train_type, test_type, method in BAR:
             print("Calling train_das_subspace...")
             _, das_path = train_das_subspace(
                 model, device,
-                train_type, train_pos, train_layer,
+                train_types, train_pos, train_layer,
                 test_type, test_pos, test_layer,
                 scaffold=SCAFFOLD,
                 wandb_enabled=False,
@@ -252,7 +249,7 @@ for model_name, train_type, test_type, method in BAR:
             print("Emptied CUDA cache")
         else:
             trainset = ResidualStreamDataset.get_dataset(
-                model, device, prompt_type=train_type, scaffold=SCAFFOLD
+                model, device, prompt_type=train_types, scaffold=SCAFFOLD
             )
             testset = ResidualStreamDataset.get_dataset(
                 model, device, prompt_type=test_type, scaffold=SCAFFOLD
@@ -375,6 +372,8 @@ def tensor_from_str(
         # Creating a tensor from the list of booleans
         tensor_val = torch.tensor(bool_vals)
         return tensor_val
+    else:
+        raise ValueError(f"Invalid dim: {dim}")
 
 
 def list_from_str(

@@ -3,7 +3,6 @@ import numpy as np
 import yaml
 from transformers import PreTrainedTokenizerBase
 from transformer_lens import HookedTransformer, ActivationCache
-from transformer_lens.utils import get_attention_mask
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
@@ -20,6 +19,7 @@ from utils.circuit_analysis import (
     get_logit_diff, get_prob_diff, center_logit_diffs, 
     get_accuracy_from_logit_diffs,
     get_final_non_pad_token,
+    get_attention_mask,
 )
 
 T = TypeVar("T")
@@ -426,10 +426,66 @@ def get_prompts(
     return prompt_dict, answer_dict
 
 
+
+def concatenate_tensors(
+    tensor1: Int[Tensor, "batch1 pos1"], 
+    tensor2: Int[Tensor, "batch2 pos2"], 
+    tokenizer: PreTrainedTokenizerBase,
+) -> Int[Tensor, "batch1+batch2 max(pos1,pos2)"]:
+    """
+    Concatenate two [batch, pos] tensors of token IDs.
+
+    Parameters:
+    - tensor1 (torch.Tensor): First tensor with shape [batch1, pos1].
+    - tensor2 (torch.Tensor): Second tensor with shape [batch2, pos2].
+    - tokenizer (PreTrainedTokenizerBase): Pretrained tokenizer.
+
+    Returns:
+    - torch.Tensor: Concatenated tensor.
+    """
+    # Ensure tensors are on the same device and dtype
+    assert tensor1.device == tensor2.device and tensor1.dtype == tensor2.dtype
+
+    batch1, pos1 = tensor1.shape
+    batch2, pos2 = tensor2.shape
+    pad_token_id = 0 if tokenizer is None or tokenizer.pad_token_id is None else tokenizer.pad_token_id
+    
+    max_seq_len = max(pos1, pos2)
+    if pos1 != max_seq_len:
+        padding1 = torch.full(
+            (batch1, max_seq_len - pos1), 
+            pad_token_id, 
+            dtype=tensor1.dtype, 
+            device=tensor1.device
+        ) # type: ignore
+        tensor1 = (
+            torch.cat([tensor1, padding1], dim=1)
+            if tokenizer.padding_side == "right"
+            else torch.cat([padding1, tensor1], dim=1)
+        )
+    elif pos2 != max_seq_len:
+        padding2 = torch.full(
+            (batch2, max_seq_len - pos2), 
+            pad_token_id, 
+            dtype=tensor2.dtype, 
+            device=tensor2.device
+        ) # type: ignore
+        tensor2 = (
+            torch.cat([tensor2, padding2], dim=1)
+            if tokenizer.padding_side == "right"
+            else torch.cat([padding2, tensor2], dim=1)
+        )
+
+    return torch.cat((tensor1, tensor2), dim=0)
+
+
+
 class CleanCorruptedDataset(torch.utils.data.Dataset):
     clean_tokens: Int[Tensor, "batch pos"]
     corrupted_tokens: Int[Tensor, "batch pos"]
     answer_tokens: Int[Tensor, "batch pair correct"]
+    is_positive: Bool[Tensor, "batch"]
+    position: Bool[Tensor, "batch"]
 
     @typechecked
     def __init__(
@@ -438,18 +494,74 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         corrupted_tokens: Int[Tensor, "batch pos"],
         answer_tokens: Int[Tensor, "batch *pair correct"],
         all_prompts: List[str], 
+        is_positive: Optional[Bool[Tensor, "batch"]] = None,
+        position: Union[None, str, Int[Tensor, "batch"]] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        prompt_type: Optional[PromptType] = None,
     ):
         assert len(clean_tokens) == len(corrupted_tokens)
         assert len(clean_tokens) == len(answer_tokens)
         super().__init__()
         if answer_tokens.ndim == 2:
             answer_tokens = answer_tokens.unsqueeze(1)
+        if is_positive is None:
+            is_positive = (
+                answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0]
+            )
+        if position is None and prompt_type is not None and len(prompt_type.get_placeholders()) == 0:
+            mask = get_attention_mask(
+                tokenizer, clean_tokens, prepend_bos=False
+            )
+            position = get_final_non_pad_token(mask)
+        elif position is None and prompt_type is not None:
+            # Default to first placeholder position
+            placeholders = prompt_type.get_placeholders()
+            position = placeholders[0]
+        if isinstance(position, str):
+            assert tokenizer is not None and prompt_type is not None
+            example = tokenizer.tokenize(all_prompts[0])
+            placeholders = prompt_type.get_placeholder_positions(example)
+            pos: int = placeholders[position][-1]
+            pos_idx = einops.repeat(
+                torch.arange(clean_tokens.shape[1]),
+                "pos -> batch pos",
+                batch=clean_tokens.shape[0],
+            )
+            position = pos_idx == pos
         self.clean_tokens = clean_tokens
         self.corrupted_tokens = corrupted_tokens
         self.answer_tokens = answer_tokens
         self.all_prompts = all_prompts
         self.tokenizer = tokenizer
+        self.prompt_type = prompt_type
+        self.is_positive = is_positive
+        self.position = position
+
+    def __add__(self, other: "CleanCorruptedDataset"):
+        assert isinstance(other, CleanCorruptedDataset)
+        assert self.tokenizer is not None
+        assert self.tokenizer == other.tokenizer
+        seq_len1 = self.clean_tokens.shape[1]
+        seq_len2 = other.clean_tokens.shape[1]
+        max_seq_len = max(seq_len1, seq_len2)
+        padding1 = max_seq_len - seq_len1
+        padding2 = max_seq_len - seq_len2
+        if self.tokenizer.padding_side == "left":
+            offset1 = padding1
+            offset2 = padding2
+        else:
+            offset1 = 0
+            offset2 = 0
+        return CleanCorruptedDataset(
+            concatenate_tensors(self.clean_tokens, other.clean_tokens, self.tokenizer),
+            concatenate_tensors(self.corrupted_tokens, other.corrupted_tokens, self.tokenizer),
+            torch.cat([self.answer_tokens, other.answer_tokens]),
+            self.all_prompts + other.all_prompts,
+            torch.cat([self.is_positive, other.is_positive]),
+            torch.cat([self.position + offset1, other.position + offset2]),
+            self.tokenizer,
+            None,
+        )
 
     def get_subset(self, indices: List[int]):
         return CleanCorruptedDataset(
@@ -457,7 +569,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.corrupted_tokens[indices],
             self.answer_tokens[indices],
             [self.all_prompts[i] for i in indices],
+            self.is_positive[indices],
+            self.position[indices],
             self.tokenizer,
+            self.prompt_type,
         )
     
     def get_num_pad_tokens(self) -> Int[Tensor, "batch"]:
@@ -738,9 +853,57 @@ def get_dataset(
     model: HookedTransformer, 
     device: torch.device,
     n_pairs: Optional[int] = None,
+    prompt_type: Union[PromptType, List[PromptType]] = PromptType.SIMPLE,
+    comparison: Tuple[str, str] = ("positive", "negative"),
+    scaffold: Optional[ReviewScaffold] = None,
+    position: Optional[Union[str, List[str], List[None]]] = None,
+) -> CleanCorruptedDataset:
+    if isinstance(prompt_type, PromptType):
+        assert position is None or isinstance(position, str)
+        return _get_dataset(
+            model=model,
+            device=device,
+            n_pairs=n_pairs,
+            prompt_type=prompt_type,
+            comparison=comparison,
+            scaffold=scaffold,
+            position=position,
+        )
+    assert len(prompt_type) > 0
+    if position is None:
+        position = [None] * len(prompt_type)
+    assert len(position) == len(prompt_type)
+    out = _get_dataset(
+        model=model,
+        device=device,
+        n_pairs=n_pairs,
+        prompt_type=prompt_type[0],
+        comparison=comparison,
+        scaffold=scaffold,
+        position=position[0],
+    )
+    for pt, pos in zip(prompt_type[1:], position[1:]):
+        assert isinstance(pt, PromptType)
+        out += _get_dataset(
+            model=model,
+            device=device,
+            n_pairs=n_pairs,
+            prompt_type=pt,
+            comparison=comparison,
+            scaffold=scaffold,
+            position=pos,
+        )
+    return out
+
+
+def _get_dataset(
+    model: HookedTransformer, 
+    device: torch.device,
+    n_pairs: Optional[int] = None,
     prompt_type: PromptType = PromptType.SIMPLE,
     comparison: Tuple[str, str] = ("positive", "negative"),
     scaffold: Optional[ReviewScaffold] = None,
+    position: Optional[str] = None,
 ) -> CleanCorruptedDataset:
     prompt_type = PromptType(prompt_type)
     if prompt_type in (
@@ -800,6 +963,7 @@ def get_dataset(
         clean_tokens=clean_tokens, 
         corrupted_tokens=corrupted_tokens,
         tokenizer=model.tokenizer,
+        position=position,
     )
 
 

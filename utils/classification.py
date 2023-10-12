@@ -10,6 +10,7 @@ from sklearn.decomposition import PCA
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
 import warnings
+from utils.prompts import PromptType
 from utils.residual_stream import ResidualStreamDataset
 from utils.store import save_array, update_csv
 from utils.methods import FittingMethod
@@ -75,10 +76,8 @@ def get_accuracy(
 
 def _fit(
     train_data: ResidualStreamDataset, 
-    train_pos: Union[str, None], 
     train_layer: int,
     test_data: Optional[ResidualStreamDataset], 
-    test_pos: Optional[str], 
     test_layer: Optional[int],
     n_init: int = 10,
     n_clusters: int = 2,
@@ -91,13 +90,11 @@ def _fit(
         test_data = train_data
     if test_layer is None:
         test_layer = train_layer
-    if test_pos is None:
-        test_pos = train_pos
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
-        train_pos, train_layer
+        train_layer
     )
     test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
-        test_pos, test_layer
+        test_layer
     )
     train_positive_str_labels, train_negative_str_labels = train_data.get_positive_negative_labels()
     test_positive_str_labels, test_negative_str_labels = test_data.get_positive_negative_labels()
@@ -170,14 +167,16 @@ def _fit(
             vh_train[0, :] / np.linalg.norm(vh_train[0, :])
         ) * np.sign(s_train[0])
     elif method == ClassificationMethod.MEAN_DIFF:
-        is_pos = train_data.binary_labels == 1 
-        is_neg = train_data.binary_labels == 0
+        is_pos = train_data.is_positive == 1 
+        is_neg = train_data.is_positive == 0
         train_pos_embeddings = train_embeddings[is_pos, :]
         train_neg_embeddings = train_embeddings[is_neg, :]
         line: Float[np.ndarray, "d_model"]  = (
             train_pos_embeddings.mean(axis=0) - 
             train_neg_embeddings.mean(axis=0)
         )
+    else:
+        raise ValueError(f"Unknown method {method}")
     # get accuracy
     _, _, insample_accuracy = get_accuracy(
         train_positive_cluster,
@@ -194,30 +193,31 @@ def _fit(
     # insample accuracy check
     is_insample = (
         train_data.prompt_type == test_data.prompt_type and
-        train_pos == test_pos and
         train_layer == test_layer
     )
     if is_insample:
         assert accuracy >= 0.5, (
             f"Accuracy should be at least 50%, got {accuracy:.1%}, "
             f"direct calc:{insample_accuracy:.1%}, "
-            f"train:{train_data.prompt_type.value}, layer:{train_layer}, \n"
+            f"train:{train_data.prompt_type}, layer:{train_layer}, \n"
             f"positive cluster: {sorted(test_positive_cluster)}\n"
             f"negative cluster: {sorted(test_negative_cluster)}\n"
             f"positive adjectives: {sorted(test_positive_str_labels)}\n"
             f"negative adjectives: {sorted(test_negative_str_labels)}\n"
         )
-    if method in (ClassificationMethod.PCA, ClassificationMethod.SVD):
+    is_pca_svd = method in (ClassificationMethod.PCA, ClassificationMethod.SVD)
+    single_type = isinstance(train_data.prompt_type, PromptType)
+    if is_pca_svd and single_type:
         plot_data = [[
-            method.value, train_data.prompt_type.value, train_layer, train_pos,
-            test_data.prompt_type.value, test_layer, test_pos,
-            train_pcs, train_data.str_labels, train_data.binary_labels, 
-            test_pcs, test_data.str_labels, test_data.binary_labels,
+            method.value, train_data.prompt_type, train_layer,
+            test_data.prompt_type, test_layer,
+            train_pcs, train_data.str_labels, train_data.is_positive, 
+            test_pcs, test_data.str_labels, test_data.is_positive,
             km_centroids
         ]]
         plot_columns = [
-            'method', 'train_set', 'train_layer', 'train_pos',
-            'test_set', 'test_layer',  'test_pos',
+            'method', 'train_set', 'train_layer',
+            'test_set', 'test_layer',
             'train_pcs', 'train_str_labels', 'train_true_labels',
             'test_pcs', 'test_str_labels', 'test_true_labels',
             'pca_centroids',
@@ -234,9 +234,9 @@ def _fit(
 
 
 def _fit_logistic_regression(
-    train_data: ResidualStreamDataset, train_pos: Union[str, None], train_layer: int,
+    train_data: ResidualStreamDataset,
+    train_layer: int,
     test_data: Optional[ResidualStreamDataset], 
-    test_pos: Optional[str], 
     test_layer: Optional[int],
     random_state: int = 0,
     solver: SOLVER_TYPE = 'liblinear',
@@ -247,12 +247,10 @@ def _fit_logistic_regression(
         test_data = train_data
     if test_layer is None:
         test_layer = train_layer
-    if test_pos is None:
-        test_pos = train_pos
     train_embeddings: Float[Tensor, "batch d_model"] = train_data.embed(
-        train_pos, train_layer
+        train_layer
     )
-    train_labels = train_data.binary_labels
+    train_labels = train_data.is_positive
     lr = LogisticRegression(
         random_state=random_state,
         solver=solver,
@@ -263,9 +261,9 @@ def _fit_logistic_regression(
     if test_data is None:
         return lr.coef_[0, :], None, None, None
     test_embeddings: Float[Tensor, "batch d_model"] = test_data.embed(
-        test_pos, test_layer
+        test_layer
     )
-    test_labels = test_data.binary_labels
+    test_labels = test_data.is_positive
     total = len(test_labels)
     accuracy = lr.score(test_embeddings.numpy(), test_labels)
     correct = int(accuracy * total)

@@ -4,7 +4,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torch import Tensor
-from jaxtyping import Float, Int
+from jaxtyping import Float, Int, Bool
 from typeguard import typechecked
 import einops
 
@@ -20,8 +20,27 @@ from transformer_lens.utils import get_attention_mask
 
 
 def get_final_non_pad_token(
-    logits: Float[Tensor, "batch pos vocab"],
     attention_mask: Int[Tensor, "batch pos"],
+) -> Int[Tensor, "batch"]:
+    # Get the last non-pad token
+    position_index = einops.repeat(
+        torch.arange(attention_mask.shape[1], device=attention_mask.device),
+        "pos -> batch pos",
+        batch=attention_mask.shape[0],
+    )
+    masked_position = torch.where(
+        attention_mask == 0, torch.full_like(position_index, -1), position_index
+    )
+    last_non_pad_token = einops.reduce(
+        masked_position, "batch pos -> batch", reduction="max"
+    )
+    assert (last_non_pad_token >= 0).all()
+    return last_non_pad_token
+
+
+def get_final_non_pad_logits(
+    logits: Float[Tensor, "batch pos vocab"],
+    attention_mask: Int[Tensor, "batch pos"], 
 ) -> Float[Tensor, "batch vocab"]:
     """Gets the final non-pad token from a tensor.
 
@@ -32,19 +51,7 @@ def get_final_non_pad_token(
     Returns:
         torch.Tensor: Final non-pad token logits.
     """
-    # Get the last non-pad token
-    position_index = einops.repeat(
-        torch.arange(logits.shape[1], device=logits.device),
-        "pos -> batch pos",
-        batch=logits.shape[0],
-    )
-    masked_position = torch.where(
-        attention_mask == 0, torch.full_like(position_index, -1), position_index
-    )
-    last_non_pad_token = einops.reduce(
-        masked_position, "batch pos -> batch", reduction="max"
-    )
-    assert (last_non_pad_token >= 0).all()
+    last_non_pad_token = get_final_non_pad_token(attention_mask)
     # Get the final token logits
     final_token_logits = logits[
         torch.arange(logits.shape[0]), last_non_pad_token, :
@@ -117,10 +124,11 @@ def get_final_token_logits(
     elif tokenizer is None and logits.ndim == 2:
         final_token_logits = logits
     else:
+        assert tokens is not None
         mask = get_attention_mask(
             tokenizer, tokens, prepend_bos=False
         )
-        final_token_logits = get_final_non_pad_token(logits, mask)
+        final_token_logits = get_final_non_pad_logits(logits, mask)
     return final_token_logits
 
 
@@ -220,13 +228,13 @@ def get_log_probs(
     if answer_tokens.ndim == 2:
         answer_tokens = answer_tokens.unsqueeze(1)
     n_pairs = answer_tokens.shape[1]
-    logits: Float[Tensor, "batch vocab"] = get_final_token_logits(
+    final_token_logits: Float[Tensor, "batch vocab"] = get_final_token_logits(
         logits, tokens=tokens, tokenizer=tokenizer
     )
     assert len(answer_tokens.shape) == 2
     
     # convert logits to log probabilities
-    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+    log_probs = torch.nn.functional.log_softmax(final_token_logits, dim=-1)
     
     # get the log probs for the answer tokens
     log_probs_repeated = einops.repeat(
@@ -251,7 +259,7 @@ def log_prob_diff_noising(
     return_tensor: bool = False,
     tokens: Optional[Int[Tensor, "batch pos"]] = None,
     tokenizer: Optional[PreTrainedTokenizerBase] = None,
-) -> Float[Tensor, ""]:
+) -> Union[float, Float[Tensor, ""]]:
     """
     Linear function of log prob, calibrated so that it equals 0 when performance is
     same as on clean input, and 1 when performance is same as on flipped input.
@@ -276,7 +284,7 @@ def log_prob_diff_denoising(
     return_tensor: bool = False,
     tokens: Optional[Int[Tensor, "batch pos"]] = None,
     tokenizer: Optional[PreTrainedTokenizerBase] = None,
-) -> Float[Tensor, ""]:
+) -> Union[float, Float[Tensor, ""]]:
     """
     Linear function of log prob, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
@@ -301,7 +309,7 @@ def logit_diff_denoising(
     return_tensor: bool = False,
     tokens: Optional[Int[Tensor, "batch pos"]] = None,
     tokenizer: Optional[PreTrainedTokenizerBase] = None,
-) -> Float[Tensor, ""]:
+) -> Union[float, Float[Tensor, ""]]:
     '''
     Linear function of logit diff, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
@@ -326,7 +334,7 @@ def prob_diff_denoising(
     return_tensor: bool = False,
     tokens: Optional[Int[Tensor, "batch pos"]] = None,
     tokenizer: Optional[PreTrainedTokenizerBase] = None,
-) -> float:
+) -> Union[float, Float[Tensor, ""]]:
     '''
     Linear function of prob diff, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
@@ -336,7 +344,7 @@ def prob_diff_denoising(
     patched_logit_diff = get_prob_diff(
         logits, answer_tokens, tokens=tokens, tokenizer=tokenizer
     )
-    ld = ((patched_logit_diff - flipped_value) / (clean_value  - flipped_value)).item()
+    ld = ((patched_logit_diff - flipped_value) / (clean_value  - flipped_value))
     if return_tensor:
         return ld
     else:
@@ -346,6 +354,7 @@ def prob_diff_denoising(
 def center_logit_diffs(
     logit_diffs: Float[Tensor, "batch"],
     answer_tokens: Int[Tensor, "batch *n_pairs 2"], 
+    is_positive: Bool[Tensor, "batch"],
 ) -> Tuple[Float[Tensor, "batch"], float]:
     """
     Useful to debias a model when using as a binary classifier
@@ -353,10 +362,7 @@ def center_logit_diffs(
     device = logit_diffs.device
     if answer_tokens.ndim == 2:
         answer_tokens = answer_tokens.unsqueeze(1)
-    is_positive = (
-        answer_tokens[:, 0, 0] == 
-        answer_tokens[0, 0, 0]
-    ).to(device=device)
+    is_positive = is_positive.to(device=device)
     bias = torch.where(
         is_positive, logit_diffs, -logit_diffs
     ).mean().to(device=device)
@@ -380,7 +386,7 @@ def logit_flip_denoising(
     return_tensor: bool = False,
     tokens: Optional[Int[Tensor, "batch pos"]] = None,
     tokenizer: Optional[PreTrainedTokenizerBase] = None,
-) -> Float[Tensor, ""]:
+) -> Union[float, Float[Tensor, ""]]:
     '''
     Linear function of accuracy, calibrated so that it equals 0 when performance is
     same as on flipped input, and 1 when performance is same as on clean input.
@@ -409,7 +415,7 @@ def logit_diff_noising(
     return_tensor: bool = False,
     tokens: Optional[Int[Tensor, "batch pos"]] = None,
     tokenizer: Optional[PreTrainedTokenizerBase] = None,
-) -> float:
+) -> Union[float, Float[Tensor, ""]]:
     '''
     We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
     and -1 when performance has been destroyed (i.e. is same as ABC dataset).
