@@ -48,12 +48,12 @@ class ResidualStreamDataset:
         self.model = model
         self.prompt_type = prompt_type
         self.label = label
-        label_tensor = self.prompt_tokens[
+        label_tensor: Int[Tensor, "batch"] = self.prompt_tokens[
             torch.arange(len(self.prompt_tokens)), self.position
         ].cpu().detach()
         str_tokens = [
-            f"{i}:{tok}" 
-            for i, tok in enumerate(model.to_str_tokens(label_tensor))
+            f"{pos}:{tok}" 
+            for pos, tok in zip(position, model.to_str_tokens(label_tensor))
         ]
         to_str_check = (
             len(str_tokens) == len(self.prompt_tokens) and
