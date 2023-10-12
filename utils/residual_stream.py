@@ -47,7 +47,7 @@ class ResidualStreamDataset:
         self.model = model
         self.prompt_type = prompt_type
         label_tensor = self.prompt_tokens[
-            torch.arange(len(self.prompt_tokens)), self.position, :
+            torch.arange(len(self.prompt_tokens)), self.position
         ].cpu().detach()
         to_str = model.to_string(label_tensor)
         assert isinstance(to_str, list)
