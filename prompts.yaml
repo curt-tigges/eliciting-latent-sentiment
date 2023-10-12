@@ -167,12 +167,12 @@ negative_adverbs:
 positive_feelings:
   - animated
   - blessed
-  - cheerful
+  # - cheerful
   - content
   - delighted
   - eager
   - ecstatic
-  - elevated
+  # - elevated
   - enthusiastic
   - festive
   - glad
