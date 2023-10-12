@@ -553,6 +553,14 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         self.position = position
         self.label = label
 
+    def drop_duplicates(self):
+        _, indices = torch.unique(
+            self.clean_tokens[torch.arange(len(self.clean_tokens)), self.position], 
+            dim=0, 
+            return_inverse=True
+        )
+        return self.get_subset(indices.tolist())
+
     def __add__(self, other: "CleanCorruptedDataset"):
         assert isinstance(other, CleanCorruptedDataset)
         assert self.tokenizer is not None
@@ -581,7 +589,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             self.tokenizer,
             None,
             self.label,
-        )
+        ).drop_duplicates()
 
     def get_subset(self, indices: List[int]):
         return CleanCorruptedDataset(
