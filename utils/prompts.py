@@ -486,6 +486,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
     answer_tokens: Int[Tensor, "batch pair correct"]
     is_positive: Bool[Tensor, "batch"]
     position: Bool[Tensor, "batch"]
+    label: str
 
     @typechecked
     def __init__(
@@ -527,12 +528,20 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         if isinstance(position, str):
             assert tokenizer is not None and prompt_type is not None
             example = tokenizer.tokenize(all_prompts[0])
-            example = [t.replace("Ġ", " ") for t in example]
+            example = ["<endoftext>"] + [t.replace("Ġ", " ") for t in example]
+            assert len(example) == clean_tokens.shape[1], (
+                f"Example length ({len(example)}) does not match "
+                f"clean token length ({clean_tokens.shape[1]}). "
+                f"Full example: {example}."
+            )
             placeholders = prompt_type.get_placeholder_positions(example)
             pos: int = placeholders[position][-1]
             position = torch.full_like(
                 is_positive, pos, dtype=torch.int32, device=is_positive.device
             )
+        if label is None:
+            assert isinstance(prompt_type, PromptType)
+            label = prompt_type.value
         assert isinstance(position, torch.Tensor)
         self.clean_tokens = clean_tokens
         self.corrupted_tokens = corrupted_tokens
@@ -926,8 +935,6 @@ def _get_dataset(
     position: Optional[str] = None,
     label: Optional[str] = None,
 ) -> CleanCorruptedDataset:
-    if label is None and isinstance(prompt_type, PromptType):
-        label = prompt_type.value
     if prompt_type in (
         PromptType.TREEBANK_TRAIN, PromptType.TREEBANK_TEST, PromptType.TREEBANK_DEV
     ):

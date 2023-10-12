@@ -51,18 +51,25 @@ class ResidualStreamDataset:
         label_tensor = self.prompt_tokens[
             torch.arange(len(self.prompt_tokens)), self.position
         ].cpu().detach()
-        to_str = model.to_string(label_tensor)
-        if isinstance(to_str, str):
-            to_str = to_str.split(' ')[1:]
-        assert isinstance(to_str, list) and len(to_str) == len(self.prompt_tokens), (
-            f"to_string must return a list of strings of the same length as the input tensor.\n"
-            f"to_string shape: {len(to_str)}, tensor shape: {self.prompt_tokens.shape}\n"
-            f"Full output: {to_str}\n"
+        str_tokens = model.to_str_tokens(label_tensor)
+        assert isinstance(str_tokens, list), "to_string must return a list"
+        assert isinstance(str_tokens[0], str), "to_string must return a list of strings"
+        to_str_check = (
+            len(str_tokens) == len(self.prompt_tokens) and
+            len(set(str_tokens)) == len(str_tokens)
+        )
+        assert to_str_check, (
+            "to_string must return a list of unique strings of the "
+            "same length as the input tensor.\n"
+            f"to_string type: {type(str_tokens)}, "
+            f"to_string shape: {len(str_tokens)}, "
+            f"tensor shape: {self.prompt_tokens.shape}\n"
+            f"Full output: {str_tokens}\n"
             f"Tensor: {label_tensor}\n"
             f"Position: {position}\n"
             f"Prompt type: {prompt_type}\n"
         )
-        self.str_labels = to_str
+        self.str_labels = str_tokens # type: ignore
 
     @property
     def is_positive(self) -> Bool[Tensor, "batch"]:
@@ -198,7 +205,7 @@ class ResidualStreamDataset:
             clean_corrupt_data.position,
             model,
             prompt_type,
-            label,
+            clean_corrupt_data.label,
         )
     
 

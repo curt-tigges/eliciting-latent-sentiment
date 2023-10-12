@@ -59,7 +59,7 @@ METHODS = [
 ]
 TRAIN_TYPES = [
     PromptType.SIMPLE_TRAIN,
-    PromptType.SIMPLE_ADVERB,
+    # PromptType.SIMPLE_ADVERB,
     PromptType.SIMPLE_BOOK,
     PromptType.SIMPLE_RES,
     PromptType.SIMPLE_PRODUCT,
@@ -227,6 +227,7 @@ for model_name, train_type, test_type, method in BAR:
             print(f"Skipping because file already exists: {save_path}")
             continue
         train_types = [t for t in TRAIN_TYPES if t != train_type] if ALL_BUT_ONE else train_type
+        assert not isinstance(test_type, list)
         if isinstance(method, GradientMethod):
             train_test_discrepancy = test_type != PromptType.NONE and (
                 train_type != test_type or
@@ -245,7 +246,7 @@ for model_name, train_type, test_type, method in BAR:
                 epochs = 1 if "treebank" in train_type.value else 64,
                 batch_size=BATCH_SIZES[model_name],
                 d_das=method.get_dimension(),
-                train_label=train_type.value,
+                train_label=train_type.value + "_all_but_one" if ALL_BUT_ONE else None,
             )
             print(f"Saving DAS direction to {das_path}")
             torch.cuda.empty_cache()
@@ -253,7 +254,7 @@ for model_name, train_type, test_type, method in BAR:
         else:
             trainset = ResidualStreamDataset.get_dataset(
                 model, device, prompt_type=train_types, scaffold=SCAFFOLD,
-                label=train_type.value,
+                label=train_type.value + "_all_but_one" if ALL_BUT_ONE else None,
             )
             testset = ResidualStreamDataset.get_dataset(
                 model, device, prompt_type=test_type, scaffold=SCAFFOLD

@@ -286,8 +286,6 @@ def train_classifying_direction(
     """
     Main entrypoint for training a direction using classification methods
     """
-    if test_data is None:
-        test_data = train_data
     if test_pos is None:
         test_pos = train_pos
     if test_layer is None:
@@ -309,21 +307,22 @@ def train_classifying_direction(
                 test_layer,
                 **kwargs,
             )
-            test_line, _, _, _ = fitting_method(
-                test_data, 
-                test_layer,
-                test_data, 
-                test_layer,
-                **kwargs,
-            )
+            if test_data is None:
+                test_line = train_line
+            else:
+                test_line, _, _, _ = fitting_method(
+                    test_data, 
+                    test_layer,
+                    test_data, 
+                    test_layer,
+                    **kwargs,
+                )
         except ConvergenceWarning:
             print(
                 f"Convergence warning for {method.value}; "
                 f"train type:{train_data.prompt_type}, pos: {train_pos}, layer:{train_layer}, "
-                f"test type:{test_data.prompt_type}, pos: {test_pos}, layer:{test_layer}, "
                 f"kwargs: {kwargs}\n"
                 f"train str_labels:{train_data.str_labels}\n"
-                f"test str_labels:{test_data.str_labels}\n"
             )
             return
     # write line to file
@@ -342,18 +341,19 @@ def train_classifying_direction(
         'method',
         'correct', 'total', 'accuracy', 'similarity',
     ]
-    data = [[
-        train_data.prompt_type.value, train_layer, train_pos,
-        test_data.prompt_type.value, test_layer, test_pos,
-        method.value,
-        correct, total, accuracy, cosine_sim,
-    ]]
-    stats_df = pd.DataFrame(data, columns=columns)
-    
-    update_csv(
-        stats_df, "direction_fitting_stats", model, 
-        key_cols=(
-            'method', 'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+    if test_data is not None:
+        assert isinstance(test_data.prompt_type, PromptType)
+        data = [[
+            train_data.label, train_layer, train_pos,
+            test_data.prompt_type.value, test_layer, test_pos,
+            method.value,
+            correct, total, accuracy, cosine_sim,
+        ]]
+        stats_df = pd.DataFrame(data, columns=columns)
+        update_csv(
+            stats_df, "direction_fitting_stats", model, 
+            key_cols=(
+                'method', 'train_set', 'train_pos', 'train_layer', 'test_set', 'test_pos', 'test_layer'
+            )
         )
-    )
     return array_path

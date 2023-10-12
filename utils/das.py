@@ -466,8 +466,16 @@ def get_das_dataset(
     orig_resid: Float[Tensor, "batch *pos d_model"] = results.corrupted_cache[act_name]
     new_resid: Float[Tensor, "batch *pos d_model"] = results.clean_cache[act_name]
     if orig_resid.ndim == 3:
-        orig_resid = orig_resid[torch.arange(len(orig_resid)), clean_corrupt_data.position, :]
-        new_resid = new_resid[torch.arange(len(new_resid)), clean_corrupt_data.position, :]
+        orig_resid = orig_resid[
+            torch.arange(len(orig_resid)), 
+            clean_corrupt_data.position.to(orig_resid.device), 
+            :
+        ]
+        new_resid = new_resid[
+            torch.arange(len(new_resid)), 
+            clean_corrupt_data.position.to(new_resid.device), 
+            :
+        ]
     # Create a TensorDataset from the tensors
     das_dataset = TensorDataset(
         clean_corrupt_data.corrupted_tokens.detach().cpu(), 
