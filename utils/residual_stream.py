@@ -50,6 +50,8 @@ class ResidualStreamDataset:
             torch.arange(len(self.prompt_tokens)), self.position
         ].cpu().detach()
         to_str = model.to_string(label_tensor)
+        if isinstance(to_str, str):
+            to_str = to_str.split(' ')
         assert isinstance(to_str, list), (
             f"to_string must return a list of strings, got {type(to_str)} instead.\n"
             f"Full output: {to_str}\n"
