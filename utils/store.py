@@ -16,7 +16,7 @@ import imgkit
 
 DIRECTION_PATTERN = (
     r'^(kmeans|pca|das|das2d|das3d|logistic_regression|mean_diff|random_direction)_'
-    r'(?:(simple_adverb|simple_book|simple_product|simple_train|simple_res|treebank_train)_(ADJ|ADV|ALL|FEEL|NOUN|VRB)_)'
+    r'(?:(simple_adverb|simple_book|simple_product|simple_train|simple_res|treebank_train)_(ADJ|ADV|ALL|FEEL|NOUN|VRB|all_but_one)_)'
     r'layer(\d*)'
     r'\.npy$'
 )
