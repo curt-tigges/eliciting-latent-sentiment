@@ -71,7 +71,7 @@ def hook_fn_base(
     resid: Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
     layer: int,
-    position: Optional[Int[Tensor, "batch"]],
+    position: Optional[Union[int, Int[Tensor, "batch"]]],
     new_value: Float[Tensor, "batch *pos d_model"]
 ):
     batch_size, seq_len, d_model = resid.shape
@@ -81,6 +81,13 @@ def hook_fn_base(
     if position is None:
         assert new_value.shape == resid.shape
         return new_value
+    if isinstance(position, int):
+        position = torch.tensor(position, device=resid.device)
+        position = einops.repeat(
+            position,
+            " -> batch",
+            batch=batch_size,
+        )
     new_value_repeat = einops.repeat(
         new_value,
         "batch d_model -> batch pos d_model",

@@ -512,9 +512,12 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             prompt_type is not None and len(prompt_type.get_placeholders()) == 0
         )
         if position is None and no_placeholders:
-            mask = get_attention_mask(
-                tokenizer, clean_tokens, prepend_bos=False
-            )
+            if tokenizer is None:
+                mask = torch.ones_like(clean_tokens, dtype=torch.bool)
+            else:
+                mask = get_attention_mask(
+                    tokenizer, clean_tokens, prepend_bos=False
+                )
             position = get_final_non_pad_token(mask)
         elif position is None and prompt_type is not None:
             # Default to first placeholder position
