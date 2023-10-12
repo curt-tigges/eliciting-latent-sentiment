@@ -53,7 +53,7 @@ class ResidualStreamDataset:
         ].cpu().detach()
         to_str = model.to_string(label_tensor)
         if isinstance(to_str, str):
-            to_str = to_str.split(' ')
+            to_str = to_str.split(' ')[1:]
         assert isinstance(to_str, list) and len(to_str) == len(self.prompt_tokens), (
             f"to_string must return a list of strings of the same length as the input tensor.\n"
             f"to_string shape: {len(to_str)}, tensor shape: {self.prompt_tokens.shape}\n"
