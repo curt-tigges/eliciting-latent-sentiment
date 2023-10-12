@@ -51,9 +51,10 @@ class ResidualStreamDataset:
         label_tensor = self.prompt_tokens[
             torch.arange(len(self.prompt_tokens)), self.position
         ].cpu().detach()
-        str_tokens = model.to_str_tokens(label_tensor)
-        assert isinstance(str_tokens, list), "to_string must return a list"
-        assert isinstance(str_tokens[0], str), "to_string must return a list of strings"
+        str_tokens = [
+            f"{i}:{tok}" 
+            for i, tok in enumerate(model.to_str_tokens(label_tensor))
+        ]
         to_str_check = (
             len(str_tokens) == len(self.prompt_tokens) and
             len(set(str_tokens)) == len(str_tokens)
@@ -69,7 +70,7 @@ class ResidualStreamDataset:
             f"Position: {position}\n"
             f"Prompt type: {prompt_type}\n"
         )
-        self.str_labels = str_tokens # type: ignore
+        self.str_labels = str_tokens
 
     @property
     def is_positive(self) -> Bool[Tensor, "batch"]:

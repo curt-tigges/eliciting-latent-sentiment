@@ -16,8 +16,8 @@ class TestCleanCorruptedDataset(unittest.TestCase):
         self.answer_tokens = torch.tensor([[2, 3], [4, 5]], dtype=torch.int32)
         self.all_prompts = ["prompt1", "prompt2"]
         self.dataset = CleanCorruptedDataset(
-            self.clean_tokens, self.corrupted_tokens, self.answer_tokens, self.all_prompts,
-            tokenizer=None,
+            self.clean_tokens, self.corrupted_tokens, self.answer_tokens, 
+            self.all_prompts, tokenizer=None, label="test",
         )
 
     def test_initialization(self):
@@ -59,6 +59,7 @@ class TestCleanCorruptedCacheResults(unittest.TestCase):
             torch.tensor([[2, 3], [4, 5]], dtype=torch.int), 
             ["prompt1", "prompt2"],
             tokenizer=None,
+            label="test",
         )
         corrupted_cache = ActivationCache({}, model=None)  # Assuming a mock model
         clean_cache = ActivationCache({}, model=None)  # Assuming a mock model
