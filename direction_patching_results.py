@@ -34,10 +34,13 @@ def get_cached_csv(
     scaffold: ReviewScaffold,
     model: Union[str, HookedTransformer],
     proj: Optional[Literal["ortho", "para"]] = None,
+    all_but_one: bool = False,
 ):
     path = f"direction_patching_{metric_label}_{use_heads_label}_{scaffold.value}"
     if proj is not None:
         path += f"_{proj}"
+    if all_but_one:
+        path += "_all_but_one"
     return get_csv(
         path, 
         model, 
@@ -100,12 +103,14 @@ def concat_cross_data(
     models: List[str], metric_labels: List[str], use_heads_label: str,
     scaffold: ReviewScaffold = ReviewScaffold.CLASSIFICATION,
     proj: Optional[Literal["ortho", "para"]] = None,
+    all_but_one: bool = False,
 ):
     metric_data = []
     for model in models:
         for metric_label in metric_labels:
             results = get_cached_csv(
-                metric_label, use_heads_label, scaffold, model, proj=proj
+                metric_label, use_heads_label, scaffold, model, proj=proj,
+                all_but_one=all_but_one,
             )
             if results.empty:
                 continue
@@ -183,6 +188,8 @@ def concat_cross_data(
     title = f"Direction patching ({metric_labels[0]}, {use_heads_label}) in {models[0]}"
     if proj is not None:
         title += f" ({proj} projection)"
+    if all_but_one:
+        title += " (all but one)"
     fig.update_layout(
         title=dict(
             text=title,
@@ -202,7 +209,8 @@ concat_cross_data(
     ["logit_diff"],
     "resid",
     ReviewScaffold.CONTINUATION,
-    proj="para"
+    proj="ortho",
+    all_but_one=True,
 )
 #%%
 concat_cross_data(
@@ -210,7 +218,7 @@ concat_cross_data(
     ["logit_diff"],
     "resid",
     ReviewScaffold.CONTINUATION,
-    proj="ortho"
+    proj="para"
 )
 #%%
 concat_cross_data(

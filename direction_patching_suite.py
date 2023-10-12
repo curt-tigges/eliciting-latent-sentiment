@@ -43,9 +43,9 @@ MODELS = [
     # 'EleutherAI/pythia-2.8b',
 ]
 DIRECTION_GLOBS = [
-    'mean_diff_simple_*.npy',
-    'logistic_regression_simple_*.npy',
-    'das_simple_*.npy',
+    'mean_diff_simple_*all_but_one*.npy',
+    'logistic_regression_simple_*all_but_one*.npy',
+    'das_simple_*all_but_one*.npy',
     # 'pca_simple_train_ADJ*.npy',
     # 'kmeans_simple_train_ADJ*.npy',
     # 'das2d_simple_train_ADJ*.npy',
@@ -56,7 +56,7 @@ DIRECTION_GLOBS = [
 PROMPT_TYPES = [
     # PromptType.SIMPLE_TEST,
     # PromptType.TREEBANK_TEST,
-    PromptType.SIMPLE_ADVERB,
+    # PromptType.SIMPLE_ADVERB,
     PromptType.SIMPLE_BOOK,
     PromptType.SIMPLE_PRODUCT,
     PromptType.SIMPLE_RES,
@@ -83,6 +83,27 @@ def get_model(name: str) -> HookedTransformer:
     model.set_use_attn_result(True)
     return model
 #%% # Direction loading
+def get_direction(label: str, model: HookedTransformer) -> Float[Tensor, "d_model"]:
+    if "_layer0.npy" not in label:
+        # reverse zero-padding
+        label = label.replace("_layer0", "_layer")
+    if "*" in label:
+        paths = [
+            path for path in glob.glob(os.path.join('data', model_name, label))
+            if "all_but_one" not in path and "None" not in path and
+            "_ALL_" not in path
+        ]
+        assert len(paths) == 1, f"Found {len(paths)} paths for {label}: {paths}"
+        label = os.path.split(paths[0])[-1]
+    direction = load_array(label, model)
+    if direction.ndim == 2 and direction.shape[1] == 1:
+            direction = direction.squeeze(1)
+    elif direction.ndim == 2 and direction.shape[0] == 1:
+        direction = direction.squeeze(0)
+    assert direction.ndim <= 3, f"Direction {label} has shape {direction.shape}"
+    direction = torch.tensor(direction).to(device, dtype=torch.float32)
+    return direction
+#%%
 def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str]]:
     model_name = get_model_name(model)
     
@@ -90,7 +111,7 @@ def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str
         path
         for glob_str in DIRECTION_GLOBS
         for path in glob.glob(os.path.join('data', model_name, glob_str))
-        if "None" not in path and "_all_" not in path and "_activations" not in path and '_ALL_' not in path
+        if "None" not in path and "_activations" not in path and '_ALL_' not in path
         and 'french' not in path # FIXME: remove this
     ]
     direction_labels = [os.path.split(path)[-1] for path in direction_paths]
@@ -102,15 +123,8 @@ def get_directions(model: HookedTransformer) -> Tuple[List[np.ndarray], List[str
             if any([f"layer{l}" in label for l in layers_to_keep])
         ]
     directions = [
-        load_array(label, model) for label in direction_labels
+        get_direction(label, model) for label in direction_labels
     ]
-    for i, direction in enumerate(directions):
-        if direction.ndim == 2 and direction.shape[1] == 1:
-            direction = direction.squeeze(1)
-        elif direction.ndim == 2 and direction.shape[0] == 1:
-            direction = direction.squeeze(0)
-        assert direction.ndim <= 3, f"Direction {direction_labels[i]} has shape {direction.shape}"
-        directions[i] = torch.tensor(direction).to(device, dtype=torch.float32)
     direction_labels = [zero_pad_layer_string(label) for label in direction_labels]
     sorted_indices = sorted(
         range(len(direction_labels)), key=lambda i: direction_labels[i]
@@ -449,8 +463,10 @@ def get_results_for_metric(
     use_heads_label = "resid" if heads is None else "attn_result"
     metric_label = patching_metric_base.__name__.replace('_base', '').replace('_denoising', '')
     proj_label = "" if proj is None else f"_{proj}"
+    all_but_one_label = "_all_but_one" if "all_but_one" in direction_labels[0] else ""
     csv_path = (
-        f"direction_patching_{metric_label}_{use_heads_label}_{scaffold.value}{proj_label}.csv"
+        f"direction_patching_{metric_label}_{use_heads_label}_"
+        f"{scaffold.value}{proj_label}{all_but_one_label}.csv"
     )
     # if use_cache and is_file(csv_path, model):
     #     return get_csv(csv_path, model, index_col=0, header=[0, 1])
@@ -481,9 +497,10 @@ def get_results_for_metric(
 
             )
             base_direction_label = base_direction_label[0]
-            insample = base_direction_label == direction_label
+            base_direction_label = base_direction_label.replace("_all_but_one", "*")
+            insample = base_direction_label == direction_label 
             will_zero = insample and (proj == "ortho")
-            base_direction = directions[direction_labels.index(base_direction_label)].clone()
+            base_direction = get_direction(base_direction_label, model)
             base_direction /= base_direction.norm(keepdim=True)
             direction /= direction.norm(keepdim=True)
             assert np.isclose(direction.norm().item(), 1.0)
