@@ -552,10 +552,12 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         else:
             offset1 = 0
             offset2 = 0
+        self_answers = self.answer_tokens[:, :1, :]
+        other_answers = other.answer_tokens[:, :1, :]
         return CleanCorruptedDataset(
             concatenate_tensors(self.clean_tokens, other.clean_tokens, self.tokenizer),
             concatenate_tensors(self.corrupted_tokens, other.corrupted_tokens, self.tokenizer),
-            torch.cat([self.answer_tokens, other.answer_tokens]),
+            torch.cat([self_answers, other_answers]),
             self.all_prompts + other.all_prompts,
             torch.cat([self.is_positive, other.is_positive]),
             torch.cat([self.position + offset1, other.position + offset2]),

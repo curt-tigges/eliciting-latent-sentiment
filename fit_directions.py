@@ -168,10 +168,10 @@ def select_layers(
 #     epochs=1,
 # )
 #%%
-def get_placeholder(prompt_type: PromptType):
+def get_placeholder(prompt_type: PromptType) -> Optional[str]:
     placeholders = prompt_type.get_placeholders()
     if len(placeholders) == 0:
-        placeholders = ["ALL"]
+        return None
     return placeholders[0]
 #%%
 # ============================================================================ #
@@ -216,14 +216,16 @@ for model_name, train_type, test_type, method in BAR:
             # Don't train on verbs as sample size is too small
             print("Skipping because train_pos is VRB")
             continue
-        save_path = f"{method.value}_{train_type.value}_{train_pos}_layer{train_layer}.npy"
+        train_label = f"{train_type.value}"
+        if ALL_BUT_ONE:
+            train_label += "_all_but_one"
+        if train_pos is not None:
+            train_label += f"_{train_pos}"
+        train_label += f"_layer{train_layer}"
+        save_path = f"{method.value}_{train_label}.npy"
         if SKIP_IF_EXISTS and is_file(save_path, model):
             print(f"Skipping because file already exists: {save_path}")
             continue
-        if train_pos == 'ALL':
-            train_pos = None
-        if test_pos == "ALL":
-            test_pos = None
         train_types = [t for t in TRAIN_TYPES if t != train_type] if ALL_BUT_ONE else train_type
         if isinstance(method, GradientMethod):
             train_test_discrepancy = test_type != PromptType.NONE and (
