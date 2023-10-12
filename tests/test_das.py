@@ -42,7 +42,9 @@ class TestDASFunctions(unittest.TestCase):
         orig_input = "test"
         new_value = torch.full((3, 5), 2)
         patching_metric = lambda x: torch.sum(x)
-        out = act_patch_simple(model, orig_input, new_value, layer, 1, patching_metric)
+        out = act_patch_simple(
+            model, orig_input, new_value, layer, patching_metric
+        )
         self.assertEqual(out.item(), 30)
 
     def test_training_config(self):
@@ -71,7 +73,6 @@ class TestDASFunctions(unittest.TestCase):
             'attn-only-1l',
             device=device,
         ).train()
-        model.name = 'test'
         direction, save_path = train_das_subspace(
             model, device,
             PromptType.SIMPLE, 'ADJ', 0,

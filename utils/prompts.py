@@ -508,7 +508,10 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             is_positive = (
                 answer_tokens[:, 0, 0] == answer_tokens[0, 0, 0]
             )
-        if position is None and prompt_type is not None and len(prompt_type.get_placeholders()) == 0:
+        no_placeholders = prompt_type is None or (
+            prompt_type is not None and len(prompt_type.get_placeholders()) == 0
+        )
+        if position is None and no_placeholders:
             mask = get_attention_mask(
                 tokenizer, clean_tokens, prepend_bos=False
             )
@@ -520,14 +523,13 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         if isinstance(position, str):
             assert tokenizer is not None and prompt_type is not None
             example = tokenizer.tokenize(all_prompts[0])
+            example = [t.replace("Ġ", " ") for t in example]
             placeholders = prompt_type.get_placeholder_positions(example)
             pos: int = placeholders[position][-1]
-            pos_idx = einops.repeat(
-                torch.arange(clean_tokens.shape[1]),
-                "pos -> batch pos",
-                batch=clean_tokens.shape[0],
+            position = torch.full_like(
+                is_positive, pos, dtype=torch.int32, device=is_positive.device
             )
-            position = pos_idx == pos
+        assert isinstance(position, torch.Tensor)
         self.clean_tokens = clean_tokens
         self.corrupted_tokens = corrupted_tokens
         self.answer_tokens = answer_tokens
@@ -844,10 +846,14 @@ class CleanCorruptedCacheResults:
     def center_logit_diffs(self):
         answer_tokens = self.dataset.answer_tokens
         self.corrupted_logit_diffs, self.corrupted_logit_bias = center_logit_diffs(
-            self.corrupted_logit_diffs, answer_tokens
+            self.corrupted_logit_diffs, 
+            answer_tokens, 
+            is_positive=self.dataset.is_positive,
         )
         self.clean_logit_diffs, self.clean_logit_bias = center_logit_diffs(
-            self.clean_logit_diffs, answer_tokens
+            self.clean_logit_diffs, 
+            answer_tokens,
+            is_positive=self.dataset.is_positive,
         )
 
 
@@ -966,6 +972,7 @@ def _get_dataset(
         corrupted_tokens=corrupted_tokens,
         tokenizer=model.tokenizer,
         position=position,
+        prompt_type=prompt_type,
     )
 
 

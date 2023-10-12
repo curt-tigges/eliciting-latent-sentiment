@@ -86,10 +86,19 @@ def hook_fn_base(
         "batch d_model -> batch pos d_model",
         pos=seq_len,
     )
-    position_mask = einops.repeat(
-        torch.arange(seq_len, device=resid.device) == position,
-        "pos -> batch pos d_model",
+    seq_len_rep = einops.repeat(
+        torch.arange(seq_len, device=resid.device),
+        "pos -> batch pos",
         batch=batch_size,
+    )
+    position_rep = einops.repeat(
+        position,
+        "batch -> batch pos",
+        pos=seq_len,
+    )
+    position_mask = einops.repeat(
+        position_rep == seq_len_rep,
+        "batch pos -> batch pos d_model",
         d_model=d_model,
     )
     out = torch.where(
@@ -449,8 +458,8 @@ def get_das_dataset(
     orig_resid: Float[Tensor, "batch *pos d_model"] = results.corrupted_cache[act_name]
     new_resid: Float[Tensor, "batch *pos d_model"] = results.clean_cache[act_name]
     if orig_resid.ndim == 3:
-        orig_resid = orig_resid[:, clean_corrupt_data.position, :]
-        new_resid = new_resid[:, clean_corrupt_data.position, :]
+        orig_resid = orig_resid[torch.arange(len(orig_resid)), clean_corrupt_data.position, :]
+        new_resid = new_resid[torch.arange(len(new_resid)), clean_corrupt_data.position, :]
     # Create a TensorDataset from the tensors
     das_dataset = TensorDataset(
         clean_corrupt_data.corrupted_tokens.detach().cpu(), 

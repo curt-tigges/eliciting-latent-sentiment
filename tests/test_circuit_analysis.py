@@ -29,7 +29,7 @@ from typing import List, Union
 from utils.circuit_analysis import (
     get_logit_diff, residual_stack_to_logit_diff, cache_to_logit_diff, 
     project_to_subspace, create_cache_for_dir_patching, get_prob_diff,
-    get_final_non_pad_token,
+    get_final_non_pad_logits,
 )
 import unittest
 
@@ -218,7 +218,7 @@ class TestFinalNonPadToken(unittest.TestCase):
             [0.3, 0.2, 0.1]
         ])
         self.assertTrue(torch.allclose(
-            get_final_non_pad_token(self.logits, attention_mask), expected
+            get_final_non_pad_logits(self.logits, attention_mask), expected
         ))
 
     def test_all_zeros(self):
@@ -229,7 +229,7 @@ class TestFinalNonPadToken(unittest.TestCase):
         ])
         # check raises assertion error
         with self.assertRaises(AssertionError):
-            get_final_non_pad_token(self.logits, attention_mask)
+            get_final_non_pad_logits(self.logits, attention_mask)
 
     def test_all_ones(self):
         # Test case 3: All ones in attention mask
@@ -242,7 +242,7 @@ class TestFinalNonPadToken(unittest.TestCase):
             [0.3, 0.2, 0.1]
         ])
         self.assertTrue(torch.allclose(
-            get_final_non_pad_token(self.logits, attention_mask), expected
+            get_final_non_pad_logits(self.logits, attention_mask), expected
         ))
     
     def test_single_batch(self):
@@ -257,7 +257,7 @@ class TestFinalNonPadToken(unittest.TestCase):
             [0.7, 0.8]
         ])
         self.assertTrue(torch.allclose(
-            get_final_non_pad_token(logits, attention_mask), expected
+            get_final_non_pad_logits(logits, attention_mask), expected
         ))
 
 
