@@ -162,7 +162,9 @@ class ResidualStreamDataset:
         )
         out: Float[Tensor, "batch pos d_model"] = cache[hook]
         return out[
-            torch.arange(len(out), device=out.device), self.position, :
+            torch.arange(len(out), device=out.device), 
+            self.position.to(device=out.device), 
+            :
         ].detach().cpu()
     
     @classmethod
