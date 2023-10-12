@@ -8,7 +8,16 @@ from torch.utils.data import DataLoader, TensorDataset
 from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.utils import get_act_name
 from tqdm.auto import tqdm
+from collections import Counter
 from utils.prompts import ReviewScaffold, get_dataset, PromptType
+
+
+def find_duplicates(lst):
+    # Count occurrences of each item in the list
+    counter = Counter(lst)
+    # Find items where count > 1, indicating they are duplicates
+    duplicates = [item for item, count in counter.items() if count > 1]
+    return duplicates
 
 
 def get_resid_name(layer: int, model: HookedTransformer) -> Tuple[str, int]:
@@ -55,6 +64,19 @@ class ResidualStreamDataset:
             f"{tok}" 
             for tok in model.to_str_tokens(label_tensor)
         ]
+        assert len(str_tokens) == len(self.prompt_tokens)
+        str_tokens_dups = find_duplicates(str_tokens)
+        assert len(str_tokens_dups) == 0, (
+            "to_string must return a list of unique strings of the "
+            "same length as the input tensor.\n"
+            f"to_string dupes: {str_tokens_dups}, "
+            f"to_string shape: {len(str_tokens)}, "
+            f"tensor shape: {self.prompt_tokens.shape}\n"
+            f"Full output: {str_tokens}\n"
+            f"Tensor: {label_tensor}\n"
+            f"Position: {position}\n"
+            f"Prompt type: {prompt_type}\n"
+        )
         to_str_check = (
             len(str_tokens) == len(self.prompt_tokens) and
             len(set(str_tokens)) == len(str_tokens)
