@@ -39,6 +39,16 @@ The for-loop at the bottom of the file performs the directional activation patch
 
 Then `direction_patching_results.py` is a very quick and basic script to generate the plots shown in the paper using the cached CSV files from the first step.
 
+#### Circuit Analyses
+The code used to analyze circuits performing various functions can be found in the notebook files prepended with `circuit`. `mood_inference` refers to circuits for the ToyMoodStories dataset or variants thereof. `simple_sentiment` refers to the ToyMovieReview dataset. In addition, we performed a number of analyses that we did not cover in the paper--e.g., sentiment continuation and classification in Pythia 1.4b.
+
+Circuit analysis notebooks include a range of experiments that look at attention patterns and model components using patching experiments. Depending on the task, additional experiments may be included. Each notebook is specific to a dataset and model, and can be run top to bottom. 
+
+Note: Some of the dataset generation code may be outdated in a few of these notebooks. We have updated the most important of these, but if you find this is the case for a notebook you use, you can replace the dataset generation code to use the latest `get_dataset` function in `utils.py`.
+
+#### Summarization Experiments
+
+
 #### Treebank data
 Before the Treebank dataset can be used, it is necessary to first run `treebank_data_gen.py` to write pickle files locally.
 
