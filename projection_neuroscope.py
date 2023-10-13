@@ -10,7 +10,6 @@ from datasets import load_dataset
 import einops
 from jaxtyping import Float, Int, Bool
 from typing import Dict, Iterable, List, Tuple, Union, Literal
-from typing import Dict, Iterable, List, Tuple, Union, Literal
 from transformer_lens import HookedTransformer
 from transformer_lens.evals import make_owt_data_loader
 from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_act_name, test_prompt
@@ -59,7 +58,7 @@ def render_local(html):
 # hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
 # harry_potter_neuroscope = plot_neuroscope(
 #     hp_4_paras, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5,
+#     special_dir=sentiment_dir, default_layer=7,
 #     show_selectors=False,
 # )
 # save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
@@ -68,7 +67,7 @@ def render_local(html):
 # ============================================================================ #
 # harry_potter_fr_neuroscope = plot_neuroscope(
 #     harry_potter_fr_start, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5, 
+#     special_dir=sentiment_dir, default_layer=7, 
 #     show_selectors=False,
 # )
 # save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
@@ -216,18 +215,7 @@ def test_prefixes(fragment: str, prefixes: List[str], model: HookedTransformer):
 # ============================================================================ #
 # Negations
 #%%
-negation_short = plot_neuroscope(
-    """You never fail. Don't doubt it. I don't like you.""", 
-    model,
-    centred=False,
-    default_layer=list(range(1, model.cfg.n_layers, 3)), 
-    special_dir=sentiment_dir,
-    show_selectors=False,
-)
-render_local(negation_short)
-save_html(negation_short, "neuroscope_negations", model)
-#%%
-negation_full = plot_neuroscope(
+negation = plot_neuroscope(
     """You never fail. Don't doubt it. I don't like you.""", 
     model,
     centred=False,
@@ -235,25 +223,8 @@ negation_full = plot_neuroscope(
     special_dir=sentiment_dir,
     show_selectors=False,
 )
-render_local(negation_full)
-save_html(negation_full, "negation_full", model)
-#%%
-# negation = plot_neuroscope(
-#     "You never fail. Don't doubt it. I am not uncertain.", 
-# negation = plot_neuroscope(
-#     "You never fail. Don't doubt it. I am not uncertain.", 
-#     model,
-#     centred=False,
-#     default_layer="all", 
-#     special_dir=sentiment_dir,
-#     show_selectors=False,
-#     centred=False,
-#     default_layer="all", 
-#     special_dir=sentiment_dir,
-#     show_selectors=False,
-# )
-# save_html(negation, "negation", model)
-# render_local(negation)
+render_local(negation)
+save_html(negation, "negation_full", model)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
