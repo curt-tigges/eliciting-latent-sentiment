@@ -233,6 +233,17 @@ negation_full = plot_neuroscope(
 render_local(negation_full)
 save_html(negation_full, "negation_full", model)
 #%%
+# negation = plot_neuroscope(
+#     "You never fail. Don't doubt it. I am not uncertain.", 
+#     model,
+#     centred=False,
+#     default_layer="all", 
+#     special_dir=sentiment_dir,
+#     show_selectors=False,
+# )
+# save_html(negation, "negation", model)
+# render_local(negation)
+#%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
 #%%
@@ -594,6 +605,20 @@ for file_name, batch_pos in batch_pos_dict.items():
     )
     render_local(html)
     display(HTML(html.local_src))
+# for file_name, batch_pos in batch_pos_dict.items():
+#     html = plot_batch_pos(
+#         sentiment_activations, 
+#         dataloader, 
+#         model, 
+#         batch_pos,
+#         centred=True,
+#         file_name=file_name,
+#         window_size=2,
+#         show_selectors=False,
+#         verbose=False,
+#     )
+#     display(HTML(html.local_src))
+>>>>>>> a82b82d (Misc changes for comma experiments)
 #%%
 # ============================================================================ #
 # Top k max activating examples
