@@ -16,6 +16,7 @@ from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_ac
 from transformer_lens.hook_points import HookPoint
 from circuitsvis.activations import text_neuron_activations
 from circuitsvis.utils.render import RenderedHTML
+from circuitsvis.utils.render import RenderedHTML
 from tqdm.notebook import tqdm
 from IPython.display import display, HTML
 from IPython.display import display, HTML
@@ -50,6 +51,8 @@ sentiment_dir /= sentiment_dir.norm()
 #%%
 def render_local(html):
     display(HTML(html.local_src))
+def render_local(html):
+    display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Harry Potter example
@@ -58,34 +61,21 @@ def render_local(html):
 # hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
 # harry_potter_neuroscope = plot_neuroscope(
 #     hp_4_paras, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=7,
+#     special_dir=sentiment_dir, default_layer=5,
 #     show_selectors=False,
 # )
 # save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
+# render_local(harry_potter_neuroscope)
 # render_local(harry_potter_neuroscope)
 #%%
 # ============================================================================ #
 # harry_potter_fr_neuroscope = plot_neuroscope(
 #     harry_potter_fr_start, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=7, 
+#     special_dir=sentiment_dir, default_layer=5, 
 #     show_selectors=False,
 # )
 # save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
 # render_local(harry_potter_fr_neuroscope)
-#%%
-# french_short_text = """et son bon à rien de mari
-# ils étaient parfaitement normaux
-# gris et triste et rien dans
-# la plus sinistre pour aller
-# """
-# french_neuroscope = plot_neuroscope(
-#     french_short_text, model, centred=True, verbose=False,
-#     special_dir=sentiment_dir, default_layer=7,
-#     show_selectors=False,
-#     prepend_bos=False,
-# )
-# save_html(french_neuroscope, "french_short_text", model)
-# render_local(french_neuroscope)
 #%%
 # Mandarin example
 # mandarin_text = """
@@ -339,6 +329,7 @@ def sample_by_bin(
     df['text'] = texts
     return df.sample(frac=1, random_state=seed).reset_index(drop=True)
 # #%%
+# #%%
 bin_samples = sample_by_bin(
     sentiment_activations[:, :, 1], verbose=False
 )
@@ -374,9 +365,27 @@ labelled_bin_samples
 #     showlegend=True,
 # )
 # fig.show()
+# #%%
+# fig = px.histogram(
+#     labelled_bin_samples,
+#     x="activation",
+#     color="sentiment",
+#     nbins=200,
+#     title="Histogram of sentiment activations by label",
+#     barmode="overlay",
+#     marginal="rug",
+#     histnorm="probability density",
+#     hover_data=["token", "text"]
+# )
+# fig.update_layout(
+#     title_x=0.5,
+#     showlegend=True,
+# )
+# fig.show()
 
 #%%
 def plot_bin_proportions(df: pd.DataFrame, nbins=50):
+    sentiments = sorted(df['sentiment'].unique())
     sentiments = sorted(df['sentiment'].unique())
     df = df.sort_values(by='activation').reset_index(drop=True)
     df['activation_cut'] = pd.cut(df.activation, bins=nbins)
@@ -421,6 +430,11 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
 
     return fig
 #%%
+fig = plot_bin_proportions(labelled_bin_samples)
+save_pdf(fig, "bin_proportions", model)
+save_html(fig, "bin_proportions", model)
+save_pdf(fig, "bin_proportions", model)
+fig.show()
 fig = plot_bin_proportions(labelled_bin_samples)
 save_pdf(fig, "bin_proportions", model)
 save_html(fig, "bin_proportions", model)
@@ -532,7 +546,6 @@ def plot_batch_pos(
     file_name: str = "sentiment_at_batch_pos",
     show_selectors: bool = True,
     verbose: bool = False,
-    prepend_bos: bool = False,
 ):
     """
     One-sided topk plotting.
@@ -541,9 +554,9 @@ def plot_batch_pos(
     device = all_activations.device
     layers = all_activations.shape[-1]
     zeros = torch.zeros((1, layers), device=device, dtype=torch.float32)
-    texts = []
+    texts = [model.tokenizer.bos_token]
     text_to_not_repeat = set()
-    acts = []
+    acts = [zeros]
     text_sep = "\n"
     for batch, pos in batch_and_pos:
         text_window: List[str] = extract_text_window(
@@ -574,7 +587,6 @@ def plot_batch_pos(
         activations=acts_cat, 
         verbose=verbose,
         show_selectors=show_selectors,
-        prepend_bos=prepend_bos,
     )
     save_html(html, file_name, model)
     return html
@@ -584,24 +596,22 @@ batch_pos_dict = dict(
     neuroscope_adjectives=[(2861, 739), (5957, 800), (3889, 480), (1313, 528)],
     neuroscope_adverbs=[(10095, 900), (7733, 740), (5479, 471), (2559, 426)],
     neuroscope_nouns=[(2439, 800), (4428, 862), (1230, 281), (7327, 81)],
-    # neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
+    neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
     neuroscope_medical=[(6690, 669), (3852, 819), (9791, 460), (7888, 326)],
 )
-for file_name, batch_pos in batch_pos_dict.items():
-    html = plot_batch_pos(
-        sentiment_activations, 
-        dataloader, 
-        model, 
-        batch_pos,
-        centred=True,
-        file_name=file_name,
-        window_size=2,
-        show_selectors=False,
-        verbose=False,
-        prepend_bos=False,
-    )
-    render_local(html)
-    display(HTML(html.local_src))
+# for file_name, batch_pos in batch_pos_dict.items():
+#     html = plot_batch_pos(
+#         sentiment_activations, 
+#         dataloader, 
+#         model, 
+#         batch_pos,
+#         centred=True,
+#         file_name=file_name,
+#         window_size=2,
+#         show_selectors=False,
+#         verbose=False,
+#     )
+#     display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Top k max activating examples
