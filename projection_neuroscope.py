@@ -16,7 +16,6 @@ from transformer_lens.utils import get_dataset, tokenize_and_concatenate, get_ac
 from transformer_lens.hook_points import HookPoint
 from circuitsvis.activations import text_neuron_activations
 from circuitsvis.utils.render import RenderedHTML
-from circuitsvis.utils.render import RenderedHTML
 from tqdm.notebook import tqdm
 from IPython.display import display, HTML
 from IPython.display import display, HTML
@@ -26,7 +25,6 @@ from plotly.subplots import make_subplots
 import os
 import pandas as pd
 import scipy.stats as stats
-from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv, save_pdf, save_pickle
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text, to_csv, get_csv, save_pdf, save_pickle
 from utils.neuroscope import (
     plot_neuroscope, get_dataloader, get_projections_for_text, plot_top_p, plot_topk, 
@@ -51,8 +49,6 @@ sentiment_dir /= sentiment_dir.norm()
 #%%
 def render_local(html):
     display(HTML(html.local_src))
-def render_local(html):
-    display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Harry Potter example
@@ -61,7 +57,7 @@ def render_local(html):
 # hp_4_paras = "\n\n".join(harry_potter_start.split("\n\n")[:4])
 # harry_potter_neuroscope = plot_neuroscope(
 #     hp_4_paras, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5,
+#     special_dir=sentiment_dir, default_layer=7,
 #     show_selectors=False,
 # )
 # save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
@@ -71,7 +67,7 @@ def render_local(html):
 # ============================================================================ #
 # harry_potter_fr_neuroscope = plot_neuroscope(
 #     harry_potter_fr_start, model, centred=True, verbose=False, 
-#     special_dir=sentiment_dir, default_layer=5, 
+#     special_dir=sentiment_dir, default_layer=7, 
 #     show_selectors=False,
 # )
 # save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
@@ -139,8 +135,6 @@ def run_steering_search(
     prompt: str = "I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
 ) -> Tuple[str, Dict[int, List[str]]]:
     torch.manual_seed(seed)
-    text = ""
-    coef_dict = dict()
     text = ""
     coef_dict = dict()
     for coef, sample in tqdm(itertools.product(coefs, range(samples)), total=len(coefs) * samples):
@@ -225,19 +219,13 @@ save_html(negation_short, "negation_short", model)
 # Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
 
 # From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
-# From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
 
-# Regrettably, the characters, ostensibly intended to be the vessels through which the audience navigates the tumultuous currents of historical transformation, emerge as little more than hollow archetypes, devoid of psychological nuance or relatable verisimilitude. Their interactions, laden with stilted dialogues and ponderous monologues, meander aimlessly in the midst of a ponderous expanse, rendering their ostensibly profound endeavors an exercise in vapid verbosity rather than poignant engagement.
 # Regrettably, the characters, ostensibly intended to be the vessels through which the audience navigates the tumultuous currents of historical transformation, emerge as little more than hollow archetypes, devoid of psychological nuance or relatable verisimilitude. Their interactions, laden with stilted dialogues and ponderous monologues, meander aimlessly in the midst of a ponderous expanse, rendering their ostensibly profound endeavors an exercise in vapid verbosity rather than poignant engagement.
 
 # The directorial predilection for intellectual acrobatics is manifest in the labyrinthine structure of the narrative, wherein chronology becomes a malleable construct, flitting whimsically between past and present without discernible rhyme or reason. While this narrative elasticity might have been wielded as a potent tool of thematic resonance, it instead metastasizes into an obfuscating force that imparts a sense of disjointed incoherence upon the cinematic proceedings, leaving the viewer to grapple with a puzzling tapestry of events that resist cohesive assimilation.
-# The directorial predilection for intellectual acrobatics is manifest in the labyrinthine structure of the narrative, wherein chronology becomes a malleable construct, flitting whimsically between past and present without discernible rhyme or reason. While this narrative elasticity might have been wielded as a potent tool of thematic resonance, it instead metastasizes into an obfuscating force that imparts a sense of disjointed incoherence upon the cinematic proceedings, leaving the viewer to grapple with a puzzling tapestry of events that resist cohesive assimilation.
 
 # Moreover, the fervent desire to imbue the proceedings with a veneer of intellectual profundity is acutely palpable within the film's verbiage-laden script. Dialogue, often comprising polysyllabic words of labyrinthine complexity, becomes an exercise in linguistic gymnastics that strays perilously close to the precipice of unintentional self-parody. This quixotic dalliance with ostentatious vocabulary serves only to erect an insurmountable barrier between the audience and the narrative, relegating the viewer to a state of befuddled detachment.
-# Moreover, the fervent desire to imbue the proceedings with a veneer of intellectual profundity is acutely palpable within the film's verbiage-laden script. Dialogue, often comprising polysyllabic words of labyrinthine complexity, becomes an exercise in linguistic gymnastics that strays perilously close to the precipice of unintentional self-parody. This quixotic dalliance with ostentatious vocabulary serves only to erect an insurmountable barrier between the audience and the narrative, relegating the viewer to a state of befuddled detachment.
 
-# In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
-# """
 # In summation, "Oppenheimer," for all its aspirations to ascend the cinematic pantheon as an erudite exploration of historical gravitas, falters egregiously beneath the weight of its own ponderous ambitions. With an overarching penchant for verbal ostentation over emotional resonance, a narrative structure that veers perilously into the realm of disjointed incoherence, and characters bereft of authentic vitality, this cinematic endeavor sadly emerges as an exercise in cinematic misdirection that regrettably fails to ignite the intellectual or emotional faculties of its audience.
 # """
 # plot_neuroscope(multi_token_negative_text, centred=True, verbose=False, model=model, special_dir=sentiment_dir)
@@ -365,27 +353,9 @@ labelled_bin_samples
 #     showlegend=True,
 # )
 # fig.show()
-# #%%
-# fig = px.histogram(
-#     labelled_bin_samples,
-#     x="activation",
-#     color="sentiment",
-#     nbins=200,
-#     title="Histogram of sentiment activations by label",
-#     barmode="overlay",
-#     marginal="rug",
-#     histnorm="probability density",
-#     hover_data=["token", "text"]
-# )
-# fig.update_layout(
-#     title_x=0.5,
-#     showlegend=True,
-# )
-# fig.show()
 
 #%%
 def plot_bin_proportions(df: pd.DataFrame, nbins=50):
-    sentiments = sorted(df['sentiment'].unique())
     sentiments = sorted(df['sentiment'].unique())
     df = df.sort_values(by='activation').reset_index(drop=True)
     df['activation_cut'] = pd.cut(df.activation, bins=nbins)
@@ -435,13 +405,7 @@ save_pdf(fig, "bin_proportions", model)
 save_html(fig, "bin_proportions", model)
 save_pdf(fig, "bin_proportions", model)
 fig.show()
-fig = plot_bin_proportions(labelled_bin_samples)
-save_pdf(fig, "bin_proportions", model)
-save_html(fig, "bin_proportions", model)
-save_pdf(fig, "bin_proportions", model)
-fig.show()
 #%%
-# fig = plot_stacked_histogram(labelled_bin_samples)
 # fig = plot_stacked_histogram(labelled_bin_samples)
 #%%
 # ============================================================================ #
@@ -474,8 +438,6 @@ def plot_weighted_histogram(df: pd.DataFrame, nbins: int = 100):
         ))
 
     fig.update_layout(
-        barmode="stack", 
-        title="Stacked Histogram of Sentiment by Activation", # Anthropic Graph 2
         barmode="stack", 
         title="Stacked Histogram of Sentiment by Activation", # Anthropic Graph 2
         title_x=0.5,
@@ -554,9 +516,9 @@ def plot_batch_pos(
     device = all_activations.device
     layers = all_activations.shape[-1]
     zeros = torch.zeros((1, layers), device=device, dtype=torch.float32)
-    texts = [model.tokenizer.bos_token]
+    texts = []
     text_to_not_repeat = set()
-    acts = [zeros]
+    acts = []
     text_sep = "\n"
     for batch, pos in batch_and_pos:
         text_window: List[str] = extract_text_window(
@@ -646,9 +608,6 @@ def expand_exclusions(exclusions: Iterable[str]):
 #%%
 exclusions = [
     # proper nouns
-    'Flint', 'Fukushima', 'Obama', 'Assad', 'Gaza',
-    'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
-    'DoS', 'Medicaid', 'Kissinger',
     'Flint', 'Fukushima', 'Obama', 'Assad', 'Gaza',
     'CIA', 'BP', 'istan', 'VICE', 'TSA', 'Mitt', 'Romney', 'Afghanistan', 'Kurd', 'Molly',
     'DoS', 'Medicaid', 'Kissinger',
@@ -925,12 +884,9 @@ def plot_top_mean_variance(
     fig.update_layout(title_text="Most extreme standard deviations", title_x=0.5)
     save_html(fig, "most_extreme_std_devs", model)
     save_pdf(fig, "most_extreme_std_devs", model)
-    save_html(fig, "most_extreme_std_devs", model)
-    save_pdf(fig, "most_extreme_std_devs", model)
     fig.show()
 
 # %%
-plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
 plot_top_mean_variance(token_counts, token_means, token_std_devs, model=model, k=10)
 # %%
 # plot_topk(sentiment_activations, k=10, layer=1, inclusions=[" Yorkshire"], window_size=20)
