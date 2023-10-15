@@ -301,8 +301,8 @@ def get_prompts(
         pos_prompts = [formatter.format(ADJ=positive_adjectives[i], FEEL=positive_feelings[i]) for i in range(n_prompts)]
         neg_prompts = [formatter.format(ADJ=negative_adjectives[i], FEEL=negative_feelings[i]) for i in range(n_prompts)]
         neutral_prompts = None
-        pos_answers = prompt_config.get("positive_answer_infinitives", model, filter_length=1)
-        neg_answers = prompt_config.get("negative_answer_infinitives", model, filter_length=1)
+        pos_answers = prompt_config.get("positive_moods", model, filter_length=1)
+        neg_answers = prompt_config.get("negative_moods", model, filter_length=1)
     elif prompt_type == PromptType.SIMPLE_ADVERB:
         positive_adverbs = prompt_config.get("positive_adverbs", model, filter_length=2)
         negative_adverbs = prompt_config.get("negative_adverbs", model, filter_length=2)
