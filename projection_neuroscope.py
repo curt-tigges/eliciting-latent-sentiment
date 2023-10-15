@@ -18,7 +18,6 @@ from circuitsvis.activations import text_neuron_activations
 from circuitsvis.utils.render import RenderedHTML
 from tqdm.notebook import tqdm
 from IPython.display import display, HTML
-from IPython.display import display, HTML
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -61,7 +60,6 @@ def render_local(html):
 #     show_selectors=False,
 # )
 # save_html(harry_potter_neuroscope, "harry_potter_neuroscope", model)
-# render_local(harry_potter_neuroscope)
 # render_local(harry_potter_neuroscope)
 #%%
 # ============================================================================ #
@@ -215,8 +213,6 @@ save_html(negation_short, "negation_short", model)
 #%%
 # multi_token_negative_text = """
 # Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
-# multi_token_negative_text = """
-# Alas, it is with a regretful sigh that I endeavor to convey my cogitations regarding the cinematic offering that is "Oppenheimer," a motion picture that sought to render an illuminating portrayal of the eponymous historical figure, yet found itself ensnared within a quagmire of ponderous pacing, desultory character delineations, and an ostentatious predilection for pretentious verbosity, thereby culminating in an egregious amalgamation of celluloid that fails egregiously to coalesce into a coherent and engaging opus.
 
 # From its inception, one is greeted with a superfluous indulgence in visual rhapsodies, replete with panoramic vistas and artistic tableaux that appear, ostensibly, to strive for profundity but instead devolve into a grandiloquent spectacle that serves naught but to obfuscate the underlying narrative. The esoteric nature of the cinematographic composition, while intended to convey a sense of erudition, inadvertently estranges the audience, stifling any vestige of emotional resonance that might have been evoked by the thematic elements.
 
@@ -367,8 +363,6 @@ def plot_bin_proportions(df: pd.DataFrame, nbins=50):
     for x, bin_df in df.groupby('activation_cut'):
         if bin_df.empty:
             continue
-        if bin_df.empty:
-            continue
         label_props = bin_df.value_counts('sentiment', normalize=True, sort=False)
         data.append([label_props.get(sentiment, 0) for sentiment in sentiments])
     
@@ -484,8 +478,6 @@ def plot_ev_histogram(df: pd.DataFrame, nbins: int = 100):
     fig.update_layout(
         barmode="stack", 
         title="Stacked Histogram of EV contribution", # Anthropic Graph 3
-        barmode="stack", 
-        title="Stacked Histogram of EV contribution", # Anthropic Graph 3
         title_x=0.5,
         showlegend=True,
         xaxis_title="Activation",
@@ -508,6 +500,7 @@ def plot_batch_pos(
     file_name: str = "sentiment_at_batch_pos",
     show_selectors: bool = True,
     verbose: bool = False,
+    prepend_bos: bool = False,
 ):
     """
     One-sided topk plotting.
@@ -549,6 +542,7 @@ def plot_batch_pos(
         activations=acts_cat, 
         verbose=verbose,
         show_selectors=show_selectors,
+        prepend_bos=prepend_bos,
     )
     save_html(html, file_name, model)
     return html
@@ -750,7 +744,6 @@ exclusions = expand_exclusions(exclusions)
 # plot_topk(
 #     sentiment_activations, dataloader, model,
 #     k=20, layer=1, window_size=20, centred=True,
-#     inclusions=exclusions
 #     inclusions=exclusions
 # )
 #%%
