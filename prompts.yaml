@@ -750,7 +750,7 @@ negative_infinitives:
   - spurn
   - vilify
 
-  positive_answer_infinitives:
+positive_answer_infinitives:
   - love
   - adore
   - like
