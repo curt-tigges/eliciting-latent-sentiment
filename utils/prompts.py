@@ -135,6 +135,7 @@ class PromptType(Enum):
     SIMPLE_BOOK = "simple_book"
     COMPLETION = "completion"
     COMPLETION_2 = "completion_2"
+    COMPLETION_3 = "completion_3"
     CLASSIFICATION = "classification"
     CLASSIFICATION_2 = "classification_2"
     CLASSIFICATION_3 = "classification_3"
@@ -174,6 +175,7 @@ class PromptType(Enum):
             PromptType.MEDICAL: "I heard the doctor use the word{MED} and I felt very",
             PromptType.COMPLETION: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very",
             PromptType.COMPLETION_2: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall it was just very",
+            PromptType.COMPLETION_3: "I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. I felt it was",
             PromptType.CLASSIFICATION: "Review Text: 'I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}.' \nReview Sentiment:",
             PromptType.CLASSIFICATION_2: "Review Text: I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. \nReview Sentiment:",
             PromptType.CLASSIFICATION_3: "Review Text: I thought this movie was{ADJ1}, I{VRB} it. The acting was{ADJ2}, the plot was{ADJ3}, and overall the movie was just very {ADJ4}. Review Sentiment:",

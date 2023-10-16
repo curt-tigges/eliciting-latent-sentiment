@@ -455,7 +455,7 @@ update_layout_set = {
     "showlegend", "xaxis_tickmode", "yaxis_tickmode", "xaxis_tickangle", "yaxis_tickangle", "margin", "xaxis_visible", "yaxis_visible", "bargap", "bargroupgap"
 }
 
-def imshow_p(tensor, renderer=None, **kwargs):
+def imshow_p(tensor, renderer=None, save_path=None, **kwargs):
     kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
     kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
     facet_labels = kwargs_pre.pop("facet_labels", None)
@@ -480,6 +480,10 @@ def imshow_p(tensor, renderer=None, **kwargs):
             i += 1
     fig.update_layout(**kwargs_post)
     fig.show(renderer=renderer)
+
+    # Save the figure as a PDF if save_path is provided
+    if save_path:
+        pio.write_image(fig, save_path)
 
 def hist_p(tensor, renderer=None, **kwargs):
     kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}

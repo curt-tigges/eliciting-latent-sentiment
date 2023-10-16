@@ -71,20 +71,6 @@ def render_local(html):
 # save_html(harry_potter_fr_neuroscope, "harry_potter_fr_neuroscope", model)
 # render_local(harry_potter_fr_neuroscope)
 #%%
-# french_short_text = """et son bon à rien de mari
-# ils étaient parfaitement normaux
-# gris et triste et rien dans
-# la plus sinistre pour aller
-# """
-# french_neuroscope = plot_neuroscope(
-#     french_short_text, model, centred=True, verbose=False,
-#     special_dir=sentiment_dir, default_layer=7,
-#     show_selectors=False,
-#     prepend_bos=False,
-# )
-# save_html(french_neuroscope, "french_short_text", model)
-# render_local(french_neuroscope)
-#%%
 # Mandarin example
 # mandarin_text = """
 # 這是可能發生的最糟糕的事情。 我討厭你這麼說。 你所做的事情太可怕了。
@@ -167,20 +153,20 @@ def run_steering_search(
         coef_dict[coef] = coef_dict.get(coef, []) + [gen.replace(prompt, "")]
     return text.replace("<|endoftext|>", ""), coef_dict
 #%%
-# steering_text, steering_dict = run_steering_search(
-#     coefs=torch.arange(-20, 1, dtype=torch.int32),
-#     samples=20,
-#     sentiment_dir=sentiment_dir,
-#     model=model,
-#     top_k=10,
-#     temperature=1.0,
-#     max_new_tokens=30,
-#     do_sample=True,
-#     seed=0,
-#     prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
-# )
-# save_text(steering_text, "steering_text", model)
-# save_pickle(steering_dict, "steering_dict", model)
+steering_text, steering_dict = run_steering_search(
+    coefs=torch.arange(-20, 1, dtype=torch.int32),
+    samples=20,
+    sentiment_dir=sentiment_dir,
+    model=model,
+    top_k=10,
+    temperature=1.0,
+    max_new_tokens=30,
+    do_sample=True,
+    seed=0,
+    prompt="I really enjoyed the movie, in fact I loved it. I thought the movie was just very",
+)
+save_text(steering_text, "steering_text", model)
+save_pickle(steering_dict, "steering_dict", model)
 #%%
 # plot_neuroscope(steering_text, model, centred=True, special_dir=sentiment_dir)
 #%%
@@ -215,23 +201,12 @@ negation_short = plot_neuroscope(
     """You never fail. Don't doubt it. I don't like you.""", 
     model,
     centred=False,
-    default_layer=list(range(1, model.cfg.n_layers, 3)), 
-    special_dir=sentiment_dir,
-    show_selectors=False,
-)
-render_local(negation_short)
-save_html(negation_short, "neuroscope_negations", model)
-#%%
-negation_full = plot_neuroscope(
-    """You never fail. Don't doubt it. I don't like you.""", 
-    model,
-    centred=False,
     default_layer="all", 
     special_dir=sentiment_dir,
     show_selectors=False,
 )
-render_local(negation_full)
-save_html(negation_full, "negation_full", model)
+render_local(negation_short)
+save_html(negation_short, "negation_short", model)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
@@ -337,6 +312,7 @@ def sample_by_bin(
     df['token'] = tokens
     df['text'] = texts
     return df.sample(frac=1, random_state=seed).reset_index(drop=True)
+# #%%
 # #%%
 bin_samples = sample_by_bin(
     sentiment_activations[:, :, 1], verbose=False
@@ -576,24 +552,22 @@ batch_pos_dict = dict(
     neuroscope_adjectives=[(2861, 739), (5957, 800), (3889, 480), (1313, 528)],
     neuroscope_adverbs=[(10095, 900), (7733, 740), (5479, 471), (2559, 426)],
     neuroscope_nouns=[(2439, 800), (4428, 862), (1230, 281), (7327, 81)],
-    # neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
+    neuroscope_verbs=[(4604, 704), (3296, 829), (3334, 413), (2232, 443)],
     neuroscope_medical=[(6690, 669), (3852, 819), (9791, 460), (7888, 326)],
 )
-for file_name, batch_pos in batch_pos_dict.items():
-    html = plot_batch_pos(
-        sentiment_activations, 
-        dataloader, 
-        model, 
-        batch_pos,
-        centred=True,
-        file_name=file_name,
-        window_size=2,
-        show_selectors=False,
-        verbose=False,
-        prepend_bos=False,
-    )
-    render_local(html)
-    display(HTML(html.local_src))
+# for file_name, batch_pos in batch_pos_dict.items():
+#     html = plot_batch_pos(
+#         sentiment_activations, 
+#         dataloader, 
+#         model, 
+#         batch_pos,
+#         centred=True,
+#         file_name=file_name,
+#         window_size=2,
+#         show_selectors=False,
+#         verbose=False,
+#     )
+#     display(HTML(html.local_src))
 #%%
 # ============================================================================ #
 # Top k max activating examples
@@ -759,9 +733,20 @@ exclusions = expand_exclusions(exclusions)
 #%%
 # plot_topk(
 #     sentiment_activations, dataloader, model,
+#     k=5, layer=1, window_size=10, centred=True,
+#     inclusions=[
+#         ' saving', ' curing', ' helping', ' aiding', 
+#         ' loving', ' hugging', ' kissing', ' smiling',
+#         ' laughing', ' playing', ' dancing', ' singing',
+#     ]
+# )
+#%%
+# plot_topk(
+#     sentiment_activations, dataloader, model,
 #     k=20, layer=1, window_size=20, centred=True,
 #     inclusions=exclusions
 # )
+#%%
 #%%
 # plot_top_p(
 #     sentiment_activations, dataloader, model,
