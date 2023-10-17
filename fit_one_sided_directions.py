@@ -140,6 +140,7 @@ def get_token_sentiment_valence(
     all_tokens = torch.tensor([], dtype=torch.int32, device=device,)
     val_scores = torch.tensor([], dtype=torch.float32, device=device,)
     sent_scores = torch.tensor([], dtype=torch.float32, device=device,)
+    all_acts = torch.tensor([], dtype=torch.float32, device=device,)
     for batch in tqdm(data_loader):
         batch_tokens = batch['tokens'].to(device)
         _, cache = model.run_with_cache(
@@ -166,6 +167,9 @@ def get_token_sentiment_valence(
         flat_tokens = einops.rearrange(
             batch_tokens, "batch pos -> (batch pos)"
         )
+        flat_act = einops.rearrange(
+            cache[ACT_NAME], "batch pos d_model -> (batch pos) d_model"
+        )
         mask = torch.ones_like(flat_tokens, dtype=torch.bool)
         if max_sentiment is not None:
             mask &= sent_score.abs() < max_sentiment
@@ -174,18 +178,21 @@ def get_token_sentiment_valence(
         flat_tokens = flat_tokens[mask]
         val_score = val_score[mask]
         sent_score = sent_score[mask]
+        flat_act = flat_act[mask]
         all_tokens = torch.cat([all_tokens, flat_tokens])
         val_scores = torch.cat([val_scores, val_score])
         sent_scores = torch.cat([sent_scores, sent_score])
+        all_acts = torch.cat([all_acts, flat_act])
         if len(all_tokens) > max_tokens:
             break
     val_scores = val_scores.cpu().numpy()
     sent_scores = sent_scores.cpu().numpy()
     all_tokens = all_tokens.cpu().numpy()
-    print(val_scores.shape, sent_scores.shape, all_tokens.shape)
-    return val_scores, sent_scores, all_tokens
+    all_acts = all_acts.cpu().numpy()
+    print(val_scores.shape, sent_scores.shape, all_tokens.shape, all_acts.shape)
+    return val_scores, sent_scores, all_tokens, all_acts
 #%%
-val_scores, sent_scores, all_tokens = get_token_sentiment_valence(
+val_scores, sent_scores, all_tokens, all_acts = get_token_sentiment_valence(
     max_tokens=100,
     max_sentiment=0.5,
     min_valence=20,
@@ -211,11 +218,19 @@ fig.update_layout(
 )
 fig.show()
 #%%
-save_array(
-    positive_direction.cpu().numpy(), "mean_diff_positive_layer01", model
-)
-save_array(
-    negative_direction.cpu().numpy(), "mean_diff_negative_layer01", model
-)
+neutral_valenced_activation = all_acts.mean(axis=0)
+# %%
+positive_direction = positive_activation - neutral_valenced_activation
+negative_direction = negative_activation - neutral_valenced_activation
+positive_direction = positive_direction / positive_direction.norm()
+negative_direction = negative_direction / negative_direction.norm()
+torch.cosine_similarity(positive_direction, negative_direction, dim=0)
+#%%
+# save_array(
+#     positive_direction.cpu().numpy(), "mean_diff_positive_layer01", model
+# )
+# save_array(
+#     negative_direction.cpu().numpy(), "mean_diff_negative_layer01", model
+# )
 
 # %%
