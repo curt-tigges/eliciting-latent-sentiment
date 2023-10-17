@@ -71,23 +71,23 @@ def get_activations_from_dataloader(
     direction: Float[Tensor, "d_model"],
     model: HookedTransformer,
     device: Optional[torch.device] = None,
-    max_batches: int = None,
+    max_batches: Optional[int] = None,
 ) -> Float[Tensor, "row pos"]:
     if device is None:
         device = model.cfg.device
     direction = direction.to(device=device)
-    all_acts = []
+    acts_list: list = []
     for batch_idx, batch_value in tqdm(enumerate(data), total=len(data)):
         batch_tokens = batch_value['tokens'].to(device)
         batch_acts: Float[Tensor, "batch pos layer"] = get_projections_for_text(
             batch_tokens, direction, model
         )
-        all_acts.append(batch_acts)
+        acts_list.append(batch_acts)
         if max_batches is not None and batch_idx >= max_batches:
             break
     # Concatenate the activations into a single tensor
-    all_acts: Float[Tensor, "row pos layer"] = torch.cat(all_acts, dim=0)
-    return all_acts
+    acts_tensor: Float[Tensor, "row pos layer"] = torch.cat(acts_list, dim=0)
+    return acts_tensor
 
 
 #%%
@@ -150,18 +150,18 @@ def get_projections_for_text(
             "batch pos d_model, d_model -> batch pos"
         ).to(device=device)
         acts_by_layer.append(act)
-    acts_by_layer: Float[Tensor, "batch pos layer"] = torch.stack(acts_by_layer, dim=2)
-    return acts_by_layer
+    acts_tensor: Float[Tensor, "batch pos layer"] = torch.stack(acts_by_layer, dim=2)
+    return acts_tensor
 
 
 def plot_neuroscope(
     text: Union[str, List[str]], 
     model: HookedTransformer,
     centred: bool, 
-    activations: Float[Tensor, "pos layer 1"] = None,
-    special_dir: Float[Tensor, "d_model"] = None,
+    activations: Optional[Float[Tensor, "pos layer 1"]] = None,
+    special_dir: Optional[Float[Tensor, "d_model"]] = None,
     verbose: bool = False,
-    default_layer: Union["all", int, List[int]] = 1,
+    default_layer: Union[Literal["all"], int, List[int]] = 1,
     show_selectors: bool = True,
     prepend_bos: bool = True,
 ):
@@ -177,6 +177,7 @@ def plot_neuroscope(
     if verbose:
         print(f"Tokens shape: {tokens.shape}")
     if activations is None:
+        assert special_dir is not None
         if verbose:
             print("Computing activations")
         activations: Float[Tensor, "1 pos layer"] = get_projections_for_text(
@@ -190,14 +191,19 @@ def plot_neuroscope(
     if centred:
         if verbose:
             print("Centering activations")
-        layer_means = einops.reduce(activations, "pos layer 1 -> 1 layer 1", reduction="mean")
-        layer_means = einops.repeat(layer_means, "1 layer 1 -> pos layer 1", pos=activations.shape[0])
+        layer_means = einops.reduce(
+            activations, "pos layer 1 -> 1 layer 1", reduction="mean"
+        )
+        layer_means = einops.repeat(
+            layer_means, "1 layer 1 -> pos layer 1", pos=activations.shape[0]
+        )
         activations -= layer_means
     elif verbose:
         print("Activations already centered")
-    assert (
-        activations.ndim == 3
-    ), f"activations must be of shape [tokens x layers x neurons], found {activations.shape}"
+    assert activations.ndim == 3, (
+        f"activations must be of shape [tokens x layers x neurons], "
+        f"found {activations.shape}"
+    )
     
     if isinstance(text, str):
         str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
@@ -213,7 +219,7 @@ def plot_neuroscope(
         orig_len = len(str_tokens)
         numbered_tokens = []
         for layer in layers:
-            numbered_tokens += [f"{layer:02d} "] + str_tokens[1:] + ["\n"]
+            numbered_tokens += [f"L{layer:02d} "] + str_tokens[1:] + ["\n"]
         str_tokens = numbered_tokens
         activations = torch.cat(
             [activations, torch.zeros_like(activations[:1])], 
@@ -298,8 +304,8 @@ def get_batch_pos_mask(
     tokens: Union[str, List[str], Tensor], 
     dataloader: torch.utils.data.DataLoader,
     model: HookedTransformer,
-    activations: Float[Tensor, "row pos"] = None,
-    device: str = None,
+    activations: Optional[Float[Tensor, "row pos"]] = None,
+    device: Optional[str] = None,
 ):
     """Helper function to get a mask for inclusions/exclusions (used in topk plotting)"""
     if device is None and activations is not None:
@@ -328,14 +334,18 @@ def _plot_topk(
     layer: int = 0, 
     k: int = 10, 
     largest: bool = True,
-    window_size: int = 10, centred: bool = True, 
-    inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-    verbose: bool = False, base_layer: int = None,
+    window_size: int = 10, 
+    centred: bool = True, 
+    inclusions: Optional[List[str]] = None, 
+    exclusions: Optional[List[str]] = None,
+    verbose: bool = False, 
+    base_layer: Optional[int] = None,
 ):
     """
     One-sided topk plotting.
     Main entrypoint should be `plot_topk`.
     """
+    assert model.tokenizer is not None
     device = all_activations.device
     assert not (inclusions is not None and exclusions is not None)
     label = "positive" if largest else "negative"
@@ -430,8 +440,10 @@ def plot_topk(
     model: HookedTransformer, 
     k: int = 10, layer: int = 0,
     window_size: int = 10, centred: bool = True, 
-    inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
-    verbose: bool = False, base_layer: int = None,
+    inclusions: Optional[List[str]] = None, 
+    exclusions: Optional[List[str]] = None,
+    verbose: bool = False, 
+    base_layer: Optional[int] = None,
 ):
    """
    Main entrypoint for topk plotting. Plots both positive and negative examples.
@@ -460,7 +472,8 @@ def _plot_top_p(
     model: HookedTransformer,
     layer: int = 0, p: float = 0.1, k: int = 10, largest: bool = True,
     window_size: int = 10, centred: bool = True, 
-    inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
+    inclusions: Optional[List[str]] = None, 
+    exclusions: Optional[List[str]] = None,
 ):
     """One-sided top-p plotting. Main entrypoint should be `plot_top_p`."""
     device = all_activations.device
@@ -539,7 +552,8 @@ def plot_top_p(
     model: HookedTransformer,
     k: int = 10, p: float = 0.1, layer: int = 0,
     window_size: int = 10, centred: bool = True,  
-    inclusions: Iterable[str] = None, exclusions: Iterable[str] = None,
+    inclusions: Optional[List[str]] = None, 
+    exclusions: Optional[List[str]] = None,
 ):
    """
    Main entrypoint for top-p plotting. Plots both positive and negative examples.
@@ -548,11 +562,13 @@ def plot_top_p(
    """
    _plot_top_p(
        activations, dataloader=dataloader, model=model,
-       layer=layer, p=p, k=k, largest=True, window_size=window_size, centred=centred, 
+       layer=layer, p=p, k=k, largest=True, window_size=window_size, 
+       centred=centred, 
        inclusions=inclusions, exclusions=exclusions
     )
    _plot_top_p(
        activations, dataloader=dataloader, model=model,
-       layer=layer, p=p, k=k, largest=False, window_size=window_size, centred=centred, 
+       layer=layer, p=p, k=k, largest=False, window_size=window_size, 
+       centred=centred, 
        inclusions=inclusions, exclusions=exclusions
     )

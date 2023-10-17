@@ -40,7 +40,6 @@ model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     device=device,
 )
-model.name = MODEL_NAME
 #%%
 sentiment_dir = load_array("kmeans_simple_train_ADJ_layer1", model)
 sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(device=device, dtype=torch.float32)
@@ -222,7 +221,7 @@ negation_short = plot_neuroscope(
 render_local(negation_short)
 save_html(negation_short, "neuroscope_negations", model)
 #%%
-negation_full = plot_neuroscope(
+negation = plot_neuroscope(
     """You never fail. Don't doubt it. I don't like you.""", 
     model,
     centred=False,
@@ -230,8 +229,8 @@ negation_full = plot_neuroscope(
     special_dir=sentiment_dir,
     show_selectors=False,
 )
-render_local(negation_full)
-save_html(negation_full, "negation_full", model)
+render_local(negation)
+save_html(negation, "negation", model)
 #%%
 # negating_weird_text = "Here are my honest thoughts. You are disgustingly beautiful. I hate how much I love you. Stop being so good at everything."
 # plot_neuroscope(negating_weird_text, centred=True, verbose=False)
