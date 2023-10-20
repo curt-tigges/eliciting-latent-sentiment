@@ -247,6 +247,27 @@ def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
     return array
 
 
+def save_json(
+    array: Union[np.ndarray, torch.Tensor], 
+    label: str, 
+    model: Union[HookedTransformer, str],
+    root: str = 'data',
+):
+    if not os.path.exists(root):
+        os.mkdir(root)
+    model: str = get_model_name(model)
+    if isinstance(array, torch.Tensor):
+        array = array.cpu().detach().numpy()
+    label = clean_label(label)
+    model_path = os.path.join('data', model)
+    if not os.path.exists(model_path):
+        os.mkdir(model_path)
+    path = os.path.join(model_path, label + '.json')
+    with open(path, 'w') as f:
+        json.dump(array.tolist(), f)
+    return path
+
+
 def save_html(
     html_data: Union[go.Figure, RenderedHTML, Styler],
     label: str, 
