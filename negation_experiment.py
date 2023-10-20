@@ -98,7 +98,8 @@ def run_experiment(
         std_dev = activations[:, :, :11].flatten().std().item()
         print(direction_label, mean, std_dev)
         raw_scores = []
-        flip_scores = []
+        flip_binary = []
+        flip_sizes = []
         z_scores = []
         for text, word in NEGATIONS.items():
             str_tokens = [tok.strip() for tok in model.to_str_tokens(text)]
@@ -113,26 +114,28 @@ def run_experiment(
                 text_activations[0, word_idx, initial_layer]
             ).item()
             z_score = abs(act_change) / std_dev
-            flip_score = 0.5 * act_change / (
+            flip_size = 0.5 * act_change / (
                 mean - text_activations[0, word_idx, initial_layer]
             )
             z_scores.append(z_score)
-            flip_scores.append(flip_score)
+            flip_binary.append(flip_size > 0)
+            flip_sizes.append(flip_size)
             raw_scores.append(act_change)
-            if flip_score < -30:
+            if flip_size < -30:
                 print(
-                    text, flip_score,
+                    text, flip_size,
                     text_activations[0, word_idx, initial_layer],
                     text_activations[0, word_idx, final_layer],
                 )
         direction_scores.append([
             np.mean(raw_scores),
             np.mean(z_scores),
-            np.mean(flip_scores),
+            np.mean(flip_binary),
+            np.median(flip_sizes),
         ])
     df = pd.DataFrame(
         direction_scores,
-        columns=["raw_score", "z_score", "flip_score"],
+        columns=["raw_score", "z_score", "flip_percent", "flip_size"],
         index=DIRECTIONS,
     )
     df = df.sort_values("raw_score", ascending=False)
