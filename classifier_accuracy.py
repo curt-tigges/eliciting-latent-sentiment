@@ -37,10 +37,10 @@ torch.set_grad_enabled(False)
 #%%
 DIRECTIONS = [
     "kmeans_simple_train_ADJ_layer1",
-    "pca_simple_train_ADJ_layer1",
-    "mean_diff_simple_train_ADJ_layer1",
-    "logistic_regression_simple_train_ADJ_layer1",
-    "das_simple_train_ADJ_layer1",
+    # "pca_simple_train_ADJ_layer1",
+    # "mean_diff_simple_train_ADJ_layer1",
+    # "logistic_regression_simple_train_ADJ_layer1",
+    # "das_simple_train_ADJ_layer1",
 ]
 #%%
 device = "cuda"
@@ -116,12 +116,13 @@ def plot_bin_proportions(
     df: pd.DataFrame, 
     label: str,
     nbins=50, 
+    sentiments=("Positive", "Negative", "Neutral",),
 ):
     if df.activation.dtype == pd.StringDtype:
         df.activation = df.activation.map(lambda x: eval(x).item()).astype(float)
     if "das" in label:
         labelled_bin_samples.activation *= -1
-    sentiments = sorted(df['sentiment'].unique())
+    # sentiments = sorted(df['sentiment'].unique())
     df = df.sort_values(by='activation').reset_index(drop=True)
     df['activation_cut'] = pd.cut(df.activation, bins=nbins)
     df.activation_cut = df.activation_cut.apply(lambda x: 0.5 * (x.left + x.right))
