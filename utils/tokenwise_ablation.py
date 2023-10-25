@@ -1,10 +1,11 @@
 import einops
 from functools import partial
 import torch
+import numpy as np
 import datasets
 from torch import Tensor
 from torch.utils.data import DataLoader
-from datasets import load_dataset, concatenate_datasets
+from datasets import load_dataset, concatenate_datasets, Features, Sequence, Value, Dataset
 from jaxtyping import Float, Int, Bool
 from typing import Dict, Iterable, List, Tuple, Union
 from transformer_lens import HookedTransformer
@@ -15,7 +16,9 @@ import pandas as pd
 from circuitsvis.activations import text_neuron_activations
 from utils.store import load_array, save_html, save_array, is_file, get_model_name, clean_label, save_text
 from utils.circuit_analysis import get_logit_diff
-from utils.ablation import ablate_resid_with_precalc_mean
+from utils.ablation import ablate_resid_with_precalc_mean, freeze_attn_pattern_hook
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -------------------- GENERAL UTILS --------------------
 def find_positions(tensor, token_ids=[11, 13]):
@@ -123,6 +126,23 @@ def get_layerwise_token_mean_activations(model: HookedTransformer, device, data_
 
 
 # -------------------- ABLATION UTILS --------------------
+def zero_attention_pos_hook(
+    pattern: Float[Tensor, "batch head seq_Q seq_K"], hook: HookPoint,
+    pos_by_batch: List[List[int]], layer: int = 0, head_idx: int = 0,
+) -> Float[Tensor, "batch head seq_Q seq_K"]:
+    """Zero-ablates an attention pattern tensor at a particular position"""
+    assert 'pattern' in hook.name
+
+    batch_size = pattern.shape[0]
+    assert len(pos_by_batch) == batch_size
+
+    for i in range(batch_size):
+        for p in pos_by_batch[i]:
+            pattern[i, head_idx, p, p] = 0
+            
+    return pattern
+
+
 def ablate_resid_with_precalc_mean(
     component: Float[Tensor, "batch ..."],
     hook: HookPoint,
@@ -169,7 +189,36 @@ def ablate_resid_with_precalc_mean_no_batch(
     return component
 
 
-def compute_mean_ablation_modified_loss(model: HookedTransformer, device, data_loader: DataLoader, cached_means, target_token_ids) -> float:
+def compute_zeroed_attn_modified_loss(model: HookedTransformer, data_loader: DataLoader, heads_to_ablate) -> float:
+    total_loss = 0
+    loss_list = []
+    for _, batch_value in tqdm(enumerate(data_loader), total=len(data_loader)):
+        batch_tokens = batch_value['tokens'].to(device)
+
+        # get positions of all 11 and 13 token ids in batch
+        punct_pos = find_positions(batch_tokens, token_ids=[13])
+
+        # get the loss for each token in the batch
+        initial_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
+        
+        # add hooks for the activations of the 11 and 13 tokens
+        for layer, head in heads_to_ablate:
+            ablate_punct = partial(zero_attention_pos_hook, pos_by_batch=punct_pos, layer=layer, head_idx=head)
+            model.blocks[layer].attn.hook_pattern.add_hook(ablate_punct)
+
+        # get the loss for each token when run with hooks
+        hooked_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
+
+        # compute the percent difference between the two losses
+        loss_diff = (hooked_loss - initial_loss) / initial_loss
+
+        loss_list.append(loss_diff)
+
+    model.reset_hooks()
+    return loss_list, batch_tokens
+
+
+def compute_mean_ablation_modified_loss(model: HookedTransformer, device, data_loader: DataLoader, heads_to_ablate, cached_means, target_token_ids) -> float:
     total_loss = 0
     loss_diff_list = []
     orig_loss_list = []
@@ -213,7 +262,7 @@ def compute_mean_ablation_modified_loss(model: HookedTransformer, device, data_l
     return loss_diff_list, orig_loss_list
 
 
-def compute_mean_ablation_modified_logit_diff(model: HookedTransformer, device, data_loader: DataLoader, cached_means, target_token_ids) -> float:
+def compute_mean_ablation_modified_logit_diff(model: HookedTransformer, device, data_loader: DataLoader, layers_to_ablate, heads_to_ablate, heads_to_freeze, cached_means, target_token_ids) -> float:
     
     orig_ld_list = []
     ablated_ld_list = []
@@ -255,3 +304,186 @@ def compute_mean_ablation_modified_logit_diff(model: HookedTransformer, device, 
         model.reset_hooks()
 
     return torch.cat(orig_ld_list), torch.cat(ablated_ld_list), torch.cat(freeze_ablated_ld_list)
+
+
+def ablate_resid_with_direction(
+    component: torch.Tensor,
+    hook: HookPoint,
+    direction_vector: torch.Tensor,
+    labels: torch.Tensor,
+    multiplier: float = 1.0,
+    pos_by_batch: torch.Tensor = None,
+    layer: int = 0,
+) -> torch.Tensor:
+    """
+    Ablates a batch tensor by removing the influence of a direction vector from it.
+
+    Args:
+        component: the tensor to compute the mean over the batch dim of
+        direction_vector: the direction vector to remove from the component
+        multiplier: the multiplier to apply to the direction vector
+        pos_by_batch: the positions to ablate
+        layer: the layer to ablate
+
+    Returns:
+        the ablated component
+    """
+    assert 'resid' in hook.name
+
+    # Normalize the direction vector to make sure it's a unit vector
+    D_normalized = direction_vector[layer] / torch.norm(direction_vector[layer])
+
+    # Calculate the projection of component onto direction_vector
+    proj = einops.einsum(component, D_normalized, "b s d, d -> b s").unsqueeze(-1) * D_normalized
+    
+
+    # Ablate the direction from component
+    component_ablated = component.clone()  # Create a copy to ensure original is not modified
+    if pos_by_batch is not None:
+        batch_indices, sequence_positions = torch.where(pos_by_batch == 1)
+        component_ablated[batch_indices, sequence_positions] = component[batch_indices, sequence_positions] - multiplier * proj[batch_indices, sequence_positions]
+        
+        # Print the (batch, pos) coordinates of all d_model vectors that were ablated
+        # for b, s in zip(batch_indices, sequence_positions):
+        #     print(f"(batch, pos) = ({b.item()}, {s.item()})")
+
+        # Check that positions not in (batch_indices, sequence_positions) were not ablated
+        check_mask = torch.ones_like(component, dtype=torch.bool)
+        check_mask[batch_indices, sequence_positions] = 0
+        if not torch.all(component[check_mask] == component_ablated[check_mask]):
+            raise ValueError("Positions outside of specified (batch_indices, sequence_positions) were ablated!")
+
+    return component_ablated
+
+
+def compute_directional_ablation_modified_logit_diff(model: HookedTransformer, data_loader: DataLoader, layers_to_ablate, heads_to_ablate, heads_to_freeze, direction_vectors, multiplier=1.0, target_token_ids=13) -> float:
+    
+    orig_ld_list = []
+    ablated_ld_list = []
+    freeze_ablated_ld_list = []
+    
+    for _, batch_value in tqdm(enumerate(data_loader), total=len(data_loader)):
+        batch_tokens = batch_value['tokens'].to(device)
+        labels = batch_value['label'].to(device)
+        punct_pos = batch_value['positions'].to(device)
+
+        # get the logit diff for the last token in each sequence
+        orig_logits, clean_cache = model.run_with_cache(batch_tokens, return_type="logits", prepend_bos=False)
+        orig_ld = compute_last_position_logit_diff(orig_logits, batch_value['attention_mask'], batch_value['answers'])
+        orig_ld_list.append(orig_ld)
+        
+        # repeat with commas ablated
+        for layer in layers_to_ablate:
+            dir_ablate_comma = partial(ablate_resid_with_direction, labels=labels, direction_vector=direction_vectors, multiplier=multiplier, pos_by_batch=punct_pos, layer=layer)
+            model.blocks[layer].hook_resid_post.add_hook(dir_ablate_comma)
+       
+        ablated_logits = model(batch_tokens, return_type="logits", prepend_bos=False)
+        # check to see if ablated_logits has any nan values
+        if torch.isnan(ablated_logits).any():
+            print("ablated logits has nan values")
+        ablated_ld = compute_last_position_logit_diff(ablated_logits, batch_value['attention_mask'], batch_value['answers'])
+        ablated_ld_list.append(ablated_ld)
+        
+        model.reset_hooks()
+
+        # repeat with attention frozen and commas ablated
+        for layer, head in heads_to_freeze:
+            freeze_attn = partial(freeze_attn_pattern_hook, cache=clean_cache, layer=layer, head_idx=head)
+            model.blocks[layer].attn.hook_pattern.add_hook(freeze_attn)
+
+        for layer in layers_to_ablate:
+            dir_ablate_comma = partial(ablate_resid_with_direction, labels=labels, direction_vector=direction_vectors, multiplier=multiplier, pos_by_batch=punct_pos, layer=layer)
+            model.blocks[layer].hook_resid_post.add_hook(dir_ablate_comma)
+       
+        freeze_ablated_logits = model(batch_tokens, return_type="logits", prepend_bos=False)
+        freeze_ablated_ld = compute_last_position_logit_diff(freeze_ablated_logits, batch_value['attention_mask'], batch_value['answers'])
+        freeze_ablated_ld_list.append(freeze_ablated_ld)
+        
+        model.reset_hooks()
+
+    return torch.cat(orig_ld_list), torch.cat(ablated_ld_list), torch.cat(freeze_ablated_ld_list)
+
+
+def compute_directional_ablation_modified_logit_diff_all_pos(model: HookedTransformer, data_loader: DataLoader, layers_to_ablate, heads_to_ablate, heads_to_freeze, direction_vectors, multiplier=1.0, target_token_ids=13) -> float:
+    
+    orig_ld_list = []
+    ablated_ld_list = []
+    freeze_ablated_ld_list = []
+    
+    for _, batch_value in tqdm(enumerate(data_loader), total=len(data_loader)):
+        batch_tokens = batch_value['tokens'].to(device)
+        labels = batch_value['label'].to(device)
+        punct_pos = batch_value['attention_mask'].to(device)
+
+        # get the logit diff for the last token in each sequence
+        orig_logits, clean_cache = model.run_with_cache(batch_tokens, return_type="logits", prepend_bos=False)
+        orig_ld = compute_last_position_logit_diff(orig_logits, batch_value['attention_mask'], batch_value['answers'])
+        orig_ld_list.append(orig_ld)
+        
+        # repeat with commas ablated
+        for layer in layers_to_ablate:
+            dir_ablate_comma = partial(ablate_resid_with_direction, labels=labels, direction_vector=direction_vectors, multiplier=multiplier, pos_by_batch=punct_pos, layer=layer)
+            model.blocks[layer].hook_resid_post.add_hook(dir_ablate_comma)
+       
+        ablated_logits = model(batch_tokens, return_type="logits", prepend_bos=False)
+        # check to see if ablated_logits has any nan values
+        if torch.isnan(ablated_logits).any():
+            print("ablated logits has nan values")
+        ablated_ld = compute_last_position_logit_diff(ablated_logits, batch_value['attention_mask'], batch_value['answers'])
+        ablated_ld_list.append(ablated_ld)
+        
+        model.reset_hooks()
+
+        # repeat with attention frozen and commas ablated
+        for layer, head in heads_to_freeze:
+            freeze_attn = partial(freeze_attn_pattern_hook, cache=clean_cache, layer=layer, head_idx=head)
+            model.blocks[layer].attn.hook_pattern.add_hook(freeze_attn)
+
+        for layer in layers_to_ablate:
+            dir_ablate_comma = partial(ablate_resid_with_direction, labels=labels, direction_vector=direction_vectors, multiplier=multiplier, pos_by_batch=punct_pos, layer=layer)
+            model.blocks[layer].hook_resid_post.add_hook(dir_ablate_comma)
+       
+        freeze_ablated_logits = model(batch_tokens, return_type="logits", prepend_bos=False)
+        freeze_ablated_ld = compute_last_position_logit_diff(freeze_ablated_logits, batch_value['attention_mask'], batch_value['answers'])
+        freeze_ablated_ld_list.append(freeze_ablated_ld)
+        
+        model.reset_hooks()
+
+    return torch.cat(orig_ld_list), torch.cat(ablated_ld_list), torch.cat(freeze_ablated_ld_list)
+
+
+# -------------------- DIRECTION LOADING UTILS --------------------
+def load_directions(model, direction_folder):
+    directions = []
+    for i in range(model.cfg.n_layers):
+        dir = np.load(f"{direction_folder}/das_simple_train_ADJ_layer{i}.npy")
+        if len(dir.shape) == 2:
+            dir = dir[:, 0]
+        directions.append(torch.tensor(dir))
+
+    # convert to tensor
+    directions = torch.stack(directions).to(device)
+
+    return directions
+
+def get_random_directions(model, num_layers):
+    directions = []
+    for i in range(num_layers):
+        dir = torch.randn(model.cfg.d_model).to(device)
+        directions.append(dir)
+
+    # convert to tensor
+    directions = torch.stack(directions).to(device)
+
+    return directions
+
+def get_zeroed_dir_vector(model, directions):
+    zeroed_directions = []
+    for i in range(model.cfg.n_layers):
+        dir = torch.zeros(model.cfg.d_model).to(device)
+        zeroed_directions.append(dir)
+
+    # convert to tensor
+    zeroed_directions = torch.stack(zeroed_directions).to(device)
+
+    return zeroed_directions
