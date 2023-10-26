@@ -617,9 +617,16 @@ def compute_mean_ablation_modified_loss(
         # set all positions right after punct_pos to zero
         if debug:
             print(f"punct pos: {punct_pos}")
-        for p in punct_pos:
-            if p+1 < loss_diff.shape[1]:
-                loss_diff[0, p+1] = 0
+        # use the punct_pos tensor to set all positions right after punct_pos==1 to zero
+        # enter code here
+        # Step 1: Shift punct_pos tensor
+        # We use roll to shift the tensor. We pad the first column with zeros after the roll since roll is circular.
+        shifted_punct_pos = torch.roll(punct_pos, shifts=1, dims=1)
+        shifted_punct_pos[:, 0] = 0  # Set the first column to zero because roll is circular
+
+        # Step 2: Zero out loss_diff positions
+        # Use the shifted_punct_pos tensor to mask loss_diff and set those positions to zero.
+        loss_diff[shifted_punct_pos == 1] = 0
 
         # set all masked positions to zero
         loss_diff[batch_value['attention_mask'] == 0] = 0
