@@ -445,7 +445,7 @@ def compute_zeroed_attn_modified_loss(model: HookedTransformer, data_loader: Dat
     return loss_list, batch_tokens
 
 
-def compute_mean_ablation_modified_loss(model: HookedTransformer, data_loader: DataLoader, layers_to_ablate, cached_means, target_token_ids) -> float:
+def compute_mean_ablation_modified_loss(model: HookedTransformer, data_loader: DataLoader, layers_to_ablate, cached_means, target_token_ids, debug=False) -> float:
    
     loss_diff_list = []
     orig_loss_list = []
@@ -455,7 +455,9 @@ def compute_mean_ablation_modified_loss(model: HookedTransformer, data_loader: D
 
         # get the loss for each token in the batch
         initial_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
-        #print(f"initial loss shape: {initial_loss.shape}")
+        if debug:
+            print(f"initial loss shape: {initial_loss.shape}")
+            print(initial_loss[0])
         orig_loss_list.append(initial_loss)
         
         # add hooks for the activations of the 11 and 13 tokens
@@ -465,14 +467,16 @@ def compute_mean_ablation_modified_loss(model: HookedTransformer, data_loader: D
 
         # get the loss for each token when run with hooks
         hooked_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
-        #print(f"hooked loss shape: {hooked_loss.shape}")
+        if debug:
+            print(f"hooked loss shape: {hooked_loss.shape}")
 
         # compute the difference between the two losses
         loss_diff = hooked_loss - initial_loss
         
         # set all positions right after punct_pos to zero
         for p in punct_pos:
-            #print(f"zeroing {p}")
+            if debug:
+                print(f"zeroing {p}")
             loss_diff[0, p] = 0
 
         # set all masked positions to zero
