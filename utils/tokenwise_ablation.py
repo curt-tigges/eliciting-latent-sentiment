@@ -615,10 +615,10 @@ def compute_mean_ablation_modified_loss(
         loss_diff = hooked_loss - initial_loss
 
         # set all positions right after punct_pos to zero
+        if debug:
+            print(f"punct pos: {punct_pos}")
         for p in punct_pos:
             if p+1 < loss_diff.shape[1]:
-                if debug:
-                    print(f"zeroing {p}")
                 loss_diff[0, p+1] = 0
 
         # set all masked positions to zero
