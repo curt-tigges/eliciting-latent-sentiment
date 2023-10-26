@@ -445,33 +445,25 @@ def compute_zeroed_attn_modified_loss(model: HookedTransformer, data_loader: Dat
     return loss_list, batch_tokens
 
 
-def compute_mean_ablation_modified_loss(model: HookedTransformer, data_loader: DataLoader, heads_to_ablate, cached_means, target_token_ids) -> float:
-    total_loss = 0
+def compute_mean_ablation_modified_loss(model: HookedTransformer, data_loader: DataLoader, layers_to_ablate, cached_means, target_token_ids) -> float:
+   
     loss_diff_list = []
     orig_loss_list = []
     for _, batch_value in tqdm(enumerate(data_loader), total=len(data_loader)):
-        if isinstance(batch_value['tokens'], list):
-            batch_tokens = torch.stack(batch_value['tokens']).to(device)
-        else:
-            batch_tokens = batch_value['tokens'].to(device)
-
-        batch_tokens = einops.rearrange(batch_tokens, 'seq batch -> batch seq')
-        punct_pos = batch_value['positions']
-        #print(f"punct_pos: {punct_pos}")
+        batch_tokens = batch_value['tokens'].to(device)
+        punct_pos = batch_value['positions'].to(device)
 
         # get the loss for each token in the batch
         initial_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
-        print(f"initial loss shape: {initial_loss.shape}")
+        #print(f"initial loss shape: {initial_loss.shape}")
         orig_loss_list.append(initial_loss)
         
         # add hooks for the activations of the 11 and 13 tokens
-        for layer, head in heads_to_ablate:
-            mean_ablate_comma = partial(ablate_resid_with_precalc_mean_no_batch, cached_means=cached_means, pos_by_batch=punct_pos, layer=layer)
-            model.blocks[layer].hook_resid_post.add_hook(mean_ablate_comma)
+        for layer in layers_to_ablate:
+            mean_ablate_token = partial(ablate_resid_with_precalc_mean, cached_means=cached_means, pos_by_batch=punct_pos, layer=layer)
+            model.blocks[layer].hook_resid_post.add_hook(mean_ablate_token)
 
         # get the loss for each token when run with hooks
-        #print(f"batch tokens shape: {batch_tokens.shape}")
-        
         hooked_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
         #print(f"hooked loss shape: {hooked_loss.shape}")
 
@@ -482,6 +474,9 @@ def compute_mean_ablation_modified_loss(model: HookedTransformer, data_loader: D
         for p in punct_pos:
             #print(f"zeroing {p}")
             loss_diff[0, p] = 0
+
+        # set all masked positions to zero
+        loss_diff[batch_value['attention_mask'] == 0] = 0
 
         loss_diff_list.append(loss_diff)
 
