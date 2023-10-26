@@ -590,7 +590,7 @@ def compute_mean_ablation_modified_loss(
         # get the loss for each token in the batch
         initial_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
         # concatenate column of 0s
-        initial_loss = torch.cat([torch.zeros((initial_loss.shape[0], 1).to(device)), initial_loss], dim=1)
+        initial_loss = torch.cat([torch.zeros((initial_loss.shape[0], 1)).to(device), initial_loss], dim=1)
 
         if debug:
             print(f"initial loss shape: {initial_loss.shape}")
@@ -605,7 +605,7 @@ def compute_mean_ablation_modified_loss(
         # get the loss for each token when run with hooks
         hooked_loss = model(batch_tokens, return_type="loss", prepend_bos=False, loss_per_token=True)
         # concatenate column of 0s
-        hooked_loss = torch.cat([torch.zeros((hooked_loss.shape[0], 1).to(device)), hooked_loss], dim=1)
+        hooked_loss = torch.cat([torch.zeros((hooked_loss.shape[0], 1)).to(device), hooked_loss], dim=1)
 
         if debug:
             print(f"hooked loss shape: {hooked_loss.shape}")
