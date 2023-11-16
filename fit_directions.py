@@ -44,11 +44,11 @@ from utils.methods import FittingMethod
 # %%
 # ============================================================================ #
 # model loading
-SKIP_IF_EXISTS = False
+SKIP_IF_EXISTS = True
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    "stablelm-base-alpha-7b",
-    "stablelm-base-alpha-3b",
+    # "stablelm-base-alpha-7b",
+    # "stablelm-base-alpha-3b",
     # 'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
@@ -119,14 +119,15 @@ def get_model(name: str):
 def select_layers(
     n_layers: int,
 ):
-    if n_layers <= 16:
-        return list(range(n_layers + 1))
-    elif n_layers <= 24:
-        return [0] + list(range(1, n_layers + 1, 2))
-    elif n_layers <= 36:
-        return [0] + list(range(1, n_layers + 1, 4))
-    elif n_layers <= 48:
-        return [0] + list(range(1, n_layers + 1, 8))
+    return list(range(n_layers + 1))
+    # if n_layers <= 16:
+    #     return [0] + list(range(1, n_layers + 1, 4))
+    # elif n_layers <= 24:
+    #     return [0] + list(range(1, n_layers + 1, 4))
+    # elif n_layers <= 36:
+    #     return [0] + list(range(1, n_layers + 1, 4))
+    # elif n_layers <= 48:
+    #     return [0] + list(range(1, n_layers + 1, 8))
 
 
 # %%
