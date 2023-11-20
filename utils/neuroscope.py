@@ -95,22 +95,21 @@ def get_activations_cached(
     data: torch.utils.data.dataloader.DataLoader,
     direction_label: str,
     model: HookedTransformer,
-    device: Optional[torch.device] = None,
     verbose: bool = True,
 ):
     path = direction_label + "_activations.npy"
     if is_file(path, model):
         if verbose:
             print("Loading activations from file")
-        sentiment_activations = load_array(path, model)
+        sentiment_activations_np = load_array(path, model)
         sentiment_activations: Float[Tensor, "row pos layer"] = torch.tensor(
-            sentiment_activations, device=device, dtype=torch.float32
+            sentiment_activations_np, dtype=torch.float32
         )
     else:
         if verbose:
             print("Computing activations")
         direction = load_array(direction_label + ".npy", model)
-        direction = torch.tensor(direction, device=device, dtype=torch.float32)
+        direction = torch.tensor(direction, dtype=torch.float32)
         direction /= direction.norm()
         sentiment_activations: Float[
             Tensor, "row pos layer"
@@ -267,7 +266,7 @@ def get_window(
 ) -> Tuple[int, int]:
     """Helper function to get the window around a position in a batch (used in topk plotting))"""
     lb = max(0, pos - window_size)
-    ub = min(len(dataloader.dataset[batch]["tokens"]), pos + window_size)
+    ub = min(len(dataloader.dataset[batch]["tokens"]), pos + window_size + 1)
     return lb, ub
 
 
@@ -279,22 +278,51 @@ def extract_text_window(
     window_size: int = 10,
 ) -> List[str]:
     """Helper function to get the text window around a position in a batch (used in topk plotting)"""
+    assert model.tokenizer is not None
+    expected_size = 2 * window_size + 1
     lb, ub = get_window(batch, pos, dataloader=dataloader, window_size=window_size)
     tokens = dataloader.dataset[batch]["tokens"][lb:ub]
     str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
-    return str_tokens
+    padding_to_add = expected_size - len(str_tokens)
+    if padding_to_add > 0 and model.tokenizer.padding_side == "right":
+        str_tokens += [model.tokenizer.bos_token] * padding_to_add
+    elif padding_to_add > 0 and model.tokenizer.padding_side == "left":
+        str_tokens = [model.tokenizer.bos_token] * padding_to_add + str_tokens
+    assert len(str_tokens) == expected_size, (
+        f"Expected text window of size {expected_size}, "
+        f"found {len(str_tokens)}: {str_tokens}"
+    )
+    return str_tokens  # type: ignore
 
 
 def extract_activations_window(
-    activations: Float[Tensor, "row pos layer"],
+    activations: Float[Tensor, "row pos ..."],
     batch: int,
     pos: int,
+    model: HookedTransformer,
     dataloader: torch.utils.data.DataLoader,
     window_size: int = 10,
-) -> Float[Tensor, "pos layer"]:
+) -> Float[Tensor, "pos ..."]:
     """Helper function to get the activations window around a position in a batch (used in topk plotting)"""
+    assert model.tokenizer is not None
+    expected_size = 2 * window_size + 1
     lb, ub = get_window(batch, pos, dataloader=dataloader, window_size=window_size)
-    return activations[batch, lb:ub, :]
+    acts_window: Float[Tensor, "pos ..."] = activations[batch, lb:ub]
+    padding_to_add = expected_size - len(acts_window)
+    if padding_to_add > 0:
+        padding_shape = [padding_to_add] + list(acts_window.shape[1:])
+        padding_tensor = torch.zeros(
+            padding_shape, dtype=acts_window.dtype, device=acts_window.device
+        )
+        if model.tokenizer.padding_side == "right":
+            acts_window = torch.cat([acts_window, padding_tensor], dim=0)
+        elif model.tokenizer.padding_side == "left":
+            acts_window = torch.cat([padding_tensor, acts_window], dim=0)
+    assert len(acts_window) == expected_size, (
+        f"Expected activations window of size {expected_size}, "
+        f"found {len(acts_window)}: {acts_window}"
+    )
+    return acts_window
 
 
 def get_batch_pos_mask(
