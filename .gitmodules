@@ -1,3 +1,6 @@
 [submodule "CircuitsVis"]
 	path = CircuitsVis
 	url = https://github.com/ojh31/CircuitsVis.git
+[submodule "TransformerLens"]
+	path = TransformerLens
+	url = https://github.com/ojh31/TransformerLens.git
