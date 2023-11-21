@@ -64,21 +64,21 @@ MODEL_NAME = "pythia-2.8b"
 DIRECTION = (
     # "kmeans_simple_train_ADJ_layer1"
     # "pca_simple_train_ADJ_layer1"
-    "mean_diff_simple_train_ADJ_layer1"
-    # "logistic_regression_simple_train_ADJ_layer1"
+    # "mean_diff_simple_train_ADJ_layer1"
+    "logistic_regression_simple_train_ADJ_layer1"
     # "das_simple_train_ADJ_layer1"
 )
+# %%
+sentiment_dir = load_array(DIRECTION, MODEL_NAME)
+sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
+    device=device, dtype=torch.float32
+)
+sentiment_dir /= sentiment_dir.norm()
 # %%
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     device=device,
 )
-# %%
-sentiment_dir = load_array(DIRECTION, model)
-sentiment_dir: Float[Tensor, "d_model"] = torch.tensor(sentiment_dir).to(
-    device=device, dtype=torch.float32
-)
-sentiment_dir /= sentiment_dir.norm()
 
 
 # %%

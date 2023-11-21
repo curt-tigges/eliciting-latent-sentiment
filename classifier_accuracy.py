@@ -63,15 +63,15 @@ pd.set_option("display.max_colwidth", 200)
 torch.set_grad_enabled(False)
 # %%
 DIRECTIONS = [
-    # "kmeans_simple_train_ADJ_layer1",
+    "kmeans_simple_train_ADJ_layer1",
     "pca_simple_train_ADJ_layer1",
-    # "mean_diff_simple_train_ADJ_layer1",
-    # "logistic_regression_simple_train_ADJ_layer1",
-    # "das_simple_train_ADJ_layer1",
+    "mean_diff_simple_train_ADJ_layer1",
+    "logistic_regression_simple_train_ADJ_layer1",
+    "das_simple_train_ADJ_layer1",
 ]
 # %%
 device = "cuda"
-MODEL_NAME = "pythia-2.8b"
+MODEL_NAME = "stablelm-base-alpha-3b"
 BATCH_SIZE = 16
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -92,31 +92,6 @@ def get_window(
     lb = max(0, pos - window_size)
     ub = min(len(dataloader.dataset[batch]["tokens"]), pos + window_size + 1)
     return lb, ub
-
-
-def extract_text_window(
-    batch: int,
-    pos: int,
-    dataloader: torch.utils.data.DataLoader,
-    model: HookedTransformer,
-    window_size: int = 10,
-) -> List[str]:
-    """Helper function to get the text window around a position in a batch (used in topk plotting)"""
-    assert model.tokenizer is not None
-    expected_size = 2 * window_size + 1
-    lb, ub = get_window(batch, pos, dataloader=dataloader, window_size=window_size)
-    tokens = dataloader.dataset[batch]["tokens"][lb:ub]
-    str_tokens = model.to_str_tokens(tokens, prepend_bos=False)
-    padding_to_add = expected_size - len(str_tokens)
-    if padding_to_add > 0 and model.tokenizer.padding_side == "right":
-        str_tokens += [model.tokenizer.bos_token] * padding_to_add
-    elif padding_to_add > 0 and model.tokenizer.padding_side == "left":
-        str_tokens = [model.tokenizer.bos_token] * padding_to_add + str_tokens
-    assert len(str_tokens) == expected_size, (
-        f"Expected text window of size {expected_size}, "
-        f"found {len(str_tokens)}: {str_tokens}"
-    )
-    return str_tokens  # type: ignore
 
 
 def extract_text_window(
@@ -221,7 +196,9 @@ def sample_by_bin(
 
 
 # %% # Save samples
-for direction_label in tqdm(DIRECTIONS):
+bar = tqdm(DIRECTIONS)
+for direction_label in bar:
+    bar.set_description(direction_label)
     samples_path = direction_label + "_bin_samples.csv"
     if is_file(samples_path, model):
         continue
@@ -245,8 +222,6 @@ def plot_bin_proportions(
         assert nbins is not None
         if df.activation.dtype == pd.StringDtype:
             df.activation = df.activation.map(lambda x: eval(x).item()).astype(float)
-        # if "das" in label:
-        #     df.activation *= -1
         sentiments = sorted(df["sentiment"].unique())
         df = df.sort_values(by="activation").reset_index(drop=True)
         df["activation_cut"] = pd.cut(df.activation, bins=nbins)
@@ -309,6 +284,8 @@ for direction_label in DIRECTIONS:
         "labelled_" + direction_label + "_bin_samples", model
     )
     out_name = direction_label + "_bin_proportions"
+    if "das" in direction_label or "pca" in direction_label:
+        labelled_bin_samples.activation *= -1
     fig = plot_bin_proportions(
         labelled_bin_samples, f"{direction_label.split('_')[0]}, {model.cfg.model_name}"
     )
@@ -320,6 +297,8 @@ for direction_label in DIRECTIONS:
     activations = get_activations_cached(dataloader, direction_label, model)
     flat = activations[:, :, 1].flatten().cpu()
     flat = flat[flat != 0]
+    if "das" in direction_label or "pca" in direction_label:
+        flat *= -1
     positive_threshold = flat.quantile(0.999).item()
     negative_threshold = flat.quantile(0.001).item()
 

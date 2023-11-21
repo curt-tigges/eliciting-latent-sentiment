@@ -6,15 +6,15 @@ from utils.store import get_csv, to_csv, is_file
 
 # %%
 pd.set_option("display.max_colwidth", 200)
-MODEL = "pythia-2.8b"
+MODEL = "stablelm-base-alpha-3b"
 OVERWRITE = False
 # %%
 DIRECTIONS = [
-    # "kmeans_simple_train_ADJ_layer1",
+    "kmeans_simple_train_ADJ_layer1",
     "pca_simple_train_ADJ_layer1",
-    # "mean_diff_simple_train_ADJ_layer1",
-    # "logistic_regression_simple_train_ADJ_layer1",
-    # "das_simple_train_ADJ_layer1",
+    "mean_diff_simple_train_ADJ_layer1",
+    "logistic_regression_simple_train_ADJ_layer1",
+    "das_simple_train_ADJ_layer1",
 ]
 SUFFIX = "_bin_samples.csv"
 # %%

@@ -47,8 +47,9 @@ from utils.methods import FittingMethod
 SKIP_IF_EXISTS = True
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    # "stablelm-base-alpha-7b",
+    "mistral-7B",
     # "stablelm-base-alpha-3b",
+    # "stablelm-base-alpha-7b",
     # 'gpt2-small',
     # 'gpt2-medium',
     # 'gpt2-large',
@@ -56,15 +57,15 @@ MODELS = [
     # 'EleutherAI/pythia-160m',
     # 'EleutherAI/pythia-410m',
     # 'EleutherAI/pythia-1.4b',
-    "EleutherAI/pythia-6.9b",
+    # "EleutherAI/pythia-6.9b",
 ]
 METHODS = [
-    # ClassificationMethod.KMEANS,
-    # ClassificationMethod.PCA,
+    ClassificationMethod.KMEANS,
+    ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
-    # ClassificationMethod.MEAN_DIFF,
-    # ClassificationMethod.LOGISTIC_REGRESSION,
-    GradientMethod.DAS,
+    ClassificationMethod.MEAN_DIFF,
+    ClassificationMethod.LOGISTIC_REGRESSION,
+    # GradientMethod.DAS,
     # GradientMethod.DAS2D,
     # GradientMethod.DAS3D,
 ]
@@ -99,7 +100,7 @@ BATCH_SIZES = {
     "EleutherAI/pythia-2.8b": 8,
     "EleutherAI/pythia-6.9b": 4,
     "stablelm-base-alpha-3b": 8,
-    "stablelm-base-alpha-7b": 4,
+    "stablelm-base-alpha-7b": 8,
 }
 
 
@@ -119,7 +120,7 @@ def get_model(name: str):
 def select_layers(
     n_layers: int,
 ):
-    return list(range(n_layers + 1))
+    return [0, 1]  # list(range(n_layers + 1)) # FIXME: UNCOMMENT!!!
     # if n_layers <= 16:
     #     return [0] + list(range(1, n_layers + 1, 4))
     # elif n_layers <= 24:
