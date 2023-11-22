@@ -241,10 +241,8 @@ class PromptType(Enum):
                 ]
             if format_string.find(token, format_idx) >= 0:
                 format_idx = format_string.find(token, format_idx) + len(token)
-                print(format_string.find(token, format_idx), len(token), format_idx)
             elif curr_sub_token is not None:
                 out[curr_sub_token] = out.get(curr_sub_token, []) + [token_index]
-            print("out", out)
         return out
 
 
