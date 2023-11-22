@@ -675,8 +675,10 @@ def get_prompts(
         neg_prompts = [p + " " for p in neg_prompts]
         if neutral_prompts is not None:
             neutral_prompts = [p + " " for p in neutral_prompts]
-        pos_answers = CircularList([p.strip() + " " for p in pos_answers])
-        neg_answers = CircularList([p.strip() + " " for p in neg_answers])
+        for i in range(len(pos_answers)):
+            pos_answers[i] = pos_answers[i].strip()
+        for i in range(len(neg_answers)):
+            neg_answers[i] = neg_answers[i].strip()
 
     # create output dicts
     prompt_dict = dict(
