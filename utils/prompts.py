@@ -670,6 +670,14 @@ def get_prompts(
         f"Full list of negative prompts: {neg_prompts}."
     )
 
+    if "mistral" in model.cfg.model_name.lower():
+        pos_prompts = [p + " " for p in pos_prompts]
+        neg_prompts = [p + " " for p in neg_prompts]
+        if neutral_prompts is not None:
+            neutral_prompts = [p + " " for p in neutral_prompts]
+        pos_answers = CircularList([p.strip() + " " for p in pos_answers])
+        neg_answers = CircularList([p.strip() + " " for p in neg_answers])
+
     # create output dicts
     prompt_dict = dict(
         positive=pos_prompts,
