@@ -233,14 +233,18 @@ class PromptType(Enum):
         curr_sub_token = None
         out = dict()
         for token_index, token in enumerate(token_list):
+            if len(token) == 0:
+                continue
             if format_string[format_idx] == "{":
                 curr_sub_token = format_string[
                     format_idx + 1 : format_string.find("}", format_idx)
                 ]
             if format_string.find(token, format_idx) >= 0:
                 format_idx = format_string.find(token, format_idx) + len(token)
+                print(format_string.find(token, format_idx), len(token), format_idx)
             elif curr_sub_token is not None:
                 out[curr_sub_token] = out.get(curr_sub_token, []) + [token_index]
+            print("out", out)
         return out
 
 
