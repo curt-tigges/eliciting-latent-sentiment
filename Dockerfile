@@ -8,10 +8,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get update \
     && apt-get install -y gh
 
-RUN pip install transformer-lens plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
+RUN pip install plotly torchtyping jupyterlab scikit-learn ipywidgets matplotlib openai
 RUN pip install typeguard==2.13.3
 COPY CircuitsVis CircuitsVis
 RUN pip install CircuitsVis/python
+COPY TransformerLens TransformerLens
+RUN pip install -e ./TransformerLens
+RUN pip install transformers==4.34
 
 RUN git config --global user.email "oskar.hollinsworth@gmail.com" && \
     git config --global user.name "skar0" && \
