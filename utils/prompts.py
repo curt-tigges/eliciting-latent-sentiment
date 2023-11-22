@@ -783,7 +783,6 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         requires_grad: bool = True,
         device: Optional[torch.device] = None,
         disable_tqdm: Optional[bool] = None,
-        dtype: torch.dtype = torch.float32,
         center: bool = True,
     ):
         return self.run_with_cache(
@@ -793,7 +792,6 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
             requires_grad=requires_grad,
             device=device,
             disable_tqdm=disable_tqdm,
-            dtype=dtype,
             center=center,
         )
 
@@ -806,7 +804,6 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
         device: Optional[torch.device] = None,
         disable_tqdm: Optional[bool] = None,
         leave_tqdm: bool = False,
-        dtype: torch.dtype = torch.float32,
         center: bool = True,
     ):
         """
@@ -830,6 +827,7 @@ class CleanCorruptedDataset(torch.utils.data.Dataset):
 
         # Initialise arrays
         total_samples = len(dataloader.dataset)
+        dtype = model.cfg.dtype
         clean_logit_diffs = torch.zeros(total_samples, dtype=dtype, device="cpu")
         corrupted_logit_diffs = torch.zeros(total_samples, dtype=dtype, device="cpu")
         clean_prob_diffs = torch.zeros(total_samples, dtype=dtype, device="cpu")

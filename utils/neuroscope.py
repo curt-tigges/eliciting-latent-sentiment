@@ -103,13 +103,13 @@ def get_activations_cached(
             print("Loading activations from file")
         sentiment_activations_np = load_array(path, model)
         sentiment_activations: Float[Tensor, "row pos layer"] = torch.tensor(
-            sentiment_activations_np, dtype=torch.float32
+            sentiment_activations_np, dtype=model.cfg.dtype
         )
     else:
         if verbose:
             print("Computing activations")
         direction = load_array(direction_label + ".npy", model)
-        direction = torch.tensor(direction, dtype=torch.float32)
+        direction = torch.tensor(direction, dtype=model.cfg.dtype)
         direction /= direction.norm()
         sentiment_activations: Float[
             Tensor, "row pos layer"
@@ -386,9 +386,9 @@ def _plot_topk(
         base_activations: Float[Tensor, "row pos"] = all_activations[:, :, base_layer]
         activations = activations - base_activations
     if largest:
-        ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
+        ignore_value = torch.tensor(-np.inf, device=device, dtype=model.cfg.dtype)
     else:
-        ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
+        ignore_value = torch.tensor(np.inf, device=device, dtype=model.cfg.dtype)
     # create a mask for the inclusions/exclusions
     if exclusions is not None:
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(
@@ -424,7 +424,7 @@ def _plot_topk(
     ]
     # Print the  most positive and negative examples and their activations
     print(f"Top {k} most {label} examples:")
-    zeros = torch.zeros((1, layers), device=device, dtype=torch.float32)
+    zeros = torch.zeros((1, layers), device=device, dtype=model.cfg.dtype)
     texts = [model.tokenizer.bos_token]
     text_to_not_repeat = set()
     acts = [zeros]
@@ -545,9 +545,9 @@ def _plot_top_p(
     label = "positive" if largest else "negative"
     activations: Float[Tensor, "batch pos"] = all_activations[:, :, layer]
     if largest:
-        ignore_value = torch.tensor(-np.inf, device=device, dtype=torch.float32)
+        ignore_value = torch.tensor(-np.inf, device=device, dtype=model.cfg.dtype)
     else:
-        ignore_value = torch.tensor(np.inf, device=device, dtype=torch.float32)
+        ignore_value = torch.tensor(np.inf, device=device, dtype=model.cfg.dtype)
     # create a mask for the inclusions/exclusions
     if exclusions is not None:
         mask: Bool[Tensor, "row pos"] = get_batch_pos_mask(
@@ -576,7 +576,7 @@ def _plot_top_p(
     # Print the  most positive and negative examples and their activations
     print(f"Top {k} most {label} examples:")
     zeros = torch.zeros(
-        (1, all_activations.shape[-1]), device=device, dtype=torch.float32
+        (1, all_activations.shape[-1]), device=device, dtype=model.cfg.dtype
     )
     texts = [model.tokenizer.bos_token]
     text_to_not_repeat = set()
