@@ -16,13 +16,13 @@ from utils.store import (
 )
 
 # %%
-MODEL_NAME = "pythia-2.8b"
+MODEL_NAME = "stablelm-base-alpha-3b"
 # %%
 METHOD_SHORT_NAMES = {
     "das": "DAS",
-    "mean_diff": "MD",
+    "mean_diff": "Mean_diff",
     "logistic_regression": "LR",
-    "kmeans": "KM",
+    "kmeans": "K_means",
     "pca": "PCA",
     "random_direction": "Random",
 }

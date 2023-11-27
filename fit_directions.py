@@ -33,7 +33,7 @@ from utils.store import (
     load_pickle,
     save_pdf,
 )
-from utils.prompts import PromptType
+from utils.prompts import PromptType, get_dataset
 from utils.residual_stream import ResidualStreamDataset
 from utils.classification import train_classifying_direction, ClassificationMethod
 from utils.das import GradientMethod, train_das_subspace
@@ -47,7 +47,7 @@ from utils.methods import FittingMethod
 SKIP_IF_EXISTS = True
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    "mistral-7B",
+    "mistralai/Mistral-7B-v0.1",
     # "stablelm-base-alpha-3b",
     # "stablelm-base-alpha-7b",
     # 'gpt2-small',
@@ -60,12 +60,12 @@ MODELS = [
     # "EleutherAI/pythia-6.9b",
 ]
 METHODS = [
-    ClassificationMethod.KMEANS,
-    ClassificationMethod.PCA,
+    # ClassificationMethod.KMEANS,
+    # ClassificationMethod.PCA,
     # ClassificationMethod.SVD,
-    ClassificationMethod.MEAN_DIFF,
-    ClassificationMethod.LOGISTIC_REGRESSION,
-    # GradientMethod.DAS,
+    # ClassificationMethod.MEAN_DIFF,
+    # ClassificationMethod.LOGISTIC_REGRESSION,
+    GradientMethod.DAS,
     # GradientMethod.DAS2D,
     # GradientMethod.DAS3D,
 ]
@@ -101,6 +101,7 @@ BATCH_SIZES = {
     "EleutherAI/pythia-6.9b": 4,
     "stablelm-base-alpha-3b": 8,
     "stablelm-base-alpha-7b": 8,
+    "mistralai/Mistral-7B-v0.1": 16,
 }
 
 
@@ -108,10 +109,13 @@ BATCH_SIZES = {
 def get_model(name: str):
     model = HookedTransformer.from_pretrained(
         name,
-        center_unembed=True,
-        center_writing_weights=True,
-        fold_ln=True,
+        torch_dtype=torch.float16,
+        dtype="float16",
+        fold_ln=False,
+        center_writing_weights=False,
+        center_unembed=False,
         device=device,
+        move_to_device=True,
     ).requires_grad_(False)
     return model
 
@@ -120,7 +124,7 @@ def get_model(name: str):
 def select_layers(
     n_layers: int,
 ):
-    return [0, 1]  # list(range(n_layers + 1)) # FIXME: UNCOMMENT!!!
+    return list(range(n_layers + 1))  # FIXME: UNCOMMENT!!!
     # if n_layers <= 16:
     #     return [0] + list(range(1, n_layers + 1, 4))
     # elif n_layers <= 24:
@@ -203,7 +207,7 @@ for model_name, train_type, test_type, method in BAR:
         f"testset:{test_type.value},"
         f"method:{method.value}"
     )
-    if model is None or model.cfg.model_name != model_name:
+    if model is None or model.cfg.model_name not in model_name:
         del model
         model = get_model(model_name)
     if "test" in train_type.value:

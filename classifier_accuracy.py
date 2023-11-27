@@ -71,11 +71,16 @@ DIRECTIONS = [
 ]
 # %%
 device = "cuda"
-MODEL_NAME = "stablelm-base-alpha-3b"
+MODEL_NAME = "mistralai/Mistral-7B-v0.1"
 BATCH_SIZE = 16
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
     device=device,
+    torch_dtype=torch.float16,
+    dtype="float16",
+    fold_ln=False,
+    center_writing_weights=False,
+    center_unembed=False,
 )
 # %%
 dataloader = get_dataloader(model, "stas/openwebtext-10k", batch_size=BATCH_SIZE)
