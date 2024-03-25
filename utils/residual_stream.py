@@ -114,7 +114,7 @@ class ResidualStreamDataset:
                     for k, v in fwd_cache.items():
                         act_dict[k] = torch.zeros(
                             (total_samples, *v.shape[1:]),
-                            dtype=self.model.dtype,
+                            dtype=self.model.cfg.dtype,
                             device="cpu",
                         )
                     buffer_initialized = True
