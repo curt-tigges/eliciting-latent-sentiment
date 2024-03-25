@@ -15,10 +15,10 @@ import imgkit
 
 
 DIRECTION_PATTERN = (
-    r'^(kmeans|pca|das|das2d|das3d|logistic_regression|mean_diff|random_direction)_'
-    r'(?:(simple_adverb|simple_book|simple_product|simple_train|simple_res|treebank_train)_(ADJ|ADV|ALL|FEEL|NOUN|VRB)_)'
-    r'layer(\d*)'
-    r'\.npy$'
+    r"^(kmeans|pca|das|das2d|das3d|logistic_regression|mean_diff|random_direction)_"
+    r"(?:(simple_adverb|simple_book|simple_product|simple_train|simple_res|treebank_train)_(ADJ|ADV|ALL|FEEL|NOUN|VRB)_)?"
+    r"layer(\d*)"
+    r"\.npy$"
 )
 
 
@@ -26,27 +26,29 @@ def flatten_multiindex(in_df):
     df = in_df.copy()
     # Flatten columns
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
-    
+        df.columns = ["_".join(map(str, col)).strip() for col in df.columns.values]
+
     # Flatten index if it's a multiindex
     if isinstance(df.index, pd.MultiIndex):
-        df.index = ['_'.join(map(str, idx)).strip() for idx in df.index.values]
-    
+        df.index = ["_".join(map(str, idx)).strip() for idx in df.index.values]
+
     return df
 
 
 def extract_layer_from_string(s: str) -> int:
     # Find numbers that directly follow the text "layer"
-    match = re.search(r'(?<=layer)\d+', s)
+    match = re.search(r"(?<=layer)\d+", s)
     if match:
         number = match.group()
         return int(number)
     else:
         return None
 
+
 def zero_pad_layer_string(s: str) -> str:
     # Find numbers that directly follow the text "layer"
-    return re.sub(r'(?<=layer)(\d+)', lambda m: m.group(1).zfill(2), s)
+    return re.sub(r"(?<=layer)(\d+)", lambda m: m.group(1).zfill(2), s)
+
 
 def add_styling(
     html: str,
@@ -62,7 +64,7 @@ def add_styling(
     table_id_match = re.search(r'<table id="([^"]+)">', html)
     if not table_id_match:
         return "Invalid HTML: Table ID not found"
-    
+
     table_id = table_id_match.group(1)
 
     # Define the general styles using the extracted table ID
@@ -112,26 +114,26 @@ def add_styling(
     }}
 
     """
-    
+
     # Insert the general styles into the existing style section of the HTML
-    style_start_index = html.find("<style type=\"text/css\">")
+    style_start_index = html.find('<style type="text/css">')
     if style_start_index == -1:
         return "Invalid HTML: Style section not found"
-    
-    style_start_index += len("<style type=\"text/css\">")
+
+    style_start_index += len('<style type="text/css">')
     html_with_styles = html[:style_start_index] + styles + html[style_start_index:]
-    
+
     return html_with_styles
 
 
 def clean_label(label: str) -> str:
-    label = label.replace('.npy', '')
-    label = label.replace('.html', '')
-    label = label.replace('data/', '')
-    label = label.replace('.csv', '')
-    label = label.replace('.txt', '')
-    label = label.replace('.pkl', '')
-    label = label.replace('.pdf', '')
+    label = label.replace(".npy", "")
+    label = label.replace(".html", "")
+    label = label.replace("data/", "")
+    label = label.replace(".csv", "")
+    label = label.replace(".txt", "")
+    label = label.replace(".pkl", "")
+    label = label.replace(".pdf", "")
     assert "/" not in label, "Label must not contain slashes"
     return label
 
@@ -140,9 +142,9 @@ def get_model_name(model: Union[HookedTransformer, str]) -> str:
     if isinstance(model, HookedTransformer):
         assert len(model.cfg.model_name) > 0, "Model must have a name"
         model = model.cfg.model_name
-    model = model.replace('EleutherAI/', '')
-    if model == 'gpt2':
-        model = 'gpt2-small'
+    model = model.replace("EleutherAI/", "")
+    if model == "gpt2":
+        model = "gpt2-small"
     return model
 
 
@@ -152,17 +154,17 @@ def get_csv_path(
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.csv')
+    path = os.path.join(model_path, label + ".csv")
     return path
 
 
 def update_csv(
     data: pd.DataFrame,
-    label: str, 
-    model: Union[HookedTransformer, str], 
+    label: str,
+    model: Union[HookedTransformer, str],
     key_cols: Iterable[str] = None,
     index: bool = False,
 ):
@@ -217,10 +219,10 @@ def eval_csv(
 
 
 def save_array(
-    array: Union[np.ndarray, torch.Tensor], 
-    label: str, 
+    array: Union[np.ndarray, torch.Tensor],
+    label: str,
     model: Union[HookedTransformer, str],
-    root: str = 'data',
+    root: str = "data",
 ):
     if not os.path.exists(root):
         os.mkdir(root)
@@ -228,11 +230,11 @@ def save_array(
     if isinstance(array, torch.Tensor):
         array = array.cpu().detach().numpy()
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.npy')
-    with open(path, 'wb') as f:
+    path = os.path.join(model_path, label + ".npy")
+    with open(path, "wb") as f:
         np.save(f, array)
     return path
 
@@ -240,18 +242,18 @@ def save_array(
 def load_array(label: str, model: Union[HookedTransformer, str]) -> np.ndarray:
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
-    path = os.path.join(model_path, label + '.npy')
-    with open(path, 'rb') as f:
+    model_path = os.path.join("data", model)
+    path = os.path.join(model_path, label + ".npy")
+    with open(path, "rb") as f:
         array = np.load(f)
     return array
 
 
 def save_json(
-    array: Union[np.ndarray, torch.Tensor], 
-    label: str, 
+    array: Union[np.ndarray, torch.Tensor],
+    label: str,
     model: Union[HookedTransformer, str],
-    root: str = 'data',
+    root: str = "data",
 ):
     if not os.path.exists(root):
         os.mkdir(root)
@@ -259,18 +261,18 @@ def save_json(
     if isinstance(array, torch.Tensor):
         array = array.cpu().detach().numpy()
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.json')
-    with open(path, 'w') as f:
+    path = os.path.join(model_path, label + ".json")
+    with open(path, "w") as f:
         json.dump(array.tolist(), f)
     return path
 
 
 def save_html(
     html_data: Union[go.Figure, RenderedHTML, Styler],
-    label: str, 
+    label: str,
     model: Union[HookedTransformer, str],
     local: bool = True,
     static: bool = False,
@@ -278,70 +280,65 @@ def save_html(
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.html')
+    path = os.path.join(model_path, label + ".html")
     if isinstance(html_data, go.Figure):
         html_data.write_html(path)
     elif isinstance(html_data, RenderedHTML):
         html_str = html_data.local_src if local else html_data.cdn_src
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             f.write(html_str)
     elif isinstance(html_data, Styler):
         html = html_data.to_html()
         html = add_styling(html, **styling_kwargs)
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             f.write(html)
     else:
         raise ValueError(f"Invalid type: {type(html_data)}")
     if static:
-        static_path = os.path.join(model_path, label + '.png')
+        static_path = os.path.join(model_path, label + ".png")
         imgkit.from_file(path, static_path)
     return path
 
 
 def get_labels(glob_str: str, model: Union[HookedTransformer, str]) -> list:
     model: str = get_model_name(model)
-    model_path = os.path.join('data', model)
-    labels = [os.path.split(p)[-1] for p in glob.iglob(os.path.join(model_path, glob_str))]
+    model_path = os.path.join("data", model)
+    labels = [
+        os.path.split(p)[-1] for p in glob.iglob(os.path.join(model_path, glob_str))
+    ]
     return labels
 
 
 def is_file(name: str, model: Union[HookedTransformer, str]) -> bool:
     model: str = get_model_name(model)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     file_path = os.path.join(model_path, name)
     return os.path.exists(file_path)
 
 
-def save_text(
-    text: str, 
-    label: str, 
-    model: Union[HookedTransformer, str]
-):
+def save_text(text: str, label: str, model: Union[HookedTransformer, str]):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.txt')
-    with open(path, 'w') as f:
+    path = os.path.join(model_path, label + ".txt")
+    with open(path, "w") as f:
         f.write(text)
     return path
 
 
-def load_text(
-    label: str, 
-    model: Union[HookedTransformer, str]
-):
+def load_text(label: str, model: Union[HookedTransformer, str]):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.txt')
-    with open(path, 'r') as f:
+    path = os.path.join(model_path, label + ".txt")
+    with open(path, "r") as f:
         return f.read()
 
 
@@ -352,11 +349,11 @@ def save_pickle(
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.pkl')
-    with open(path, 'wb') as f:
+    path = os.path.join(model_path, label + ".pkl")
+    with open(path, "wb") as f:
         pickle.dump(obj, f)
     return path
 
@@ -367,9 +364,9 @@ def load_pickle(
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
-    path = os.path.join(model_path, label + '.pkl')
-    with open(path, 'rb') as f:
+    model_path = os.path.join("data", model)
+    path = os.path.join(model_path, label + ".pkl")
+    with open(path, "rb") as f:
         obj = pickle.load(f)
     return obj
 
@@ -381,10 +378,10 @@ def save_dataset_dict(
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.pkl')
+    path = os.path.join(model_path, label + ".pkl")
     dataset_dict.save_to_disk(path)
     return path
 
@@ -396,10 +393,10 @@ def save_image(
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.png')
+    path = os.path.join(model_path, label + ".png")
     figure.write_image(path)
     return path
 
@@ -411,10 +408,10 @@ def save_pdf(
 ):
     model: str = get_model_name(model)
     label = clean_label(label)
-    model_path = os.path.join('data', model)
+    model_path = os.path.join("data", model)
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    path = os.path.join(model_path, label + '.pdf')
-    figure.write_image(path, format='pdf')
-    figure.write_image(path, format='pdf')
+    path = os.path.join(model_path, label + ".pdf")
+    figure.write_image(path, format="pdf")
+    figure.write_image(path, format="pdf")
     return path
