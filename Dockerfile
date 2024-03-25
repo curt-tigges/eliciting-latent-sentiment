@@ -32,4 +32,5 @@ RUN apt install wget -y
 RUN wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/wkhtmltox_0.12.6-1.focal_amd64.deb
 RUN apt install -f ./wkhtmltox_0.12.6-1.focal_amd64.deb -y
 RUN pip install imgkit
+RUN pip install pytest transformers_stream_generator tiktoken
 

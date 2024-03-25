@@ -8,7 +8,9 @@ from utils.store import save_array
 # %%
 def generate_random_directions(d_model, n_layers, model_name):
     torch.random.manual_seed(42)
-    for layer in range(n_layers + 1):
+    bar = tqdm(range(n_layers + 1), total=n_layers + 1)
+    for layer in bar:
+        bar.set_description(f"Layer {layer}")
         random_direction = torch.randn(d_model)
         random_direction /= random_direction.norm()
         save_array(random_direction, f"random_direction_layer{layer:02d}", model_name)
@@ -26,10 +28,18 @@ MODELS = [
     # 'EleutherAI/pythia-410m',
     # 'EleutherAI/pythia-1.4b',
     # 'EleutherAI/pythia-2.8b',
+    # "gemma-7b",
+    # "gemma-2b",
+    "qwen-7b",
+    "qwen-1.8b",
 ]
 for model in tqdm(MODELS):
-    model = HookedTransformer.from_pretrained(model)
+    print(f"Loading model {model}")
+    model = HookedTransformer.from_pretrained(model, dtype="bfloat16")
     d_model = model.cfg.d_model
     n_layers = model.cfg.n_layers
+    print(f"Generating random directions for {model.cfg.model_name}")
     generate_random_directions(d_model, n_layers, model.cfg.model_name)
+    del model
+    torch.cuda.empty_cache()
 # %%
