@@ -23,9 +23,9 @@ from utils.methods import FittingMethod
 
 
 class GradientMethod(FittingMethod):
-    DAS = 'das'
-    DAS2D = 'das2d'
-    DAS3D = 'das3d'
+    DAS = "das"
+    DAS2D = "das2d"
+    DAS3D = "das3d"
 
     def get_dimension(self):
         if self == GradientMethod.DAS:
@@ -40,6 +40,7 @@ class GradientMethod(FittingMethod):
 
 class InverseRotateLayer(torch.nn.Module):
     """The inverse of a given `LinearLayer` module."""
+
     def __init__(self, lin_layer):
         super().__init__()
         self.lin_layer = lin_layer
@@ -51,18 +52,26 @@ class InverseRotateLayer(torch.nn.Module):
 
 class RotateLayer(torch.nn.Module):
     """A linear transformation with orthogonal initialization."""
-    def __init__(self, n, device: torch.device, init_orth: bool = True):
+
+    def __init__(
+        self,
+        n,
+        device: Union[torch.device, str],
+        init_orth: bool = True,
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
-        weight = torch.empty(n,n, device=device)
-        # we don't need init if the saved checkpoint has a nice 
+        weight = torch.empty(n, n, device=device, dtype=dtype)
+        # we don't need init if the saved checkpoint has a nice
         # starting point already.
         # you can also study this if you want, but it is our focus.
         if init_orth:
             torch.nn.init.orthogonal_(weight)
         self.weight = torch.nn.Parameter(
-            weight, requires_grad=True,
+            weight,
+            requires_grad=True,
         ).to(device)
-        
+
     def forward(self, x: Float[Tensor, "batch d_model"]):
         return torch.matmul(x, self.weight)
 
@@ -72,10 +81,10 @@ def hook_fn_base(
     hook: HookPoint,
     layer: int,
     position: Union[None, int],
-    new_value: Float[Tensor, "batch *pos d_model"]
+    new_value: Float[Tensor, "batch *pos d_model"],
 ):
     batch_size, seq_len, d_model = resid.shape
-    assert 'resid' in hook.name
+    assert hook.name is not None and "resid" in hook.name
     if hook.layer() != layer:
         return resid
     if position is None:
@@ -100,7 +109,7 @@ def hook_fn_base(
     if new_value.requires_grad:
         assert out.requires_grad
     return out
-    
+
 
 def act_patch_simple(
     model: HookedTransformer,
@@ -114,7 +123,9 @@ def act_patch_simple(
     assert layer <= model.cfg.n_layers
     act_name, patch_layer = get_resid_name(layer, model)
     model.reset_hooks()
-    hook_fn = partial(hook_fn_base, layer=patch_layer, position=position, new_value=new_value)
+    hook_fn = partial(
+        hook_fn_base, layer=patch_layer, position=position, new_value=new_value
+    )
     logits = model.run_with_hooks(
         orig_input,
         fwd_hooks=[(act_name, hook_fn)],
@@ -126,7 +137,7 @@ def act_patch_simple(
         assert logits.requires_grad, (
             "Output of run_with_hooks should require grad. "
             "Are you sure that the hook was applied? "
-            f"act_name={act_name}, patch_layer={patch_layer}" 
+            f"act_name={act_name}, patch_layer={patch_layer}"
         )
         assert metric.requires_grad
     return metric
@@ -134,16 +145,22 @@ def act_patch_simple(
 
 class RotationModule(torch.nn.Module):
     def __init__(
-        self, 
+        self,
         model: HookedTransformer,
         d_das: int = 1,
     ):
         super().__init__()
         self.model = model
         self.device = self.model.cfg.device
+        self.dtype = self.model.cfg.dtype
         self.d_model = model.cfg.d_model
         self.d_das = d_das
-        rotate_layer = RotateLayer(model.cfg.d_model, self.device)
+        assert self.device is not None
+        rotate_layer = RotateLayer(
+            model.cfg.d_model,
+            device=self.device,
+            dtype=self.dtype,
+        )
         self.rotate_layer = torch.nn.utils.parametrizations.orthogonal(
             rotate_layer, use_trivialization=False
         )
@@ -154,20 +171,16 @@ class RotationModule(torch.nn.Module):
         orig_resid: Float[Tensor, "batch *pos d_model"],
         new_resid: Float[Tensor, "batch *pos d_model"],
     ) -> Float[Tensor, "batch d_model"]:
-        rotated_orig_act: Float[
-            Tensor, "batch *pos d_model"
-        ] = self.rotate_layer(orig_resid)
-        rotated_new_act: Float[
-            Tensor, "batch *pos d_model"
-        ] = self.rotate_layer(new_resid)
-        d_model_index: Float[
-            Tensor, "batch *pos d_model"
-        ] = torch.arange(
+        rotated_orig_act: Float[Tensor, "batch *pos d_model"] = self.rotate_layer(
+            orig_resid
+        )
+        rotated_new_act: Float[Tensor, "batch *pos d_model"] = self.rotate_layer(
+            new_resid
+        )
+        d_model_index: Float[Tensor, "batch *pos d_model"] = torch.arange(
             self.model.cfg.d_model, device=self.device
         ).expand(orig_resid.shape)
-        rotated_patch_act: Float[
-            Tensor, "batch *pos d_model"
-        ] = torch.where(
+        rotated_patch_act: Float[Tensor, "batch *pos d_model"] = torch.where(
             d_model_index < self.d_das,
             rotated_new_act,
             rotated_orig_act,
@@ -176,7 +189,7 @@ class RotationModule(torch.nn.Module):
         return patch_act
 
     def forward(
-        self, 
+        self,
         orig_resid: Float[Tensor, "batch *pos d_model"],
         new_resid: Float[Tensor, "batch *pos d_model"],
         layer: int,
@@ -227,9 +240,9 @@ class TrainingConfig:
 
     def to_dict(self):
         return {
-            attr: getattr(self, attr) 
-            for attr in dir(self) 
-            if not callable(getattr(self, attr)) and not attr.startswith('_')
+            attr: getattr(self, attr)
+            for attr in dir(self)
+            if not callable(getattr(self, attr)) and not attr.startswith("_")
         }
 
 
@@ -238,13 +251,13 @@ def fit_rotation(
     testloader: DataLoader,
     metric_train: Callable,
     metric_test: Callable,
-    model: HookedTransformer, 
+    model: HookedTransformer,
     device: torch.device,
     project: str = None,
     profiler: bool = False,
     downcast: bool = False,
     verbose: bool = False,
-    **config_dict
+    **config_dict,
 ) -> Tuple[HookedTransformer, List[Tensor]]:
     """
     Entrypoint for training a DAS subspace given
@@ -255,8 +268,8 @@ def fit_rotation(
     scaler = GradScaler() if downcast else None
     if device != model.cfg.device:
         model = model.to(device)
-    if 'model_name' not in config_dict:
-        config_dict['model_name'] = model.cfg.model_name
+    if "model_name" not in config_dict:
+        config_dict["model_name"] = model.cfg.model_name
     config = TrainingConfig(config_dict)
     # Initialize wandb
     if config.wandb_enabled:
@@ -266,10 +279,10 @@ def fit_rotation(
     # Create a list to store the losses and models
     losses_train = []
     losses_test = []
-    models = [] 
+    models = []
     step = 0
     torch.manual_seed(config.seed)
-        
+
     # Create the rotation module
     rotation_module = RotationModule(
         model=model,
@@ -278,7 +291,7 @@ def fit_rotation(
 
     # Define the optimizer
     optimizer = torch.optim.Adam(
-        rotation_module.parameters(), 
+        rotation_module.parameters(),
         lr=config.lr,
         weight_decay=config.weight_decay,
         betas=config.betas,
@@ -292,7 +305,12 @@ def fit_rotation(
         train_bar.set_description(
             f"Epoch {epoch}: training. Batch size: {trainloader.batch_size}. Device: {device}"
         )
-        for orig_tokens_train, orig_resid_train, new_resid_train, answers_train in train_bar:
+        for (
+            orig_tokens_train,
+            orig_resid_train,
+            new_resid_train,
+            answers_train,
+        ) in train_bar:
             train_bar.set_description(
                 f"Epoch {epoch} training: moving data to device={device}"
             )
@@ -301,9 +319,7 @@ def fit_rotation(
             new_resid_train = new_resid_train.to(device)
             answers_train = answers_train.to(device)
             optimizer.zero_grad()
-            train_bar.set_description(
-                f"Epoch {epoch} training: computing loss"
-            )
+            train_bar.set_description(f"Epoch {epoch} training: computing loss")
             with loss_context:
                 loss = rotation_module(
                     orig_resid_train,
@@ -328,25 +344,30 @@ def fit_rotation(
                 f"Epoch {epoch} training: backpropagating. Profiler: {profiler}. Device: {device}. Downcast: {downcast}"
             )
             if profiler:
-                with profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU], record_shapes=True) as prof:
+                with profile(
+                    activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU],
+                    record_shapes=True,
+                ) as prof:
                     with record_function("backpropagation"):
                         scaled_loss.backward()
                     torch.cuda.synchronize()
                 print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
             else:
                 scaled_loss.backward()
-            train_bar.set_description(
-                f"Epoch {epoch} training: stepping"
-            )
+            train_bar.set_description(f"Epoch {epoch} training: stepping")
             if downcast:
                 # Unscales the gradients of optimizer's assigned params in-place
                 scaler.unscale_(optimizer)
                 # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
-                torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
+                torch.nn.utils.clip_grad_norm_(
+                    rotation_module.parameters(), config.clip_grad_norm
+                )
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                torch.nn.utils.clip_grad_norm_(rotation_module.parameters(), config.clip_grad_norm)
+                torch.nn.utils.clip_grad_norm_(
+                    rotation_module.parameters(), config.clip_grad_norm
+                )
                 optimizer.step()
             step += 1
             if config.wandb_enabled:
@@ -359,7 +380,12 @@ def fit_rotation(
             test_bar.set_description(
                 f"Epoch {epoch}: validation. Batch size: {testloader.batch_size}. Device: {device}"
             )
-            for orig_tokens_test, orig_resid_test, new_resid_test, answers_test in test_bar:
+            for (
+                orig_tokens_test,
+                orig_resid_test,
+                new_resid_test,
+                answers_test,
+            ) in test_bar:
                 orig_tokens_test = orig_tokens_test.to(device)
                 orig_resid_test = orig_resid_test.to(device)
                 new_resid_test = new_resid_test.to(device)
@@ -375,10 +401,13 @@ def fit_rotation(
                 epoch_test_loss += eval_loss.item()
 
         if config.wandb_enabled:
-            wandb.log({
-                "epoch_training_loss": epoch_train_loss / len(trainloader),
-                "epoch_validation_loss": epoch_test_loss / len(testloader),
-            }, step=step)
+            wandb.log(
+                {
+                    "epoch_training_loss": epoch_train_loss / len(trainloader),
+                    "epoch_validation_loss": epoch_test_loss / len(testloader),
+                },
+                step=step,
+            )
         # Store the loss and model for this seed
         losses_train.append(epoch_train_loss)
         losses_test.append(epoch_test_loss)
@@ -396,13 +425,20 @@ def fit_rotation(
     # Load the best model
     best_model_state_dict = models[best_model_idx]
     rotation_module.load_state_dict(best_model_state_dict)
-    return rotation_module.rotate_layer.weight[:, :config.d_das]
+    return rotation_module.rotate_layer.weight[:, : config.d_das]
 
 
 def get_das_dataset(
-    prompt_type: PromptType, position: str, layer: int, model: HookedTransformer,
-    batch_size: int = 32, max_dataset_size: int = None, scaffold: ReviewScaffold = None,
-    pin_memory: bool = True, device: torch.device = None, requires_grad: bool = True,
+    prompt_type: PromptType,
+    position: str,
+    layer: int,
+    model: HookedTransformer,
+    batch_size: int = 32,
+    max_dataset_size: int = None,
+    scaffold: ReviewScaffold = None,
+    pin_memory: bool = True,
+    device: torch.device = None,
+    requires_grad: bool = True,
     verbose: bool = False,
 ):
     """
@@ -410,7 +446,9 @@ def get_das_dataset(
     """
     if prompt_type is None or prompt_type == PromptType.NONE:
         return DataLoader([]), None, None
-    clean_corrupt_data = get_dataset(model, device, prompt_type=prompt_type, scaffold=scaffold)
+    clean_corrupt_data = get_dataset(
+        model, device, prompt_type=prompt_type, scaffold=scaffold
+    )
     if max_dataset_size is not None:
         clean_corrupt_data = clean_corrupt_data.get_subset(
             list(range(max_dataset_size))
@@ -420,15 +458,16 @@ def get_das_dataset(
     pos: int = placeholders[position][-1] if position is not None else None
     results = clean_corrupt_data.run_with_cache(
         model,
-        names_filter=lambda name: name in ('blocks.0.attn.hook_z', get_resid_name(layer, model)[0]),
+        names_filter=lambda name: name
+        in ("blocks.0.attn.hook_z", get_resid_name(layer, model)[0]),
         batch_size=batch_size,
         device=device,
         requires_grad=requires_grad,
     )
     act_name, _ = get_resid_name(layer, model)
     loss_fn = partial(
-        logit_diff_denoising, 
-        flipped_value=results.clean_logit_diff, 
+        logit_diff_denoising,
+        flipped_value=results.clean_logit_diff,
         clean_value=results.corrupted_logit_diff,
         return_tensor=True,
     )
@@ -445,26 +484,36 @@ def get_das_dataset(
         new_resid = new_resid[:, pos, :]
     # Create a TensorDataset from the tensors
     das_dataset = TensorDataset(
-        clean_corrupt_data.corrupted_tokens.detach().cpu(), 
-        orig_resid.detach().cpu().requires_grad_(requires_grad), 
-        new_resid.detach().cpu().requires_grad_(requires_grad), 
+        clean_corrupt_data.corrupted_tokens.detach().cpu(),
+        orig_resid.detach().cpu().requires_grad_(requires_grad),
+        new_resid.detach().cpu().requires_grad_(requires_grad),
         clean_corrupt_data.answer_tokens.detach().cpu(),
     )
     # Create a DataLoader from the dataset
     das_dataloader = DataLoader(
         das_dataset, batch_size=batch_size, pin_memory=pin_memory
-        )
+    )
     return das_dataloader, loss_fn, pos
 
 
 def train_das_subspace(
-    model: HookedTransformer, device: torch.device,
-    train_type: PromptType, train_pos: Union[None, str], train_layer: int,
-    test_type: PromptType, test_pos: Union[None, str], test_layer: int,
-    batch_size: int = 32, max_dataset_size: int = None, profiler: bool = False,
-    downcast: bool = False, scaffold: ReviewScaffold = None,
-    data_requires_grad: bool = False, verbose: bool = False,
-    d_das: int = 1, **config_arg,
+    model: HookedTransformer,
+    device: torch.device,
+    train_type: PromptType,
+    train_pos: Union[None, str],
+    train_layer: int,
+    test_type: PromptType,
+    test_pos: Union[None, str],
+    test_layer: int,
+    batch_size: int = 32,
+    max_dataset_size: int = None,
+    profiler: bool = False,
+    downcast: bool = False,
+    scaffold: ReviewScaffold = None,
+    data_requires_grad: bool = False,
+    verbose: bool = False,
+    d_das: int = 1,
+    **config_arg,
 ) -> Tuple[Float[Tensor, "batch d_model"], str]:
     """
     Entrypoint to be used in directional patching experiments
@@ -474,16 +523,28 @@ def train_das_subspace(
     if data_requires_grad:
         warnings.warn("data_requires_grad is True. This is not recommended.")
     trainloader, loss_fn, train_position = get_das_dataset(
-        train_type, position=train_pos, layer=train_layer, model=model,
-        batch_size=batch_size, max_dataset_size=max_dataset_size,
-        scaffold=scaffold, device=device, requires_grad=data_requires_grad,
+        train_type,
+        position=train_pos,
+        layer=train_layer,
+        model=model,
+        batch_size=batch_size,
+        max_dataset_size=max_dataset_size,
+        scaffold=scaffold,
+        device=device,
+        requires_grad=data_requires_grad,
         verbose=verbose,
     )
     if test_type != train_type or test_pos != train_pos or test_layer != train_layer:
         testloader, loss_fn_val, test_position = get_das_dataset(
-            test_type, position=test_pos, layer=test_layer, model=model,
-            batch_size=batch_size, max_dataset_size=max_dataset_size,
-            scaffold=scaffold, device=device, requires_grad=data_requires_grad,
+            test_type,
+            position=test_pos,
+            layer=test_layer,
+            model=model,
+            batch_size=batch_size,
+            max_dataset_size=max_dataset_size,
+            scaffold=scaffold,
+            device=device,
+            requires_grad=data_requires_grad,
             verbose=verbose,
         )
     else:
@@ -509,12 +570,12 @@ def train_das_subspace(
         verbose=verbose,
         **config,
     )
-    train_pos = train_pos if train_pos is not None else 'ALL'
-    d_das_str = f'{d_das}d' if d_das > 1 else ''
-    save_path = f'das{d_das_str}_{train_type.value}_{train_pos}_layer{train_layer}'
+    train_pos = train_pos if train_pos is not None else "ALL"
+    d_das_str = f"{d_das}d" if d_das > 1 else ""
+    save_path = f"das{d_das_str}_{train_type.value}_{train_pos}_layer{train_layer}"
     save_array(
-        directions.detach().cpu().squeeze(1).numpy(), 
-        save_path, 
+        directions.detach().cpu().squeeze(1).numpy(),
+        save_path,
         model,
     )
     return directions, save_path
