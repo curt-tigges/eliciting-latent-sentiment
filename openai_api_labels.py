@@ -1,12 +1,14 @@
 # %%
 import pandas as pd
-import openai
+from openai import OpenAI
+
+client = OpenAI(api_key=f.read())
 from tqdm.auto import tqdm
 from utils.store import get_csv, to_csv, is_file
 
 # %%
 pd.set_option("display.max_colwidth", 200)
-MODEL = "stablelm-base-alpha-3b"
+MODEL = "gemma-2b"
 OVERWRITE = False
 # %%
 DIRECTIONS = [
@@ -19,12 +21,12 @@ DIRECTIONS = [
 SUFFIX = "_bin_samples.csv"
 # %%
 with open("api_key.txt", "r") as f:
-    openai.api_key = f.read()
 
 
 # %%
 def classify_tokens(file_name: str, max_rows: int = 1_000):
     csv_df = get_csv(file_name, MODEL)
+    assert len(csv_df) > 0
     csv_df.head()
     prefix = "Your job is to classify the sentiment of a given token (i.e. word or word fragment) into Positive/Neutral/Negative."
     sentiment_data = []
@@ -32,15 +34,13 @@ def classify_tokens(file_name: str, max_rows: int = 1_000):
     for idx, row in tqdm(csv_df.iterrows(), total=len(csv_df)):
         token = row["token"]
         context = row["text"]
-        chat_completion = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"{prefix} Token: '{token}'. Context: '{context}'. Sentiment: ",
-                }
-            ],
-        )
+        chat_completion = client.chat.completions.create(model="gpt-4",
+        messages=[
+            {
+                "role": "user",
+                "content": f"{prefix} Token: '{token}'. Context: '{context}'. Sentiment: ",
+            }
+        ])
         sentiment_data.append(chat_completion.choices[0].message.content)
         if idx > max_rows:
             break
