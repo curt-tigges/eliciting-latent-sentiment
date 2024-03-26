@@ -16,7 +16,7 @@ from utils.store import (
 )
 
 # %%
-MODEL_NAME = "stablelm-base-alpha-3b"
+MODEL_NAME = "Qwen-1_8B"
 # %%
 METHOD_SHORT_NAMES = {
     "das": "DAS",

@@ -134,7 +134,7 @@ def clean_label(label: str) -> str:
     label = label.replace(".txt", "")
     label = label.replace(".pkl", "")
     label = label.replace(".pdf", "")
-    assert "/" not in label, "Label must not contain slashes"
+    assert "/" not in label, f"Label {label} must not contain slashes"
     return label
 
 

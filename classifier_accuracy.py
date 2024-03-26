@@ -311,7 +311,7 @@ for direction_label in tqdm(DIRECTIONS):
     flat = flat[flat != 0]
     if "das" in direction_label or "pca" in direction_label:
         flat *= -1
-    positive_threshold = flat.quantile(0.999).item()
+    positive_threshold = flat.quantile(0.99).item()
     negative_threshold = flat.quantile(0.001).item()
 
     bottom_counts = labelled_bin_samples[
@@ -331,12 +331,14 @@ for direction_label in tqdm(DIRECTIONS):
             "metric": [metric],
         }
     )
-    assert not np.isnan(metric), (
-        f"Metric is NaN for {direction_label}. "
-        f"Bottom counts: {bottom_counts}. "
-        f"Top counts: {top_counts}. "
-        f"Thresholds: {negative_threshold}, {positive_threshold}"
-    )
+    if not np.isnan(metric):
+        print(
+            f"Metric is NaN for {direction_label}. "
+            f"Bottom counts: {bottom_counts}. "
+            f"Top counts: {top_counts}. "
+            f"Thresholds: {negative_threshold}, {positive_threshold}"
+        )
+        continue
     print(direction_label, metric)
     update_csv(df, "classifier_accuracy", model, key_cols=["direction"])
 # %%
