@@ -39,6 +39,7 @@ from utils.store import (
     save_text,
     to_csv,
     get_csv,
+    get_csv_path,
     save_pdf,
     save_pickle,
     update_csv,
@@ -64,14 +65,14 @@ torch.set_grad_enabled(False)
 # %%
 DIRECTIONS = [
     "kmeans_simple_train_ADJ_layer1",
-    "pca_simple_train_ADJ_layer1",
     "mean_diff_simple_train_ADJ_layer1",
     "logistic_regression_simple_train_ADJ_layer1",
     "das_simple_train_ADJ_layer1",
+    # "pca_simple_train_ADJ_layer1",
 ]
 # %%
 device = "cuda"
-MODEL_NAME = "mistralai/Mistral-7B-v0.1"
+MODEL_NAME = "qwen-1.8b"
 BATCH_SIZE = 16
 model = HookedTransformer.from_pretrained(
     MODEL_NAME,
@@ -163,6 +164,9 @@ def sample_by_bin(
         lb = bin_edges[bin_idx - 1]
         ub = bin_edges[bin_idx]
         bin_batches, bin_positions = np.where(bin_indices == bin_idx)
+        if len(bin_batches) == 0:
+            print(f"No samples in bin {bin_idx} lb {lb} ub {ub}")
+            continue
         bin_samples = np.random.randint(0, len(bin_batches), samples_per_bin)
         indices += [
             (
@@ -284,10 +288,13 @@ def plot_bin_proportions(
 
 
 # %%
-for direction_label in DIRECTIONS:
-    labelled_bin_samples = get_csv(
-        "labelled_" + direction_label + "_bin_samples", model
-    )
+for direction_label in tqdm(DIRECTIONS):
+    csv_name = "labelled_" + direction_label + "_bin_samples"
+    csv_path = get_csv_path(csv_name, model)
+    if not os.path.exists(csv_path):
+        print(f"Skipping {direction_label} as path {csv_path} does not exist")
+        continue
+    labelled_bin_samples = get_csv(csv_name, model)
     out_name = direction_label + "_bin_proportions"
     if "das" in direction_label or "pca" in direction_label:
         labelled_bin_samples.activation *= -1
@@ -300,7 +307,7 @@ for direction_label in DIRECTIONS:
     fig.show()
 
     activations = get_activations_cached(dataloader, direction_label, model)
-    flat = activations[:, :, 1].flatten().cpu()
+    flat = activations[:, :, 1].flatten().cpu().to(dtype=torch.float32)
     flat = flat[flat != 0]
     if "das" in direction_label or "pca" in direction_label:
         flat *= -1
