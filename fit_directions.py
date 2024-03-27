@@ -47,10 +47,10 @@ from utils.methods import FittingMethod
 SKIP_IF_EXISTS = True
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 MODELS = [
-    "gemma-2b",
-    # "gemma-7b",
-    "qwen-1.8b",
-    # "qwen-7b",
+    # "gemma-2b",
+    "gemma-7b",
+    # "qwen-1.8b",
+    "qwen-7b",
     # "mistralai/Mistral-7B-v0.1",
     # "stablelm-base-alpha-3b",
     # "stablelm-base-alpha-7b",
@@ -67,7 +67,7 @@ METHODS = [
     ClassificationMethod.KMEANS,
     ClassificationMethod.MEAN_DIFF,
     ClassificationMethod.LOGISTIC_REGRESSION,
-    GradientMethod.DAS,
+    # GradientMethod.DAS,
     # GradientMethod.DAS2D,
     # GradientMethod.DAS3D,
     # ClassificationMethod.PCA,
@@ -117,8 +117,8 @@ BATCH_SIZES = {
 def get_model(name: str):
     model = HookedTransformer.from_pretrained(
         name,
-        # torch_dtype=torch.float16,
-        # dtype="float16",
+        torch_dtype=torch.float16,
+        dtype="float16",
         fold_ln=False,
         center_writing_weights=False,
         center_unembed=False,
