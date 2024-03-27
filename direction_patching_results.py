@@ -230,24 +230,36 @@ def concat_cross_data(
     )
 
 
-# %%
-concat_cross_data(
-    ["gpt2-small"], ["logit_diff"], "resid", ReviewScaffold.CONTINUATION, proj="para"
-)
-# %%
-concat_cross_data(
-    ["gpt2-small"], ["logit_diff"], "resid", ReviewScaffold.CONTINUATION, proj="ortho"
-)
-# %%
-concat_cross_data(
-    ["gpt2-small"],
-    ["logit_diff"],
-    "resid",
-    ReviewScaffold.CONTINUATION,
-)
+# # %%
+# concat_cross_data(
+#     ["gpt2-small"], ["logit_diff"], "resid", ReviewScaffold.CONTINUATION, proj="para"
+# )
+# # %%
+# concat_cross_data(
+#     ["gpt2-small"], ["logit_diff"], "resid", ReviewScaffold.CONTINUATION, proj="ortho"
+# )
+# # %%
+# concat_cross_data(
+#     ["gpt2-small"],
+#     ["logit_diff"],
+#     "resid",
+#     ReviewScaffold.CONTINUATION,
+# )
 # %%
 concat_metric_data(
     ["pythia-1.4b"],
+    ["logit_diff", "logit_flip"],
+    "resid",
+)
+# %%
+concat_metric_data(
+    ["gemma-2b"],
+    ["logit_diff", "logit_flip"],
+    "resid",
+)
+# %%
+concat_metric_data(
+    ["Qwen-1_8B"],
     ["logit_diff", "logit_flip"],
     "resid",
 )
@@ -344,6 +356,16 @@ concat_layer_data(
     ],
     "logit_diff",
     "resid",
+)
+# %%
+concat_layer_data(
+    [
+        "gemma-2b",
+        "Qwen-1_8B",
+    ],
+    "logit_diff",
+    "resid",
+    scaffold=ReviewScaffold.CLASSIFICATION,
 )
 # %%
 concat_layer_data(
