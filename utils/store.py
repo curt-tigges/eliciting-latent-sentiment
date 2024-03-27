@@ -298,7 +298,7 @@ def save_html(
     else:
         raise ValueError(f"Invalid type: {type(html_data)}")
     if static:
-        static_path = os.path.join(model_path, label + ".pdf")
+        static_path = os.path.join(model_path, label + ".png")
         imgkit.from_file(path, static_path)
     return path
 
