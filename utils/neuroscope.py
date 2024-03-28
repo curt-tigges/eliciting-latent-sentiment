@@ -111,11 +111,11 @@ def get_activations_cached(
         direction = load_array(direction_label + ".npy", model)
         direction = torch.tensor(direction, dtype=model.cfg.dtype)
         direction /= direction.norm()
-        sentiment_activations: Float[
-            Tensor, "row pos layer"
-        ] = get_activations_from_dataloader(data, direction, model)
-        save_array(sentiment_activations, path, model)
-    return sentiment_activations
+        sentiment_activations: Float[Tensor, "row pos layer"] = (
+            get_activations_from_dataloader(data, direction, model)
+        )
+        save_array(sentiment_activations.to(dtype=torch.float32), path, model)
+    return sentiment_activations.to(dtype=model.cfg.dtype)
 
 
 def names_filter(name: str):
